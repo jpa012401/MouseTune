@@ -6,6 +6,7 @@
 #![allow(dead_code)]
 
 pub mod devices;
+pub mod engine;
 pub mod filter;
 pub mod guard;
 pub mod taps;
