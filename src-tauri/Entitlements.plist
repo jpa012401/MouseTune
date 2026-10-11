@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!--
+	Intentionally empty: MouseTune is NOT sandboxed (event taps that modify
+	input are incompatible with App Sandbox) and needs no hardened-runtime
+	exceptions. See spec §3.3.
+-->
+<dict/>
+</plist>
