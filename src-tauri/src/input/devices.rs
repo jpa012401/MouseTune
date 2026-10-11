@@ -23,17 +23,25 @@ pub struct DeviceInfo {
 
 impl DeviceInfo {
     /// Apple pointing devices and trackpads already emit trackpad-style
-    /// input; MouseTune leaves them alone.
+    /// input; MouseTune leaves them alone. Called from the scroll tap on
+    /// every wheel tick, so it must not allocate (AGENTS.md invariant 1).
     pub fn is_excluded(&self) -> bool {
         self.vendor_id == APPLE_USB_VENDOR_ID
             || self.vendor_id == APPLE_BLUETOOTH_VENDOR_ID
-            || self.name.to_lowercase().contains("trackpad")
+            || contains_ignore_ascii_case(&self.name, "trackpad")
     }
 
     /// Has buttons beyond left and right (spec: buttons 3+).
     pub fn has_extra_buttons(&self) -> bool {
         self.button_count >= 3
     }
+}
+
+fn contains_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
+    haystack
+        .as_bytes()
+        .windows(needle.len())
+        .any(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -107,6 +115,24 @@ mod tests {
             ..mouse(1)
         };
         assert!(trackpad.is_excluded());
+    }
+
+    #[test]
+    fn mixed_case_trackpad_names_are_excluded() {
+        let trackpad = DeviceInfo {
+            name: "Perixx TrackPad".into(),
+            ..mouse(1)
+        };
+        assert!(trackpad.is_excluded());
+    }
+
+    #[test]
+    fn names_merely_close_to_trackpad_are_tracked() {
+        let mouse_named = DeviceInfo {
+            name: "Track Pad Mouse".into(),
+            ..mouse(1)
+        };
+        assert!(!mouse_named.is_excluded());
     }
 
     #[test]
