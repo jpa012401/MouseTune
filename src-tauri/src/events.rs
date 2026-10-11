@@ -5,7 +5,14 @@ use specta::Type;
 use tauri::AppHandle;
 use tauri_specta::Event;
 
-use crate::permission_monitor::PermissionObserver;
+use crate::{
+    input::{
+        engine::{EngineObserver, EngineSnapshot, ScrollStats},
+        taps::TapSet,
+    },
+    ipc::{Device, input_status},
+    permission_monitor::PermissionObserver,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type, Event)]
 pub struct PermissionChanged {
@@ -22,6 +29,28 @@ impl PermissionObserver for EmitPermissionChanged {
         };
         if let Err(err) = event.emit(&self.0) {
             tracing::warn!(%err, "failed to emit permission-changed");
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type, Event)]
+pub struct InputStatusChanged {
+    pub taps: TapSet,
+    pub devices: Vec<Device>,
+}
+
+/// Forwards input-engine changes to the UI.
+pub struct EmitInputStatus(pub AppHandle);
+
+impl EngineObserver for EmitInputStatus {
+    fn snapshot_changed(&self, snapshot: &EngineSnapshot) {
+        let status = input_status(snapshot, ScrollStats::default(), false);
+        let event = InputStatusChanged {
+            taps: status.taps,
+            devices: status.devices,
+        };
+        if let Err(err) = event.emit(&self.0) {
+            tracing::warn!(%err, "failed to emit input-status-changed");
         }
     }
 }
