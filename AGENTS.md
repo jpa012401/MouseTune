@@ -174,9 +174,9 @@ If you can't name the requirement a pattern serves, don't add it. **DRY is about
 ## Current state
 
 - **Merged on `main`:** Phase 0 (scaffold) and Phase 1 (Accessibility onboarding, permission monitor, tray status, settings shell), refactored to ports and adapters.
-- **Next:** Phase 2, the input engine, on branch `phase-2-input-engine`. Plan: `docs/superpowers/plans/2026-10-11-phase-2-input-engine.md`.
+- **Phase 2, the input engine:** implemented on branch `phase-2-input-engine`, pending manual hardware acceptance (README). It passes every event through. Plan: `docs/superpowers/plans/2026-10-11-phase-2-input-engine.md`.
 - **Known gaps:** no config store yet (Phase 3), so tray toggles and `TapDemand` are placeholders. Commands return `Result<(), String>` rather than typed errors.
-- **Never exercised for real:** the Accessibility prompt and settings-pane flow; the tray icon rendering; a bundled or signed build; CI on GitHub (no remote yet); macOS 12–26; Intel.
+- **Never exercised for real:** the Accessibility prompt and settings-pane flow; the tray icon rendering; a bundled or signed build; CI on GitHub (no remote yet); macOS 12–26; Intel; an external mouse through the HID adapter; tap teardown on quit with real taps.
 
 ## Settled decisions and open questions
 
@@ -272,7 +272,7 @@ git diff --exit-code -- src/bindings.ts        # MUST be clean after `cargo test
 ## Test data and fixtures
 
 - **Rust:** `src-tauri/src/test_support.rs` holds the shared fakes and fixtures. Fakes share state across clones, so a test keeps a handle after moving one into the code under test. Put new shared doubles here, not in production types.
-- **Frontend:** IPC is mocked with `mockIPC(…, { shouldMockEvents: true })`. Fixtures must mirror the full `Status` shape from `bindings.ts`. The helpers live in `src/App.test.tsx` and move to `src/test/backend.ts` in Phase 2 Task 9.
+- **Frontend:** IPC is mocked with `mockIPC(…, { shouldMockEvents: true })`. Fixtures must mirror the full `Status` shape from `bindings.ts`. The helpers (`mockBackend`, `status`, `inputStatus`, `device`) live in `src/test/backend.ts`.
 - Device fixtures use real vendor IDs, but their sender IDs are invented. Real sender-ID layouts are confirmed only by the ignored HID smoke test.
 - **Never commit real user data, logs or device serial numbers.**
 
