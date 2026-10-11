@@ -88,8 +88,9 @@ pub fn desired_taps(trusted: bool, devices: &DeviceRegistry, demand: TapDemand) 
 
 /// Port to the OS event taps.
 pub trait TapController {
-    /// Enables or disables a tap, creating it on first enable. Returns
-    /// `false` if the tap couldn't be created (e.g. no permission).
+    /// Enables or disables a tap, creating it on first enable (or when its port has been invalidated).
+    /// Callback-safe: may run inside a tap callout, so implementations must never discard a valid tap.
+    /// Returns whether the tap is in the requested state afterwards (`false` if it couldn't be created or won't re-enable).
     fn set_enabled(&mut self, kind: TapKind, enabled: bool) -> bool;
     fn is_enabled(&self, kind: TapKind) -> bool;
     /// Turns a desired tap back on, rebuilding it if it won't come back.
