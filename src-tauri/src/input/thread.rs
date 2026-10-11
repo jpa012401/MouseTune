@@ -1,40 +1,24 @@
 //! The `mt-input` thread (spec §2, §4.4): a CFRunLoop that owns the input
 //! engine, the event taps, the HID device monitor and the watchdog timer.
-//! Other threads talk to it only through `InputHandle`.
+//! Other threads talk to it only through `InputHandle`. The run-loop code
+//! itself lives in `platform::input_loop`.
 
 use std::{
-    cell::{OnceCell, RefCell},
-    ffi::c_void,
-    rc::Rc,
-    sync::{Arc, Mutex, PoisonError, atomic::AtomicBool, mpsc},
-    thread::{self, JoinHandle},
-    time::Duration,
+    sync::{Arc, Mutex, PoisonError, atomic::AtomicBool},
+    thread::JoinHandle,
 };
 
 use arc_swap::ArcSwap;
-use crossbeam_channel::{Receiver, Sender};
-use objc2_core_foundation::{
-    CFAbsoluteTimeGetCurrent, CFRetained, CFRunLoop, CFRunLoopMode, CFRunLoopSource,
-    CFRunLoopSourceContext, CFRunLoopTimer, CFRunLoopTimerContext, kCFRunLoopCommonModes,
-};
+use crossbeam_channel::Sender;
 
 use crate::{
     input::{
-        engine::{EngineObserver, EngineSnapshot, InputEngine, ScrollCounters, TapHandler},
-        guard::guarded,
-        taps::{TapController, TapDemand},
+        engine::{EngineObserver, EngineSnapshot, InputEngine, ScrollCounters},
+        taps::TapController,
     },
     permission_monitor::PermissionObserver,
-    platform::{
-        event_tap::{MacTapController, TapContext},
-        hid::DeviceMonitor,
-    },
+    platform::input_loop,
 };
-
-/// How often the watchdog checks that the taps that should run are running.
-const WATCHDOG_INTERVAL_SECS: f64 = 5.0;
-/// `QOS_CLASS_USER_INTERACTIVE` from `<sys/qos.h>`.
-const QOS_CLASS_USER_INTERACTIVE: u32 = 0x21;
 
 /// Messages from other threads to `mt-input`.
 #[derive(Debug, PartialEq, Eq)]
@@ -148,199 +132,12 @@ impl EngineObserver for StoreSnapshot {
 pub fn spawn(trusted: bool, ui: Box<dyn EngineObserver + Send>) -> Arc<InputHandle> {
     let (tx, rx) = crossbeam_channel::unbounded();
     let shared = Arc::new(InputShared::default());
-    let (waker_tx, waker_rx) = mpsc::sync_channel::<Arc<dyn Waker>>(1);
-    let thread_shared = Arc::clone(&shared);
-    let join = thread::Builder::new()
-        .name("mt-input".into())
-        .spawn(move || run_input_thread(trusted, ui, rx, thread_shared, waker_tx))
-        .expect("failed to spawn the mt-input thread");
-    let waker = waker_rx
-        .recv_timeout(Duration::from_secs(2))
-        .expect("mt-input didn't start its run loop within 2 s");
+    let observer = Box::new(StoreSnapshot {
+        shared: Arc::clone(&shared),
+        ui,
+    });
+    let (join, waker) = input_loop::start(trusted, observer, rx, Arc::clone(&shared));
     Arc::new(InputHandle::new(tx, waker, shared, Some(join)))
-}
-
-type Engine = Rc<RefCell<InputEngine<MacTapController>>>;
-
-/// What the control source and watchdog timer callbacks reach through their
-/// `info` pointer. Owned by `run_input_thread`, freed after the run loop stops.
-struct LoopState {
-    rx: Receiver<Control>,
-    engine: Engine,
-    run_loop: CFRetained<CFRunLoop>,
-    degraded: Arc<AtomicBool>,
-}
-
-/// Wakes `mt-input` from any thread.
-struct RunLoopWaker {
-    run_loop: CFRetained<CFRunLoop>,
-    source: CFRetained<CFRunLoopSource>,
-}
-
-// SAFETY: CFRunLoopSourceSignal and CFRunLoopWakeUp are documented thread-safe.
-unsafe impl Send for RunLoopWaker {}
-// SAFETY: CFRunLoopSourceSignal and CFRunLoopWakeUp are documented thread-safe.
-unsafe impl Sync for RunLoopWaker {}
-
-impl Waker for RunLoopWaker {
-    fn wake(&self) {
-        self.source.signal();
-        self.run_loop.wake_up();
-    }
-}
-
-fn common_modes() -> Option<&'static CFRunLoopMode> {
-    // SAFETY: reading an immutable CoreFoundation constant.
-    unsafe { kCFRunLoopCommonModes }
-}
-
-fn set_user_interactive_qos() {
-    unsafe extern "C" {
-        fn pthread_set_qos_class_self_np(qos_class: u32, relative_priority: i32) -> i32;
-    }
-    // SAFETY: plain libc call on the current thread with a valid QoS class.
-    let result = unsafe { pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0) };
-    if result != 0 {
-        tracing::warn!(result, "couldn't raise mt-input to user-interactive QoS");
-    }
-}
-
-fn run_input_thread(
-    trusted: bool,
-    ui: Box<dyn EngineObserver + Send>,
-    rx: Receiver<Control>,
-    shared: Arc<InputShared>,
-    waker_tx: mpsc::SyncSender<Arc<dyn Waker>>,
-) {
-    set_user_interactive_qos();
-    let run_loop = CFRunLoop::current().expect("mt-input has a run loop");
-
-    let mut context = Rc::new(TapContext {
-        handler: OnceCell::new(),
-        degraded: Arc::clone(&shared.degraded),
-    });
-    let controller = MacTapController::new(Rc::as_ptr(&context), run_loop.clone());
-    let engine: Engine = Rc::new(RefCell::new(InputEngine::new(
-        controller,
-        trusted,
-        TapDemand::ALL,
-        Arc::clone(&shared.counters),
-        Box::new(StoreSnapshot {
-            shared: Arc::clone(&shared),
-            ui,
-        }),
-    )));
-    let handler: Rc<RefCell<dyn TapHandler>> = engine.clone();
-    if context.handler.set(handler).is_err() {
-        unreachable!("the tap context is fresh");
-    }
-
-    let state = Box::into_raw(Box::new(LoopState {
-        rx,
-        engine: engine.clone(),
-        run_loop: run_loop.clone(),
-        degraded: Arc::clone(&shared.degraded),
-    }));
-
-    let mut source_context = CFRunLoopSourceContext {
-        version: 0,
-        info: state.cast(),
-        retain: None,
-        release: None,
-        copyDescription: None,
-        equal: None,
-        hash: None,
-        schedule: None,
-        cancel: None,
-        perform: Some(perform_control),
-    };
-    // SAFETY: the context is valid for the call (CoreFoundation copies it) and
-    // `info` stays valid until the source is invalidated below.
-    let source = unsafe { CFRunLoopSource::new(None, 0, &mut source_context) }
-        .expect("CFRunLoopSourceCreate failed");
-    run_loop.add_source(Some(&source), common_modes());
-
-    let mut timer_context = CFRunLoopTimerContext {
-        version: 0,
-        info: state.cast(),
-        retain: None,
-        release: None,
-        copyDescription: None,
-    };
-    // SAFETY: as for the source: the context is copied, `info` outlives the
-    // timer, and `watchdog_tick` matches `CFRunLoopTimerCallBack`.
-    let timer = unsafe {
-        CFRunLoopTimer::new(
-            None,
-            CFAbsoluteTimeGetCurrent() + WATCHDOG_INTERVAL_SECS,
-            WATCHDOG_INTERVAL_SECS,
-            0,
-            0,
-            Some(watchdog_tick),
-            &mut timer_context,
-        )
-    }
-    .expect("CFRunLoopTimerCreate failed");
-    run_loop.add_timer(Some(&timer), common_modes());
-
-    let devices = DeviceMonitor::start(&run_loop, {
-        let engine = engine.clone();
-        move |event| engine.borrow_mut().apply_device_event(event)
-    });
-
-    engine.borrow_mut().start();
-
-    let waker = Arc::new(RunLoopWaker {
-        run_loop: run_loop.clone(),
-        source: source.clone(),
-    });
-    if waker_tx.send(waker).is_err() {
-        tracing::error!("input thread caller went away before startup finished");
-    }
-
-    CFRunLoop::run();
-
-    // Teardown order matters: nothing may call back into state that is gone.
-    // 1. Control source and watchdog timer, then the state they point to.
-    timer.invalidate();
-    source.invalidate();
-    drop((timer, source));
-    // SAFETY: `state` came from `Box::into_raw` above, and the only users of
-    // the pointer (the source and timer) are invalidated.
-    drop(unsafe { Box::from_raw(state) });
-    // 2. The device monitor and its clone of the engine.
-    drop(devices);
-    // 3. The engine, which drops `MacTapController` and tears down the taps.
-    //    The context's handler holds the last reference.
-    drop(engine);
-    let handler = Rc::get_mut(&mut context).and_then(|context| context.handler.take());
-    debug_assert!(handler.is_some(), "the tap context is uniquely owned");
-    drop(handler);
-    // 4. Only now the context the taps pointed to.
-    drop(context);
-    tracing::info!("input thread stopped");
-}
-
-/// Control source callback: applies queued messages, stops on `Shutdown`.
-unsafe extern "C-unwind" fn perform_control(info: *mut c_void) {
-    // SAFETY: `info` is the `LoopState` pointer the source was created with;
-    // it's freed only after the source is invalidated.
-    let state = unsafe { &*info.cast_const().cast::<LoopState>() };
-    guarded(&state.degraded, (), || {
-        for msg in state.rx.try_iter() {
-            if handle_control(&mut state.engine.borrow_mut(), msg) == Flow::Stop {
-                state.run_loop.stop();
-                return;
-            }
-        }
-    });
-}
-
-/// Watchdog timer callback (every 5 s).
-unsafe extern "C-unwind" fn watchdog_tick(_timer: *mut CFRunLoopTimer, info: *mut c_void) {
-    // SAFETY: as in `perform_control`; the timer is invalidated before `info` is freed.
-    let state = unsafe { &*info.cast_const().cast::<LoopState>() };
-    guarded(&state.degraded, (), || state.engine.borrow_mut().watchdog());
 }
 
 #[cfg(test)]

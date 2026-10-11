@@ -2,4 +2,4 @@
 
 mod macos;
 
-pub use macos::{event_tap, hid, os_version, permissions};
+pub use macos::{event_tap, hid, input_loop, os_version, permissions};
