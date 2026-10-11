@@ -92,6 +92,9 @@ pub trait TapController {
     /// `false` if the tap couldn't be created (e.g. no permission).
     fn set_enabled(&mut self, kind: TapKind, enabled: bool) -> bool;
     fn is_enabled(&self, kind: TapKind) -> bool;
+    /// Turns a desired tap back on, rebuilding it if it won't come back.
+    /// Only call this outside tap callbacks (watchdog). Returns whether it is on afterwards.
+    fn revive(&mut self, kind: TapKind) -> bool;
 }
 
 pub struct TapManager<C: TapController> {
@@ -119,6 +122,7 @@ impl<C: TapController> TapManager<C> {
     }
 
     /// Turns a tap back on if it's supposed to be on. Returns whether it is on afterwards.
+    /// Callback-safe: never rebuilds a tap; a tap that won't come back is left for the watchdog.
     pub fn reenable(&mut self, kind: TapKind) -> bool {
         self.desired.get(kind) && self.controller.set_enabled(kind, true)
     }
@@ -127,7 +131,10 @@ impl<C: TapController> TapManager<C> {
     pub fn watchdog(&mut self) -> TapSet {
         let mut revived = TapSet::NONE;
         for kind in TapKind::ALL {
-            if self.desired.get(kind) && !self.controller.is_enabled(kind) && self.reenable(kind) {
+            if self.desired.get(kind)
+                && !self.controller.is_enabled(kind)
+                && self.controller.revive(kind)
+            {
                 revived.set(kind, true);
             }
         }
@@ -405,5 +412,54 @@ mod tests {
                 flags: false
             }
         );
+    }
+
+    #[test]
+    fn watchdog_rebuilds_a_wedged_tap() {
+        let fake = FakeTapController::default();
+        let mut manager = TapManager::new(fake.clone());
+        manager.reconcile(TapSet {
+            buttons: false,
+            scroll: true,
+            flags: false,
+        });
+        fake.wedge(TapKind::Scroll);
+
+        assert_eq!(
+            manager.watchdog(),
+            TapSet {
+                buttons: false,
+                scroll: true,
+                flags: false
+            }
+        );
+        assert!(manager.enabled().scroll);
+        assert_eq!(fake.revives(), [TapKind::Scroll]);
+    }
+
+    #[test]
+    fn reenable_never_rebuilds_a_tap() {
+        let fake = FakeTapController::default();
+        let mut manager = TapManager::new(fake.clone());
+        manager.reconcile(TapSet {
+            buttons: false,
+            scroll: true,
+            flags: false,
+        });
+        fake.wedge(TapKind::Scroll);
+
+        assert!(!manager.reenable(TapKind::Scroll));
+        assert!(!manager.enabled().scroll);
+        assert!(fake.revives().is_empty());
+    }
+
+    #[test]
+    fn watchdog_does_not_rebuild_undesired_taps() {
+        let fake = FakeTapController::default();
+        let mut manager = TapManager::new(fake.clone());
+        manager.reconcile(TapSet::NONE);
+        fake.wedge(TapKind::Buttons);
+        assert_eq!(manager.watchdog(), TapSet::NONE);
+        assert!(fake.revives().is_empty());
     }
 }

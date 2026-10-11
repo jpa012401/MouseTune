@@ -143,6 +143,11 @@ impl Drop for MacTapController {
 }
 
 impl TapController for MacTapController {
+    fn revive(&mut self, kind: TapKind) -> bool {
+        // Task 2 implements recreation.
+        self.set_enabled(kind, true)
+    }
+
     // Verified by review, not tests: creating or enabling a real tap needs
     // Accessibility, which test binaries don't have.
     fn set_enabled(&mut self, kind: TapKind, enabled: bool) -> bool {
