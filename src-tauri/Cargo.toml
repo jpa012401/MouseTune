@@ -34,3 +34,7 @@ lto = true
 opt-level = 3
 panic = "unwind"
 strip = true
+
+[lints.clippy]
+# Every `unsafe` block explains why it's sound (AGENTS.md → Non-negotiables).
+undocumented_unsafe_blocks = "deny"
