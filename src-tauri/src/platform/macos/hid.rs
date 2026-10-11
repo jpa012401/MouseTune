@@ -104,16 +104,12 @@ impl DeviceMonitor {
             manager.register_device_matching_callback(Some(device_added), context.cast());
             manager.register_device_removal_callback(Some(device_removed), context.cast());
         }
+        // Matching and property reads come from the IORegistry, so the
+        // manager is never opened: IOHIDManagerOpen would add an Input
+        // Monitoring permission dependency for nothing.
         // SAFETY: `run_loop` is retained by the monitor for as long as the
         // manager stays scheduled on it.
         unsafe { manager.schedule_with_run_loop(run_loop, default_mode()) };
-        let result: IOReturn = manager.open(kIOHIDOptionsTypeNone);
-        if result != kIOReturnSuccess {
-            tracing::warn!(
-                result,
-                "IOHIDManagerOpen failed; device list may be incomplete"
-            );
-        }
 
         DeviceMonitor {
             manager,
@@ -132,10 +128,6 @@ impl Drop for DeviceMonitor {
             self.manager
                 .unschedule_from_run_loop(&self.run_loop, default_mode())
         };
-        let result = self.manager.close(kIOHIDOptionsTypeNone);
-        if result != kIOReturnSuccess {
-            tracing::warn!(result, "IOHIDManagerClose failed");
-        }
     }
 }
 
@@ -170,7 +162,15 @@ unsafe extern "C-unwind" fn device_added(
         // SAFETY: IOKit passes a valid device for the call's duration.
         let device = unsafe { device.as_ref() };
         if let Some(props) = hid_props(device) {
-            sink(DeviceEvent::Added(device_info(props)));
+            let info = device_info(props);
+            tracing::debug!(
+                id = info.id,
+                name = %info.name,
+                vendor_id = info.vendor_id,
+                sender_ids = info.sender_ids.len(),
+                "HID device added"
+            );
+            sink(DeviceEvent::Added(info));
         }
     });
 }
@@ -185,6 +185,7 @@ unsafe extern "C-unwind" fn device_removed(
         // SAFETY: IOKit passes a valid device for the call's duration.
         let device = unsafe { device.as_ref() };
         if let Some(id) = registry_id(device.service()) {
+            tracing::debug!(id, "HID device removed");
             sink(DeviceEvent::Removed { id });
         }
     });
