@@ -15,10 +15,33 @@ export const commands = {
 
 /** Events */
 export const events = {
+	inputStatusChanged: makeEvent<InputStatusChanged>("input-status-changed"),
 	permissionChanged: makeEvent<PermissionChanged>("permission-changed"),
 };
 
 /* Types */
+/**  A tracked mouse as the UI sees it. */
+export type Device = {
+	/**  IORegistry entry ID in hex; stable while the device stays connected. */
+	id: string,
+	name: string,
+	manufacturer: string,
+	button_count: number,
+	has_wheel: boolean,
+};
+
+export type InputStatus = {
+	taps: TapSet,
+	devices: Device[],
+	scroll_stats: ScrollStats,
+	degraded: boolean,
+};
+
+export type InputStatusChanged = {
+	taps: TapSet,
+	devices: Device[],
+};
+
 export type OsVersion = {
 	major: number,
 	minor: number,
@@ -29,10 +52,22 @@ export type PermissionChanged = {
 	accessibility_trusted: boolean,
 };
 
+export type ScrollStats = {
+	mouse_wheel: number,
+	passed_through: number,
+};
+
 export type Status = {
 	app_version: string,
 	os_version: OsVersion,
 	accessibility_trusted: boolean,
+	input: InputStatus,
+};
+
+export type TapSet = {
+	buttons: boolean,
+	scroll: boolean,
+	flags: boolean,
 };
 
 /* Tauri Specta runtime */

@@ -32,7 +32,10 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             ipc::request_accessibility,
             ipc::reset_accessibility,
         ])
-        .events(tauri_specta::collect_events![events::PermissionChanged])
+        .events(tauri_specta::collect_events![
+            events::PermissionChanged,
+            events::InputStatusChanged,
+        ])
 }
 
 #[cfg(any(debug_assertions, test))]
@@ -65,12 +68,19 @@ pub fn run() {
             let accessibility: Arc<dyn Accessibility> = Arc::new(SystemAccessibility);
             app.manage(Arc::clone(&accessibility));
 
+            let input = input::thread::spawn(
+                accessibility.is_trusted(),
+                Box::new(events::EmitInputStatus(app.handle().clone())),
+            );
+            app.manage(Arc::clone(&input));
+
             tray::build(app.handle(), accessibility.is_trusted())?;
             PermissionMonitor::new(
                 Arc::clone(&accessibility),
                 vec![
                     Box::new(tray::TrayPermissionStatus(app.handle().clone())),
                     Box::new(events::EmitPermissionChanged(app.handle().clone())),
+                    Box::new(input::thread::PermissionBridge(Arc::clone(&input))),
                 ],
             )
             .spawn();
@@ -96,6 +106,12 @@ pub fn run() {
         } => api.prevent_exit(),
         // Launching the app again from Finder/Spotlight opens Settings.
         RunEvent::Reopen { .. } => window::open_settings(app),
+        // Tear the event taps down before the process goes.
+        RunEvent::Exit => {
+            if let Some(input) = app.try_state::<Arc<input::thread::InputHandle>>() {
+                input.shutdown();
+            }
+        }
         _ => {}
     });
 }

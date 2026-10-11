@@ -1,9 +1,6 @@
 //! IOHIDManager adapter (spec §4.3): reports connected mice as
 //! `DeviceEvent`s. `device_info` is the only logic, and it is pure.
 
-// Wired into the input thread in Task 8, which removes this allow.
-#![allow(dead_code)]
-
 use std::{
     ffi::{CStr, c_void},
     panic::{AssertUnwindSafe, catch_unwind},
@@ -75,7 +72,7 @@ pub struct DeviceMonitor {
     manager: CFRetained<IOHIDManager>,
     run_loop: CFRetained<CFRunLoop>,
     /// Boxed twice so the callbacks get a thin, stable pointer to it.
-    sink: Box<Sink>,
+    _sink: Box<Sink>,
 }
 
 impl DeviceMonitor {
@@ -121,7 +118,7 @@ impl DeviceMonitor {
         DeviceMonitor {
             manager,
             run_loop: run_loop.retain(),
-            sink,
+            _sink: sink,
         }
     }
 }
@@ -130,7 +127,7 @@ impl DeviceMonitor {
 impl Drop for DeviceMonitor {
     fn drop(&mut self) {
         // SAFETY: unscheduling from the run loop and mode used in `start`.
-        // After this no callback can fire into `sink`, which drops next.
+        // After this no callback can fire into `_sink`, which drops next.
         unsafe {
             self.manager
                 .unschedule_from_run_loop(&self.run_loop, default_mode())

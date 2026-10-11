@@ -1,7 +1,7 @@
 //! Which event taps should run, and keeping the real taps in line with
 //! that (spec §4.1, §4.5).
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use crate::input::devices::DeviceRegistry;
@@ -17,7 +17,7 @@ impl TapKind {
     pub const ALL: [TapKind; 3] = [TapKind::Buttons, TapKind::Scroll, TapKind::Flags];
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Type)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub struct TapSet {
     pub buttons: bool,
     pub scroll: bool,

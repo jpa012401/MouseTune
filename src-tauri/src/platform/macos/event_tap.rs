@@ -1,9 +1,6 @@
 //! CGEventTap adapter (spec §4.1, §4.5). Humble object: creates taps,
 //! copies fields out of events, forwards to a `TapHandler`. No decisions.
 
-// Wired into the input thread in Task 8, which removes this allow.
-#![allow(dead_code)]
-
 use std::{
     cell::{OnceCell, RefCell},
     ffi::c_void,

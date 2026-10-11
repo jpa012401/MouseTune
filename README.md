@@ -41,6 +41,16 @@ MouseTune needs Accessibility access to intercept mouse input.
   tccutil reset Accessibility com.johnpaulalabe.mousetune
   ```
 
+### Verifying the input engine (Phase 2)
+
+Taps pass every event through unchanged in this phase. To check the scroll filter:
+
+1. Grant Accessibility (see above) and connect a mouse.
+2. Open Settings → General. "Connected mice" lists the mouse; Input engine shows Buttons, Scroll and Modifier keys as **On**.
+3. Scroll with the mouse wheel: the **Mouse wheel** counter rises.
+4. Scroll with the trackpad or a Magic Mouse: only **Passed through** rises, and scrolling feels exactly as before.
+5. Unplug the mouse: the list empties and the taps switch **Off**.
+
 ## Building
 
 ```sh

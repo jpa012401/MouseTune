@@ -10,6 +10,12 @@ function status(overrides: Partial<Status> = {}): Status {
     app_version: "0.1.0",
     os_version: { major: 27, minor: 0, patch: 1 },
     accessibility_trusted: true,
+    input: {
+      taps: { buttons: false, scroll: false, flags: false },
+      devices: [],
+      scroll_stats: { mouse_wheel: 0, passed_through: 0 },
+      degraded: false,
+    },
     ...overrides,
   };
 }
