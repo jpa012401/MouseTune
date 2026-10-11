@@ -71,7 +71,8 @@ pub struct MacTapController {
 }
 
 impl MacTapController {
-    /// `context` must stay valid for as long as this controller's taps exist.
+    /// `context` must outlive the controller. Dropping the controller disables
+    /// and invalidates its taps, so no callback can fire after that.
     pub fn new(context: *const TapContext, run_loop: CFRetained<CFRunLoop>) -> Self {
         Self {
             context,
@@ -121,6 +122,19 @@ impl MacTapController {
         self.run_loop.add_source(Some(&source), mode);
         self.ports[Self::slot(kind)] = Some(port);
         true
+    }
+}
+
+// Verified by review, not tests: creating a tap needs Accessibility, which tests don't have.
+impl Drop for MacTapController {
+    fn drop(&mut self) {
+        // The run loop retains each source and each source retains its port, so
+        // dropping `ports` alone would leave the taps live. Invalidating a port
+        // also removes its run-loop sources.
+        for port in self.ports.iter().flatten() {
+            CGEvent::tap_enable(port, false);
+            port.invalidate();
+        }
     }
 }
 
