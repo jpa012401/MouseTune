@@ -5,14 +5,21 @@
 #[cfg(not(target_os = "macos"))]
 compile_error!("MouseTune only supports macOS.");
 
+mod accessibility;
 mod events;
 mod ipc;
 mod logging;
 mod permission_monitor;
 mod platform;
+#[cfg(test)]
+mod test_support;
 mod tray;
 mod window;
 
+use std::sync::Arc;
+
+use accessibility::{Accessibility, SystemAccessibility};
+use permission_monitor::PermissionMonitor;
 use tauri::{Manager, RunEvent};
 
 /// Single registry of IPC commands and events. Shared by the app and the
@@ -53,13 +60,24 @@ pub fn run() {
             app.manage(log_guard);
 
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
-            tray::build(app.handle())?;
-            permission_monitor::spawn(app.handle().clone());
+
+            let accessibility: Arc<dyn Accessibility> = Arc::new(SystemAccessibility);
+            app.manage(Arc::clone(&accessibility));
+
+            tray::build(app.handle(), accessibility.is_trusted())?;
+            PermissionMonitor::new(
+                Arc::clone(&accessibility),
+                vec![
+                    Box::new(tray::TrayPermissionStatus(app.handle().clone())),
+                    Box::new(events::EmitPermissionChanged(app.handle().clone())),
+                ],
+            )
+            .spawn();
 
             tracing::info!(
                 version = app.package_info().version.to_string(),
                 os = %platform::os_version::current(),
-                accessibility = platform::permissions::is_accessibility_trusted(),
+                accessibility = accessibility.is_trusted(),
                 "MouseTune started"
             );
 

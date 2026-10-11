@@ -2,21 +2,23 @@ import { useState } from "react";
 import { commands, type OsVersion } from "../bindings";
 import { settingsAppName } from "../lib/os";
 
+type CommandResult = Awaited<ReturnType<typeof commands.requestAccessibility>>;
+
 export function Onboarding({ os }: { os: OsVersion }) {
   const [error, setError] = useState<string | null>(null);
   const [resetDone, setResetDone] = useState(false);
   const settingsApp = settingsAppName(os);
 
-  async function request() {
-    const result = await commands.requestAccessibility();
-    setError(result.status === "error" ? result.error : null);
+  /** Runs a backend command; surfaces its error with context. Returns success. */
+  async function run(command: () => Promise<CommandResult>, failure: string) {
+    const result = await command();
+    setError(result.status === "error" ? `${failure}: ${result.error}` : null);
+    return result.status === "ok";
   }
 
-  async function reset() {
-    const result = await commands.resetAccessibility();
-    setError(result.status === "error" ? result.error : null);
-    setResetDone(result.status === "ok");
-  }
+  const request = () => run(commands.requestAccessibility, `Couldn’t open ${settingsApp}`);
+  const reset = async () =>
+    setResetDone(await run(commands.resetAccessibility, "Couldn’t reset the permission"));
 
   return (
     <main
@@ -57,7 +59,7 @@ export function Onboarding({ os }: { os: OsVersion }) {
 
       {error && (
         <p role="alert" className="text-sm text-red-600">
-          Couldn’t open {settingsApp}: {error}
+          {error}
         </p>
       )}
 
