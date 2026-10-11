@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { commands, type Status } from "../bindings";
+import { commands, events, type Status } from "../bindings";
 
 type StatusState = {
   status: Status | null;
@@ -19,3 +19,28 @@ export const useStatusStore = create<StatusState>((set) => ({
     }
   },
 }));
+
+/**
+ * Loads status and keeps it current: backend events push permission changes,
+ * and returning to the window re-reads everything. Returns a cleanup function.
+ */
+export function startStatusSync(): () => void {
+  const { refresh } = useStatusStore.getState();
+  void refresh();
+
+  const onFocus = () => void refresh();
+  window.addEventListener("focus", onFocus);
+
+  const unlisten = events.permissionChanged.listen(({ payload }) => {
+    useStatusStore.setState((state) =>
+      state.status
+        ? { status: { ...state.status, accessibility_trusted: payload.accessibility_trusted } }
+        : state,
+    );
+  });
+
+  return () => {
+    window.removeEventListener("focus", onFocus);
+    void unlisten.then((fn) => fn());
+  };
+}

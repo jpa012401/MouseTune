@@ -22,3 +22,23 @@ pub fn get_status(app: AppHandle) -> Status {
         accessibility_trusted: permissions::is_accessibility_trusted(),
     }
 }
+
+/// Shows the system prompt (first time only) and opens the Accessibility pane.
+#[tauri::command]
+#[specta::specta]
+pub fn request_accessibility() -> Result<(), String> {
+    if permissions::prompt_for_accessibility() {
+        return Ok(());
+    }
+    permissions::open_accessibility_settings().map_err(|err| err.to_string())
+}
+
+/// Clears a stale TCC entry, then asks again.
+#[tauri::command]
+#[specta::specta]
+pub fn reset_accessibility(app: AppHandle) -> Result<(), String> {
+    let bundle_id = &app.config().identifier;
+    permissions::reset_accessibility(bundle_id).map_err(|err| err.to_string())?;
+    tracing::info!(bundle_id, "reset Accessibility permission");
+    request_accessibility()
+}

@@ -5,8 +5,10 @@
 #[cfg(not(target_os = "macos"))]
 compile_error!("MouseTune only supports macOS.");
 
+mod events;
 mod ipc;
 mod logging;
+mod permission_monitor;
 mod platform;
 mod tray;
 mod window;
@@ -17,7 +19,12 @@ use tauri::{Manager, RunEvent};
 /// bindings-export test so `src/bindings.ts` can't drift from the backend.
 fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
     tauri_specta::Builder::<tauri::Wry>::new()
-        .commands(tauri_specta::collect_commands![ipc::get_status])
+        .commands(tauri_specta::collect_commands![
+            ipc::get_status,
+            ipc::request_accessibility,
+            ipc::reset_accessibility,
+        ])
+        .events(tauri_specta::collect_events![events::PermissionChanged])
 }
 
 #[cfg(any(debug_assertions, test))]
@@ -47,6 +54,7 @@ pub fn run() {
 
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
             tray::build(app.handle())?;
+            permission_monitor::spawn(app.handle().clone());
 
             tracing::info!(
                 version = app.package_info().version.to_string(),
