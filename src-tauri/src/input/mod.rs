@@ -7,4 +7,5 @@
 
 pub mod devices;
 pub mod filter;
+pub mod guard;
 pub mod taps;
