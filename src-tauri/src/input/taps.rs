@@ -223,6 +223,50 @@ mod tests {
     }
 
     #[test]
+    fn a_trackpad_next_to_a_mouse_adds_nothing() {
+        let basic_mouse = DeviceInfo {
+            button_count: 2,
+            has_wheel: false,
+            ..mouse(1)
+        };
+        // Hardware that would turn every tap on if trackpads counted.
+        let trackpad = DeviceInfo {
+            button_count: 3,
+            has_wheel: true,
+            ..apple_trackpad(2)
+        };
+        let want = TapSet {
+            buttons: false,
+            scroll: false,
+            flags: true,
+        };
+        assert_eq!(
+            desired_taps(true, &with(&[basic_mouse, trackpad]), TapDemand::ALL),
+            want
+        );
+    }
+
+    #[test]
+    fn two_mice_union_their_hardware() {
+        let buttons_no_wheel = DeviceInfo {
+            has_wheel: false,
+            ..mouse(1)
+        };
+        let wheel_two_buttons = DeviceInfo {
+            button_count: 2,
+            ..mouse(2)
+        };
+        assert_eq!(
+            desired_taps(
+                true,
+                &with(&[buttons_no_wheel, wheel_two_buttons]),
+                TapDemand::ALL
+            ),
+            ALL_ON
+        );
+    }
+
+    #[test]
     fn demand_switches_taps_off() {
         let demand = TapDemand {
             buttons: true,
