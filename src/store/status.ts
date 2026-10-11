@@ -31,16 +31,32 @@ export function startStatusSync(): () => void {
   const onFocus = () => void refresh();
   window.addEventListener("focus", onFocus);
 
-  const unlisten = events.permissionChanged.listen(({ payload }) => {
-    useStatusStore.setState((state) =>
-      state.status
-        ? { status: { ...state.status, accessibility_trusted: payload.accessibility_trusted } }
-        : state,
-    );
-  });
+  const unlisteners = [
+    events.permissionChanged.listen(({ payload }) => {
+      useStatusStore.setState((state) =>
+        state.status
+          ? { status: { ...state.status, accessibility_trusted: payload.accessibility_trusted } }
+          : state,
+      );
+    }),
+    // The event carries taps and devices only; scroll_stats and degraded keep
+    // coming from the page's polling refresh.
+    events.inputStatusChanged.listen(({ payload }) => {
+      useStatusStore.setState((state) =>
+        state.status
+          ? {
+              status: {
+                ...state.status,
+                input: { ...state.status.input, taps: payload.taps, devices: payload.devices },
+              },
+            }
+          : state,
+      );
+    }),
+  ];
 
   return () => {
     window.removeEventListener("focus", onFocus);
-    void unlisten.then((fn) => fn());
+    for (const unlisten of unlisteners) void unlisten.then((fn) => fn());
   };
 }

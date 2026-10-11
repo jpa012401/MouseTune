@@ -1,41 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
-import { mockIPC } from "@tauri-apps/api/mocks";
 import { emit } from "@tauri-apps/api/event";
-import type { Status } from "./bindings";
 import App from "./App";
-
-function status(overrides: Partial<Status> = {}): Status {
-  return {
-    app_version: "0.1.0",
-    os_version: { major: 27, minor: 0, patch: 1 },
-    accessibility_trusted: true,
-    input: {
-      taps: { buttons: false, scroll: false, flags: false },
-      devices: [],
-      scroll_stats: { mouse_wheel: 0, passed_through: 0 },
-      degraded: false,
-    },
-    ...overrides,
-  };
-}
-
-type Handler = (args: unknown) => unknown;
-
-/** Mocks the Rust backend. Every command must be handled; calls are recorded. */
-function mockBackend(handlers: Record<string, Handler>) {
-  const calls: string[] = [];
-  mockIPC(
-    (cmd, args) => {
-      calls.push(cmd);
-      const handler = handlers[cmd];
-      if (!handler) throw new Error(`unexpected command: ${cmd}`);
-      return handler(args);
-    },
-    { shouldMockEvents: true },
-  );
-  return calls;
-}
+import { mockBackend, status } from "./test/backend";
 
 const untrusted = () => status({ accessibility_trusted: false });
 
