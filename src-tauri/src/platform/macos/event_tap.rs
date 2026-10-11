@@ -142,9 +142,35 @@ impl Drop for MacTapController {
     }
 }
 
+// Verified by review, not tests: creating, enabling or rebuilding a real tap
+// (`set_enabled`, `revive`) needs Accessibility, which test binaries don't have.
 impl TapController for MacTapController {
-    // Verified by review, not tests: creating or enabling a real tap needs
-    // Accessibility, which test binaries don't have.
+    /// Only called by the watchdog timer, outside every tap callout, so
+    /// discarding a valid port here can't pull it out from under CoreGraphics.
+    fn revive(&mut self, kind: TapKind) -> bool {
+        if self.set_enabled(kind, true) {
+            return true;
+        }
+        // `set_enabled` returns false for two reasons: the slot is empty or its
+        // create just failed (nothing to rebuild), or a valid port won't re-enable.
+        let stuck = matches!(&self.ports[Self::slot(kind)], Some(port) if port.is_valid());
+        if !stuck {
+            return false;
+        }
+        tracing::info!(?kind, "event tap won't re-enable; rebuilding it");
+        self.discard(kind);
+        if !self.create(kind) {
+            return false;
+        }
+        if let Some(port) = &self.ports[Self::slot(kind)] {
+            CGEvent::tap_enable(port, true);
+        }
+        self.is_enabled(kind)
+    }
+
+    /// May run inside the tap's own callout (`on_tap_disabled`), so it never
+    /// discards a valid port. Only an already-invalid port is replaced: CF
+    /// never runs callouts for an invalid port.
     fn set_enabled(&mut self, kind: TapKind, enabled: bool) -> bool {
         let slot = Self::slot(kind);
         if !enabled {
@@ -153,17 +179,18 @@ impl TapController for MacTapController {
             }
             return true;
         }
-        if let Some(port) = &self.ports[slot] {
-            if port.is_valid() {
+        match &self.ports[slot] {
+            Some(port) if port.is_valid() => {
                 CGEvent::tap_enable(port, true);
-                if CGEvent::tap_is_enabled(port) {
-                    return true;
-                }
+                return self.is_enabled(kind);
             }
-            // macOS invalidates a tap when Accessibility is revoked, and a
-            // dead port never comes back on: replace it with a fresh tap.
-            tracing::info!(?kind, "event tap is dead; recreating it");
-            self.discard(kind);
+            Some(_) => {
+                // macOS invalidates a tap when Accessibility is revoked, and a
+                // dead port never comes back on: replace it with a fresh tap.
+                tracing::info!(?kind, "event tap is invalid; recreating it");
+                self.discard(kind);
+            }
+            None => {}
         }
         if !self.create(kind) {
             return false;

@@ -96,7 +96,9 @@ use crate::input::taps::{TapController, TapKind, TapSet};
 struct FakeTapState {
     enabled: TapSet,
     failing: TapSet,
+    wedged: TapSet,
     calls: Vec<(TapKind, bool)>,
+    revives: Vec<TapKind>,
 }
 
 /// In-memory taps. Clones share state, so a test keeps a handle after
@@ -116,8 +118,17 @@ impl FakeTapController {
     pub fn os_disables(&self, kind: TapKind) {
         self.0.lock().unwrap().enabled.set(kind, false);
     }
+    /// Simulates a tap macOS disabled whose port is still valid but won't re-enable.
+    pub fn wedge(&self, kind: TapKind) {
+        let mut state = self.0.lock().unwrap();
+        state.enabled.set(kind, false);
+        state.wedged.set(kind, true);
+    }
     pub fn calls(&self) -> Vec<(TapKind, bool)> {
         self.0.lock().unwrap().calls.clone()
+    }
+    pub fn revives(&self) -> Vec<TapKind> {
+        self.0.lock().unwrap().revives.clone()
     }
 }
 
@@ -125,10 +136,20 @@ impl TapController for FakeTapController {
     fn set_enabled(&mut self, kind: TapKind, enabled: bool) -> bool {
         let mut state = self.0.lock().unwrap();
         state.calls.push((kind, enabled));
-        if enabled && state.failing.get(kind) {
+        if enabled && (state.failing.get(kind) || state.wedged.get(kind)) {
             return false;
         }
         state.enabled.set(kind, enabled);
+        true
+    }
+    fn revive(&mut self, kind: TapKind) -> bool {
+        let mut state = self.0.lock().unwrap();
+        state.revives.push(kind);
+        if state.failing.get(kind) {
+            return false;
+        }
+        state.wedged.set(kind, false);
+        state.enabled.set(kind, true);
         true
     }
     fn is_enabled(&self, kind: TapKind) -> bool {

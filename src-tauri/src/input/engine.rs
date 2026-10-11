@@ -394,4 +394,22 @@ mod tests {
             }
         );
     }
+
+    #[test]
+    fn timeout_on_a_wedged_tap_is_left_to_the_watchdog() {
+        let mut r = rig(true);
+        r.engine.apply_device_event(DeviceEvent::Added(mouse(1)));
+        r.taps.wedge(TapKind::Scroll);
+
+        r.engine
+            .on_tap_disabled(TapKind::Scroll, DisabledReason::Timeout);
+        assert!(
+            !r.engine.snapshot().taps.scroll,
+            "callback path must not rebuild"
+        );
+        assert!(r.taps.revives().is_empty());
+
+        r.engine.watchdog();
+        assert!(r.published.last().taps.scroll);
+    }
 }

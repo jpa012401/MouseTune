@@ -174,13 +174,12 @@ If you can't name the requirement a pattern serves, don't add it. **DRY is about
 ## Current state
 
 - **Merged on `main`:** Phase 0 (scaffold), Phase 1 (Accessibility onboarding, permission monitor, tray status, settings shell) and Phase 2 (input thread, event taps, HID mouse tracking, General page). Phase 2 passes every event through and is **pending manual hardware acceptance** (README).
-- **Next:** fix the open tap-recreate issue below as a small reviewed task, then Phase 3 (config store).
+- **Next:** Phase 3 (config store).
 - **Known gaps:**
-  - **Open safety issue:** `MacTapController::set_enabled(true)` in `platform/macos/event_tap.rs` can discard and recreate a still-valid port when it reads disabled after re-enabling. That path runs inside the tap's own CoreGraphics callout (via `on_tap_disabled`), so it is a possible use-after-free. Fix: recreate only from the watchdog/reconcile path; the callback path only calls `tap_enable`.
   - No config store yet (Phase 3), so tray toggles and `TapDemand` are placeholders.
   - Commands return `Result<(), String>` rather than typed errors.
   - Deferred: a shutdown join timeout, a tap-timeout counter, a degraded indicator in the tray, and moving `spawn` out of `input/`.
-- **Never exercised for real:** the Accessibility prompt and settings-pane flow; the tray icon rendering; a bundled or signed build; CI on GitHub (no remote yet); macOS 12–26; Intel; an external mouse through the HID adapter; tap teardown on quit with real taps.
+- **Never exercised for real:** the Accessibility prompt and settings-pane flow; the tray icon rendering; a bundled or signed build; CI on GitHub (no remote yet); macOS 12–26; Intel; an external mouse through the HID adapter; tap teardown on quit with real taps; the watchdog's tap rebuild (`revive`).
 
 ## Settled decisions and open questions
 
