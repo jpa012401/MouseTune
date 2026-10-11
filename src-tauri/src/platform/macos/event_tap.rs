@@ -120,6 +120,14 @@ impl MacTapController {
         self.ports[Self::slot(kind)] = Some(port);
         true
     }
+
+    /// Disables and invalidates a tap, which also removes its run-loop source.
+    fn discard(&mut self, kind: TapKind) {
+        if let Some(port) = self.ports[Self::slot(kind)].take() {
+            CGEvent::tap_enable(&port, false);
+            port.invalidate();
+        }
+    }
 }
 
 // Verified by review, not tests: creating a tap needs Accessibility, which tests don't have.
@@ -128,22 +136,42 @@ impl Drop for MacTapController {
         // The run loop retains each source and each source retains its port, so
         // dropping `ports` alone would leave the taps live. Invalidating a port
         // also removes its run-loop sources.
-        for port in self.ports.iter().flatten() {
-            CGEvent::tap_enable(port, false);
-            port.invalidate();
+        for kind in TapKind::ALL {
+            self.discard(kind);
         }
     }
 }
 
 impl TapController for MacTapController {
+    // Verified by review, not tests: creating or enabling a real tap needs
+    // Accessibility, which test binaries don't have.
     fn set_enabled(&mut self, kind: TapKind, enabled: bool) -> bool {
-        if enabled && self.ports[Self::slot(kind)].is_none() && !self.create(kind) {
+        let slot = Self::slot(kind);
+        if !enabled {
+            if let Some(port) = &self.ports[slot] {
+                CGEvent::tap_enable(port, false);
+            }
+            return true;
+        }
+        if let Some(port) = &self.ports[slot] {
+            if port.is_valid() {
+                CGEvent::tap_enable(port, true);
+                if CGEvent::tap_is_enabled(port) {
+                    return true;
+                }
+            }
+            // macOS invalidates a tap when Accessibility is revoked, and a
+            // dead port never comes back on: replace it with a fresh tap.
+            tracing::info!(?kind, "event tap is dead; recreating it");
+            self.discard(kind);
+        }
+        if !self.create(kind) {
             return false;
         }
-        if let Some(port) = &self.ports[Self::slot(kind)] {
-            CGEvent::tap_enable(port, enabled);
+        if let Some(port) = &self.ports[slot] {
+            CGEvent::tap_enable(port, true);
         }
-        true
+        self.is_enabled(kind)
     }
 
     fn is_enabled(&self, kind: TapKind) -> bool {
