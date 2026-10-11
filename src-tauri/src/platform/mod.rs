@@ -2,4 +2,6 @@
 
 mod macos;
 
-pub use macos::{os_version, permissions};
+// `event_tap` is first used in Task 8, which removes this allow.
+#[allow(unused_imports)]
+pub use macos::{event_tap, os_version, permissions};
