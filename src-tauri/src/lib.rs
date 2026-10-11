@@ -7,6 +7,7 @@ compile_error!("MouseTune only supports macOS.");
 
 mod accessibility;
 mod events;
+mod input;
 mod ipc;
 mod logging;
 mod permission_monitor;

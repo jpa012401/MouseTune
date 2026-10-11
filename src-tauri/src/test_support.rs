@@ -59,3 +59,33 @@ impl Accessibility for FakeAccessibility {
         }
     }
 }
+
+use crate::input::devices::DeviceInfo;
+
+/// A third-party 5-button wheel mouse. Sender IDs are `id * 10` and `id * 10 + 1`.
+pub fn mouse(id: u64) -> DeviceInfo {
+    DeviceInfo {
+        id,
+        sender_ids: vec![id * 10, id * 10 + 1],
+        name: "MX Master 3".into(),
+        manufacturer: "Logitech".into(),
+        vendor_id: 0x046D,
+        product_id: 0x4082,
+        button_count: 5,
+        has_wheel: true,
+    }
+}
+
+/// Apple's Magic Trackpad (excluded).
+pub fn apple_trackpad(id: u64) -> DeviceInfo {
+    DeviceInfo {
+        id,
+        sender_ids: vec![id * 10],
+        name: "Magic Trackpad".into(),
+        manufacturer: "Apple Inc.".into(),
+        vendor_id: 0x05AC,
+        product_id: 0x0265,
+        button_count: 1,
+        has_wheel: false,
+    }
+}
