@@ -2,6 +2,7 @@
 //! `DeviceEvent`s. `input_usages` and `device_info` are the only logic, and pure.
 
 use std::{
+    collections::HashMap,
     ffi::{CStr, c_void},
     panic::{AssertUnwindSafe, catch_unwind},
     ptr::NonNull,
@@ -105,15 +106,37 @@ pub fn device_info(props: HidProps) -> DeviceInfo {
     }
 }
 
-type Sink = Box<dyn FnMut(DeviceEvent)>;
+/// Registry IDs of added devices, keyed by `IOHIDDeviceRef` address. A
+/// terminating service may no longer answer a registry lookup, and a lost
+/// `Removed` would keep a mouse tracked and its taps on.
+#[derive(Debug, Default)]
+struct KnownDevices(HashMap<usize, u64>);
+
+impl KnownDevices {
+    fn added(&mut self, device: usize, id: u64) {
+        self.0.insert(device, id);
+    }
+
+    /// The removed device's ID: the one stored at add time, else `lookup`.
+    fn removed(&mut self, device: usize, lookup: impl FnOnce() -> Option<u64>) -> Option<u64> {
+        self.0.remove(&device).or_else(lookup)
+    }
+}
+
+/// What the IOKit callbacks reach through their context pointer.
+struct SinkState {
+    sink: Box<dyn FnMut(DeviceEvent)>,
+    known: KnownDevices,
+}
 
 /// Watches HID mice on a run loop. Keep it alive: dropping it stops
 /// monitoring, and no callback fires after that.
 pub struct DeviceMonitor {
     manager: CFRetained<IOHIDManager>,
     run_loop: CFRetained<CFRunLoop>,
-    /// Boxed twice so the callbacks get a thin, stable pointer to it.
-    _sink: Box<Sink>,
+    /// Leaked from a `Box` and never moved, so the callbacks' pointer stays
+    /// valid and unaliased; freed in `Drop` after unscheduling.
+    state: NonNull<SinkState>,
 }
 
 impl DeviceMonitor {
@@ -122,8 +145,11 @@ impl DeviceMonitor {
     /// seized, so their events keep reaching the system.
     pub fn start(run_loop: &CFRunLoop, sink: impl FnMut(DeviceEvent) + 'static) -> DeviceMonitor {
         let manager = IOHIDManager::new(None, kIOHIDOptionsTypeNone);
-        let mut sink: Box<Sink> = Box::new(Box::new(sink));
-        let context: *mut Sink = &mut *sink;
+        let state = NonNull::from(Box::leak(Box::new(SinkState {
+            sink: Box::new(sink),
+            known: KnownDevices::default(),
+        })));
+        let context: *mut c_void = state.as_ptr().cast();
 
         let matching = CFDictionary::<CFString, CFNumber>::from_slices(
             &[
@@ -138,12 +164,12 @@ impl DeviceMonitor {
         // SAFETY: the dictionary has CFString keys and CFNumber values, as
         // IOHIDManager matching expects.
         unsafe { manager.set_device_matching(Some(matching.as_opaque())) };
-        // SAFETY: both callbacks match `IOHIDDeviceCallback`. `context` points
-        // into `sink`, a heap allocation owned by the returned monitor, which
+        // SAFETY: both callbacks match `IOHIDDeviceCallback`. `context` is
+        // the `SinkState` allocation owned by the returned monitor, which
         // unschedules the manager before freeing it.
         unsafe {
-            manager.register_device_matching_callback(Some(device_added), context.cast());
-            manager.register_device_removal_callback(Some(device_removed), context.cast());
+            manager.register_device_matching_callback(Some(device_added), context);
+            manager.register_device_removal_callback(Some(device_removed), context);
         }
         // Matching and property reads come from the IORegistry, so the
         // manager is never opened: IOHIDManagerOpen would add an Input
@@ -155,7 +181,7 @@ impl DeviceMonitor {
         DeviceMonitor {
             manager,
             run_loop: run_loop.retain(),
-            _sink: sink,
+            state,
         }
     }
 }
@@ -164,11 +190,14 @@ impl DeviceMonitor {
 impl Drop for DeviceMonitor {
     fn drop(&mut self) {
         // SAFETY: unscheduling from the run loop and mode used in `start`.
-        // After this no callback can fire into `_sink`, which drops next.
+        // After this no callback can fire into `state`.
         unsafe {
             self.manager
                 .unschedule_from_run_loop(&self.run_loop, default_mode())
         };
+        // SAFETY: `state` came from `Box::leak` in `start`, is freed only
+        // here, and no callback can reach it any more.
+        drop(unsafe { Box::from_raw(self.state.as_ptr()) });
     }
 }
 
@@ -181,14 +210,14 @@ fn cf_string(key: &CStr) -> CFRetained<CFString> {
     CFString::from_str(key.to_str().expect("IOKit keys are ASCII"))
 }
 
-/// Runs a callback body against the sink, catching panics so they never
-/// unwind into IOKit.
-fn with_sink(context: *mut c_void, name: &str, body: impl FnOnce(&mut Sink)) {
-    // SAFETY: `context` is the `Sink` pointer registered in `start`; the
+/// Runs a callback body against the sink state, catching panics so they
+/// never unwind into IOKit.
+fn with_state(context: *mut c_void, name: &str, body: impl FnOnce(&mut SinkState)) {
+    // SAFETY: `context` is the `SinkState` pointer registered in `start`; the
     // monitor keeps it alive while the manager is scheduled. Callbacks run on
     // the monitor's run loop thread one at a time, so the borrow is unique.
-    let sink = unsafe { &mut *context.cast::<Sink>() };
-    if catch_unwind(AssertUnwindSafe(|| body(sink))).is_err() {
+    let state = unsafe { &mut *context.cast::<SinkState>() };
+    if catch_unwind(AssertUnwindSafe(|| body(state))).is_err() {
         tracing::error!(callback = name, "HID callback panicked; event dropped");
     }
 }
@@ -199,7 +228,8 @@ unsafe extern "C-unwind" fn device_added(
     _sender: *mut c_void,
     device: NonNull<IOHIDDevice>,
 ) {
-    with_sink(context, "device_added", |sink| {
+    with_state(context, "device_added", |state| {
+        let address = device.as_ptr() as usize;
         // SAFETY: IOKit passes a valid device for the call's duration.
         let device = unsafe { device.as_ref() };
         if let Some(props) = hid_props(device) {
@@ -213,7 +243,8 @@ unsafe extern "C-unwind" fn device_added(
                 has_wheel = info.has_wheel,
                 "HID device added"
             );
-            sink(DeviceEvent::Added(info));
+            state.known.added(address, info.id);
+            (state.sink)(DeviceEvent::Added(info));
         }
     });
 }
@@ -224,12 +255,19 @@ unsafe extern "C-unwind" fn device_removed(
     _sender: *mut c_void,
     device: NonNull<IOHIDDevice>,
 ) {
-    with_sink(context, "device_removed", |sink| {
+    with_state(context, "device_removed", |state| {
+        let address = device.as_ptr() as usize;
         // SAFETY: IOKit passes a valid device for the call's duration.
         let device = unsafe { device.as_ref() };
-        if let Some(id) = registry_id(device.service()) {
-            tracing::debug!(id, "HID device removed");
-            sink(DeviceEvent::Removed { id });
+        match state
+            .known
+            .removed(address, || registry_id(device.service()))
+        {
+            Some(id) => {
+                tracing::debug!(id, "HID device removed");
+                (state.sink)(DeviceEvent::Removed { id });
+            }
+            None => tracing::warn!("removed HID device has no known registry ID; it stays tracked"),
         }
     });
 }
@@ -545,6 +583,36 @@ mod tests {
             device_info(HidProps { usages, ..props() }).button_count,
             255
         );
+    }
+
+    #[test]
+    fn removal_uses_the_id_stored_at_add_time() {
+        let mut known = KnownDevices::default();
+        known.added(0x1000, 7);
+        assert_eq!(known.removed(0x1000, || None), Some(7));
+    }
+
+    #[test]
+    fn removal_of_an_unknown_device_falls_back_to_the_lookup() {
+        let mut known = KnownDevices::default();
+        known.added(0x1000, 7);
+        assert_eq!(known.removed(0x2000, || Some(9)), Some(9));
+    }
+
+    #[test]
+    fn removal_forgets_the_device() {
+        let mut known = KnownDevices::default();
+        known.added(0x1000, 7);
+        known.removed(0x1000, || None);
+        assert_eq!(known.removed(0x1000, || None), None);
+    }
+
+    #[test]
+    fn re_adding_an_address_replaces_its_id() {
+        let mut known = KnownDevices::default();
+        known.added(0x1000, 7);
+        known.added(0x1000, 8);
+        assert_eq!(known.removed(0x1000, || None), Some(8));
     }
 
     /// Lists real devices. Run manually:
