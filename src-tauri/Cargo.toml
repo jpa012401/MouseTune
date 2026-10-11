@@ -28,7 +28,8 @@ tracing-appender = "0.2"
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSDictionary", "NSProcessInfo", "NSString", "NSValue"] }
 objc2-core-graphics = { version = "0.3", default-features = false, features = ["std", "CGEvent", "CGEventTypes", "CGEventSource"] }
-objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFMachPort", "CFRunLoop", "CFString"] }
+objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFArray", "CFDictionary", "CFMachPort", "CFNumber", "CFRunLoop", "CFString"] }
+objc2-io-kit = { version = "0.3", default-features = false, features = ["std", "hid", "libc"] }
 
 [profile.release]
 codegen-units = 1
