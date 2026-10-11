@@ -151,6 +151,12 @@ impl TapController for MacTapController {
         if self.set_enabled(kind, true) {
             return true;
         }
+        // `set_enabled` returns false for two reasons: the slot is empty or its
+        // create just failed (nothing to rebuild), or a valid port won't re-enable.
+        let stuck = matches!(&self.ports[Self::slot(kind)], Some(port) if port.is_valid());
+        if !stuck {
+            return false;
+        }
         tracing::info!(?kind, "event tap won't re-enable; rebuilding it");
         self.discard(kind);
         if !self.create(kind) {
