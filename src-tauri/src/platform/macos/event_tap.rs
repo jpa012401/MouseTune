@@ -246,9 +246,113 @@ unsafe extern "C-unwind" fn flags_callback(
 
 #[cfg(test)]
 mod tests {
+    use std::{cell::Cell, sync::atomic::Ordering};
+
     use objc2_core_graphics::CGScrollEventUnit;
 
     use super::*;
+
+    /// Counts scrolls and can panic on them.
+    struct Handler {
+        scrolls: Rc<Cell<u32>>,
+        panics: bool,
+    }
+
+    impl TapHandler for Handler {
+        fn on_scroll(&mut self, _: &ScrollFields) {
+            self.scrolls.set(self.scrolls.get() + 1);
+            if self.panics {
+                panic!("handler bug");
+            }
+        }
+        fn on_button(&mut self, _: u64) {}
+        fn on_tap_disabled(&mut self, _: TapKind, _: DisabledReason) {}
+    }
+
+    fn context(handler: Option<Rc<RefCell<Handler>>>) -> TapContext {
+        let context = TapContext {
+            handler: OnceCell::new(),
+            degraded: Arc::new(AtomicBool::new(false)),
+        };
+        if let Some(handler) = handler {
+            let handler: Rc<RefCell<dyn TapHandler>> = handler;
+            assert!(context.handler.set(handler).is_ok());
+        }
+        context
+    }
+
+    fn handler(panics: bool) -> (Rc<RefCell<Handler>>, Rc<Cell<u32>>) {
+        let scrolls = Rc::new(Cell::new(0));
+        let handler = Rc::new(RefCell::new(Handler {
+            scrolls: Rc::clone(&scrolls),
+            panics,
+        }));
+        (handler, scrolls)
+    }
+
+    /// Feeds a real scroll event to the scroll tap callback.
+    fn scroll_through(context: &TapContext) -> (*mut CGEvent, *mut CGEvent) {
+        let event =
+            CGEvent::new_scroll_wheel_event2(None, CGScrollEventUnit::Line, 1, -1, 0, 0).unwrap();
+        let event = NonNull::from(&*event);
+        // SAFETY: a real event and a live `TapContext`, as CoreGraphics would
+        // pass them; the proxy is unused.
+        let returned = unsafe {
+            scroll_callback(
+                std::ptr::null_mut(),
+                CGEventType::ScrollWheel,
+                event,
+                (context as *const TapContext).cast_mut().cast(),
+            )
+        };
+        (event.as_ptr(), returned)
+    }
+
+    #[test]
+    fn a_panicking_handler_passes_the_event_through_and_marks_degraded() {
+        let (handler, scrolls) = handler(true);
+        let context = context(Some(handler));
+
+        let (sent, returned) = scroll_through(&context);
+
+        assert_eq!(returned, sent);
+        assert_eq!(scrolls.get(), 1);
+        assert!(context.degraded.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn a_re_entrant_call_passes_through_without_calling_the_handler() {
+        let (handler, scrolls) = handler(false);
+        let context = context(Some(Rc::clone(&handler)));
+        let _busy = handler.borrow_mut();
+
+        let (sent, returned) = scroll_through(&context);
+
+        assert_eq!(returned, sent);
+        assert_eq!(scrolls.get(), 0);
+        assert!(!context.degraded.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn no_handler_yet_passes_the_event_through() {
+        let context = context(None);
+
+        let (sent, returned) = scroll_through(&context);
+
+        assert_eq!(returned, sent);
+        assert!(!context.degraded.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn a_healthy_handler_sees_the_scroll_and_the_event_passes_through() {
+        let (handler, scrolls) = handler(false);
+        let context = context(Some(handler));
+
+        let (sent, returned) = scroll_through(&context);
+
+        assert_eq!(returned, sent);
+        assert_eq!(scrolls.get(), 1);
+    }
 
     #[test]
     fn button_tap_listens_to_other_mouse_down_and_up_only() {
