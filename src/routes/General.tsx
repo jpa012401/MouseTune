@@ -27,7 +27,8 @@ function StatRow({ label, value }: { label: string; value: number }) {
 }
 
 function deviceDetails({ manufacturer, button_count, has_wheel }: Device) {
-  return [manufacturer, `${button_count} buttons`, has_wheel ? "scroll wheel" : ""]
+  const buttons = `${button_count} ${button_count === 1 ? "button" : "buttons"}`;
+  return [manufacturer, buttons, has_wheel ? "scroll wheel" : ""]
     .filter(Boolean)
     .join(" · ");
 }

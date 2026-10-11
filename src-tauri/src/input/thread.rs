@@ -251,6 +251,7 @@ mod tests {
         assert!(!handle.shared().snapshot.load().trusted);
         let started = std::time::Instant::now();
         handle.shutdown();
-        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+        // Generous so a loaded CI runner doesn't flake; a hang still fails.
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
     }
 }

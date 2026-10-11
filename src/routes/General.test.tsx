@@ -59,6 +59,30 @@ describe("General page", () => {
     expect(screen.queryByText("No mouse connected")).toBeNull();
   });
 
+  it("says no mouse is connected as soon as the last one is unplugged", async () => {
+    mockBackend({ get_status: () => status({ input: inputStatus({ devices: [device()] }) }) });
+    renderGeneral();
+    await screen.findByText(/MX Master 3/);
+
+    await act(() =>
+      emit("input-status-changed", { taps: { buttons: false, scroll: false, flags: false }, devices: [] }),
+    );
+
+    // Synchronous on purpose: the poll would still return the mouse, so only
+    // the event can have removed it.
+    expect(screen.getByText("No mouse connected")).toBeTruthy();
+    expect(screen.queryByText(/MX Master 3/)).toBeNull();
+  });
+
+  it("says 1 button, not 1 buttons", async () => {
+    mockBackend({
+      get_status: () => status({ input: inputStatus({ devices: [device({ name: "Clicker", button_count: 1, has_wheel: false })] }) }),
+    });
+    renderGeneral();
+    const list = await screen.findByRole("list", { name: "Connected mice" });
+    expect(within(list).getByText(/button/).textContent).toBe("Logitech · 1 button");
+  });
+
   it("warns when the engine is degraded", async () => {
     mockBackend({ get_status: () => status({ input: inputStatus({ degraded: true }) }) });
     renderGeneral();

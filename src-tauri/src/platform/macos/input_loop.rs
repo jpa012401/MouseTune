@@ -193,6 +193,10 @@ fn run_input_thread(
 
     CFRunLoop::run();
 
+    // The run loop no longer services the taps, so switch them off before
+    // anything else; a filtering tap left on but unserviced stalls input.
+    engine.borrow_mut().set_trusted(false);
+
     // Teardown order matters: nothing may call back into state that is gone.
     // 1. Control source and watchdog timer, then the state they point to.
     timer.invalidate();

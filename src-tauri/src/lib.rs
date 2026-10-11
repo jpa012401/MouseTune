@@ -68,13 +68,16 @@ pub fn run() {
             let accessibility: Arc<dyn Accessibility> = Arc::new(SystemAccessibility);
             app.manage(Arc::clone(&accessibility));
 
+            // Read once so the engine and the tray start from the same value.
+            // PermissionMonitor reads trust itself and converges on its next poll.
+            let trusted = accessibility.is_trusted();
             let input = input::thread::spawn(
-                accessibility.is_trusted(),
+                trusted,
                 Box::new(events::EmitInputStatus(app.handle().clone())),
             );
             app.manage(Arc::clone(&input));
 
-            tray::build(app.handle(), accessibility.is_trusted())?;
+            tray::build(app.handle(), trusted)?;
             PermissionMonitor::new(
                 Arc::clone(&accessibility),
                 vec![
@@ -88,7 +91,7 @@ pub fn run() {
             tracing::info!(
                 version = app.package_info().version.to_string(),
                 os = %platform::os_version::current(),
-                accessibility = accessibility.is_trusted(),
+                accessibility = trusted,
                 "MouseTune started"
             );
 
