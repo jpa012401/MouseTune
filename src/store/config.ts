@@ -34,7 +34,7 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
         general: { ...view.config.general, ...patch },
       });
       if (result.status === "error") {
-        set({ error: configErrorMessage(result.error) });
+        set({ error: configErrorMessage(result.error, view.config.buttons.remaps) });
         return;
       }
       // A save can clear the recovery notice in Rust (the unreadable file was overwritten).

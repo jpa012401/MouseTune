@@ -6,7 +6,10 @@ use std::time::Duration;
 
 use crate::{
     actions::CompiledAction,
-    config::schema::{Config, TriggerDuration},
+    config::{
+        schema::{Config, TriggerDuration},
+        validate::check_remap,
+    },
 };
 
 pub const MAX_BUTTONS: usize = 32;
@@ -95,8 +98,8 @@ pub fn compile(config: &Config) -> CompiledRemaps {
     let mut compiled = CompiledRemaps::empty();
     for remap in &config.buttons.remaps {
         let t = remap.trigger;
-        if !(3..=MAX_BUTTONS as u8).contains(&t.button) || !(1..=MAX_LEVEL).contains(&t.level) {
-            tracing::warn!(?t, "skipping a remap with an unsupported button or level");
+        if let Err(problem) = check_remap(remap) {
+            tracing::warn!(?t, ?problem, "skipping an invalid remap");
             continue;
         }
         let slot = compiled.buttons[usize::from(t.button - 1)].slot(t.level, t.duration);

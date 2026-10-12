@@ -64,7 +64,7 @@ export type Config = {
 
 export type ConfigChanged = Config;
 
-export type ConfigError = { kind: "Io"; message: string } | { kind: "UnsupportedVersion"; found: number; expected: number };
+export type ConfigError = { kind: "Io"; message: string } | { kind: "UnsupportedVersion"; found: number; expected: number } | { kind: "InvalidRemap"; index: number; reason: RemapProblem };
 
 /**  Settings plus any startup recovery the UI should mention. */
 export type ConfigView = {
@@ -130,6 +130,8 @@ export type Remap = {
 	trigger: ClickTrigger,
 	effect: Effect,
 };
+
+export type RemapProblem = "DuplicateTrigger" | "ButtonNotRemappable" | "ButtonOutOfRange" | "LevelOutOfRange" | "EmptyKeyCombo";
 
 export type ScrollStats = {
 	mouse_wheel: number,

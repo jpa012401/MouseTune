@@ -7,6 +7,7 @@ use crate::config::{
     file::ConfigFile,
     load::parse_config,
     schema::{CURRENT_VERSION, Config, General},
+    validate::{RemapProblem, validate_remaps},
 };
 
 /// Called after a change has been saved. Runs while the store is locked:
@@ -22,6 +23,8 @@ pub enum ConfigError {
     Io { message: String },
     #[error("settings version {found} isn't supported (expected {expected})")]
     UnsupportedVersion { found: u32, expected: u32 },
+    #[error("remap {index} is invalid: {reason:?}")]
+    InvalidRemap { index: u32, reason: RemapProblem },
 }
 
 /// The settings file couldn't be used at startup.
@@ -75,6 +78,12 @@ impl ConfigStore {
                 expected: CURRENT_VERSION,
             });
         }
+        validate_remaps(&new.buttons.remaps).map_err(|(index, reason)| {
+            ConfigError::InvalidRemap {
+                index: index as u32,
+                reason,
+            }
+        })?;
         if new == self.current {
             return Ok(new);
         }
@@ -264,6 +273,38 @@ mod tests {
         );
         assert!(file.writes().is_empty());
         assert_eq!(store.current(), &Config::default());
+    }
+
+    #[test]
+    fn an_invalid_remap_is_rejected_without_writing() {
+        let file = FakeConfigFile::missing();
+        let mut store = ConfigStore::load(Box::new(file.clone()));
+        let seen = Seen::new(&file);
+        store.subscribe(Box::new(seen.clone()));
+        let mut bad = Config::default();
+        bad.buttons.remaps[0].trigger.button = 1;
+        assert_eq!(
+            store.update(bad),
+            Err(ConfigError::InvalidRemap {
+                index: 0,
+                reason: RemapProblem::ButtonNotRemappable
+            })
+        );
+        assert!(file.writes().is_empty());
+        assert!(seen.log().is_empty());
+        assert_eq!(store.current(), &Config::default());
+    }
+
+    #[test]
+    fn a_bad_hand_edited_remap_still_loads() {
+        let file = FakeConfigFile::with(
+            r#"{ "version": 1, "general": { "buttons_enabled": true, "scroll_enabled": true },
+            "buttons": { "remaps": [ { "trigger": { "button": 1, "level": 1, "duration": "click" },
+                                       "effect": { "action": { "type": "Navigate", "direction": "Back" } } } ] } }"#,
+        );
+        let store = ConfigStore::load(Box::new(file));
+        assert_eq!(store.current().buttons.remaps.len(), 1);
+        assert!(store.recovery().is_none());
     }
 
     #[test]

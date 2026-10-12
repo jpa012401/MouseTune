@@ -46,6 +46,11 @@ const MODIFIER_KEYS: [(ModifierMask, u16); 4] = [
     (ModifierMask::COMMAND, 0x37),
 ];
 
+/// macOS virtual key codes of modifier keys (Command, Shift, Option, Control, both sides; Caps Lock; Fn).
+pub fn is_modifier_key(key_code: u16) -> bool {
+    (0x36..=0x3F).contains(&key_code)
+}
+
 pub fn key_combo_strokes(binding: KeyBinding) -> Vec<KeyStroke> {
     let mods: Vec<(ModifierMask, u16)> = MODIFIER_KEYS
         .into_iter()
@@ -82,6 +87,14 @@ pub fn key_combo_strokes(binding: KeyBinding) -> Vec<KeyStroke> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn modifier_key_codes_are_recognised() {
+        for code in 0x36..=0x3F {
+            assert!(is_modifier_key(code), "{code:#x}");
+        }
+        assert!(!is_modifier_key(0x35));
+    }
 
     #[test]
     fn cmd_bracket_presses_command_around_the_key() {
