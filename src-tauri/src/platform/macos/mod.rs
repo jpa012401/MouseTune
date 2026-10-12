@@ -1,5 +1,6 @@
 pub mod click_timers;
 pub mod display_link;
+pub mod dock_swipe;
 pub mod event_poster;
 pub mod event_tap;
 pub mod frontmost_app;
