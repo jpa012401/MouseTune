@@ -28,8 +28,10 @@ export const events = {
 };
 
 /* Types */
-/**  What a remap does. Phase 4b adds the rest of spec §7.1. */
-export type Action = { type: "SymbolicHotkey"; id: SymbolicHotkeyId } | { type: "Navigate"; direction: NavDirection };
+/**  What a remap does (spec §7.1, §9.2). */
+export type Action = { type: "SymbolicHotkey"; id: SymbolicHotkeyId } | { type: "Navigate"; direction: NavDirection } | 
+/**  A keyboard shortcut to post. `key_label` is only for display. */
+{ type: "KeyCombo"; key_code: number; modifiers: KeyModifier[]; key_label: string };
 
 export type ActionStats = {
 	performed: number,
@@ -104,6 +106,8 @@ export type InputStatusChanged = {
 	devices: Device[],
 };
 
+export type KeyModifier = "Command" | "Shift" | "Option" | "Control";
+
 export type NavDirection = "Back" | "Forward";
 
 export type OsVersion = {
@@ -139,7 +143,7 @@ export type Status = {
 	input: InputStatus,
 };
 
-export type SymbolicHotkeyId = "MissionControl" | "ShowDesktop";
+export type SymbolicHotkeyId = "MissionControl" | "AppExpose" | "ShowDesktop" | "Launchpad" | "LookUp" | "Spotlight" | "NotificationCenter" | "SpaceLeft" | "SpaceRight" | "Desktop1" | "Desktop2" | "Desktop3" | "Desktop4" | "Desktop5" | "Desktop6" | "Desktop7" | "Desktop8" | "Desktop9" | "Desktop10" | "Desktop11" | "Desktop12" | "Desktop13" | "Desktop14" | "Desktop15" | "Desktop16";
 
 export type TapSet = {
 	buttons: boolean,

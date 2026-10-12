@@ -24,6 +24,12 @@ pub fn config_action(action: CompiledAction) -> Action {
     match action {
         CompiledAction::SymbolicHotkey(id) => Action::SymbolicHotkey { id },
         CompiledAction::Navigate(direction) => Action::Navigate { direction },
+        // The label never reaches execution, so any fixed text will do.
+        CompiledAction::KeyCombo(binding) => Action::KeyCombo {
+            key_code: binding.key_code,
+            modifiers: Vec::new(),
+            key_label: format!("{:X}", binding.key_code),
+        },
     }
 }
 

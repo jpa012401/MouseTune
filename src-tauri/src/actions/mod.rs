@@ -11,7 +11,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use serde::Serialize;
 use specta::Type;
 
-use crate::config::schema::{Action, NavDirection, SymbolicHotkeyId};
+use self::keys::{KeyBinding, ModifierMask};
+use crate::config::schema::{Action, KeyModifier, NavDirection, SymbolicHotkeyId};
 
 /// The engine's copy of an action: plain data the tap callback can copy
 /// without touching the heap. Built by `input::remaps::compile`.
@@ -19,15 +20,36 @@ use crate::config::schema::{Action, NavDirection, SymbolicHotkeyId};
 pub enum CompiledAction {
     SymbolicHotkey(SymbolicHotkeyId),
     Navigate(NavDirection),
+    KeyCombo(KeyBinding),
 }
 
 impl From<&Action> for CompiledAction {
     fn from(action: &Action) -> Self {
-        match *action {
-            Action::SymbolicHotkey { id } => Self::SymbolicHotkey(id),
-            Action::Navigate { direction } => Self::Navigate(direction),
+        match action {
+            Action::SymbolicHotkey { id } => Self::SymbolicHotkey(*id),
+            Action::Navigate { direction } => Self::Navigate(*direction),
+            Action::KeyCombo {
+                key_code,
+                modifiers,
+                ..
+            } => Self::KeyCombo(KeyBinding {
+                key_code: *key_code,
+                modifiers: modifier_mask(modifiers),
+            }),
         }
     }
+}
+
+/// The CGEventFlags for a list of modifier names.
+pub fn modifier_mask(modifiers: &[KeyModifier]) -> ModifierMask {
+    modifiers.iter().fold(ModifierMask(0), |mask, m| {
+        mask | match m {
+            KeyModifier::Command => ModifierMask::COMMAND,
+            KeyModifier::Shift => ModifierMask::SHIFT,
+            KeyModifier::Option => ModifierMask::OPTION,
+            KeyModifier::Control => ModifierMask::CONTROL,
+        }
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -88,6 +110,8 @@ impl ActionCounters {
 pub enum OutputError {
     #[error("{0} failed")]
     Os(&'static str),
+    #[error("no shortcut to post")]
+    NoShortcut,
 }
 
 #[cfg(test)]
@@ -126,5 +150,32 @@ mod tests {
                 failed: 1
             }
         );
+    }
+
+    #[test]
+    fn a_key_combo_compiles_to_its_key_and_modifier_mask() {
+        use crate::config::schema::KeyModifier;
+        let action = Action::KeyCombo {
+            key_code: 1,
+            modifiers: vec![KeyModifier::Command, KeyModifier::Shift],
+            key_label: "S".into(),
+        };
+        assert_eq!(
+            CompiledAction::from(&action),
+            CompiledAction::KeyCombo(KeyBinding {
+                key_code: 1,
+                modifiers: ModifierMask(0x120000)
+            })
+        );
+    }
+
+    #[test]
+    fn every_modifier_name_maps_to_its_flag() {
+        use crate::config::schema::KeyModifier::*;
+        assert_eq!(modifier_mask(&[Command]), ModifierMask(0x100000));
+        assert_eq!(modifier_mask(&[Shift]), ModifierMask(0x20000));
+        assert_eq!(modifier_mask(&[Option]), ModifierMask(0x80000));
+        assert_eq!(modifier_mask(&[Control]), ModifierMask(0x40000));
+        assert_eq!(modifier_mask(&[]), ModifierMask(0));
     }
 }

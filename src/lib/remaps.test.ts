@@ -17,4 +17,9 @@ describe("remapLabel", () => {
     expect(remapLabel({ trigger: { button: 6, level: 2, duration: "click" }, effect: { action } }).trigger).toBe("Button 6 · Double click");
     expect(remapLabel({ trigger: { button: 3, level: 3, duration: "hold" }, effect: { action } }).trigger).toBe("Middle button · Triple click and hold");
   });
+
+  it("labels a recorded shortcut", () => {
+    const action = { type: "KeyCombo", key_code: 1, modifiers: ["Command", "Shift"], key_label: "S" } as const;
+    expect(remapLabel({ trigger: { button: 5, level: 1, duration: "hold" }, effect: { action: { ...action, modifiers: [...action.modifiers] } } }).action).toBe("⇧⌘S");
+  });
 });
