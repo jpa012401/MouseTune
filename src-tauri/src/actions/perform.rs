@@ -33,13 +33,12 @@ pub struct Outputs {
 
 const NO_KEY: u16 = 0xFFFF;
 
-/// Apps where Cmd+[ / Cmd+] means back / forward (spec §7.4).
-const APPLE_NAV_APPS: [&str; 8] = [
+/// Apps where Cmd+[ / Cmd+] means back / forward (spec §7.3). Xcode and
+/// Notes are left out: there Cmd+[ shifts or outdents the text.
+const APPLE_NAV_APPS: [&str; 6] = [
     "com.apple.Safari",
     "com.apple.finder",
-    "com.apple.dt.Xcode",
     "com.apple.Music",
-    "com.apple.Notes",
     "com.apple.AppStore",
     "com.apple.systempreferences",
     "com.apple.Preview",
@@ -333,6 +332,21 @@ mod tests {
         )
         .unwrap();
         assert_eq!(log.all(), ["click 4"]);
+    }
+
+    #[test]
+    fn back_in_xcode_and_notes_is_mouse_button_4_not_a_key_combo() {
+        for app in ["com.apple.dt.Xcode", "com.apple.Notes"] {
+            let log = OutputLog::default();
+            perform(
+                Job::Perform(Action::Navigate {
+                    direction: NavDirection::Back,
+                }),
+                &rig(None, Some(app), &log),
+            )
+            .unwrap();
+            assert_eq!(log.all(), ["click 3"], "{app}");
+        }
     }
 
     #[test]

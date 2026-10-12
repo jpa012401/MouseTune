@@ -57,10 +57,11 @@ Taps pass every event through unchanged in this phase (since Phase 4a the button
 1. Click the middle button (B3): Mission Control opens.
 2. Hold B3 for 250 ms or more: the desktop is shown.
 3. B4 and B5 go Back and Forward in Safari (`Cmd+[`) and in Chrome.
-4. Left and right clicks are unaffected.
-5. Trackpad clicks and scrolling are unaffected.
-6. Turn off Settings → General → Mouse buttons (or the tray's Enable buttons): B3 does a plain middle click again.
-7. Disable Mission Control's keyboard shortcut in System Settings, then click B3: Mission Control still opens (unreachable binding). This changes WindowServer hotkey state; restore your shortcut in System Settings afterwards if you changed it. Run it only with the maintainer's go-ahead.
+4. B4 in Xcode and Notes does not change the text.
+5. Left and right clicks are unaffected.
+6. Trackpad clicks and scrolling are unaffected.
+7. Turn off Settings → General → Mouse buttons (or the tray's Enable buttons): B3 does a plain middle click again.
+8. Disable Mission Control's keyboard shortcut in System Settings, then click B3: Mission Control still opens (unreachable binding). This changes WindowServer hotkey state; restore your shortcut in System Settings afterwards if you changed it. Run it only with the maintainer's go-ahead.
 
 ## Building
 
