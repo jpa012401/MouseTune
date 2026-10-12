@@ -495,6 +495,12 @@ mod tests {
     }
 
     #[test]
+    fn a_real_key_up_event_is_read_as_up() {
+        let e = CGEvent::new_keyboard_event(None, 0x01, false).unwrap();
+        assert_eq!(key_event(CGEventType::KeyUp, &e).kind, KeyKind::Up);
+    }
+
+    #[test]
     fn a_swallowing_key_handler_makes_the_key_callback_return_null() {
         let context = context(Some(key_handler(Verdict::Swallow, false)));
         let (_, returned) = key_through(&context, CGEventType::KeyDown);
