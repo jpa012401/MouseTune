@@ -12,13 +12,6 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the keys tap adapter builds these from Phase 4b Task 6"
-    )
-)]
 pub enum KeyKind {
     Down,
     Up,

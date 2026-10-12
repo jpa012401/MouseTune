@@ -1,11 +1,12 @@
 //! CGEventTap adapter (spec §4.1, §4.5). Humble object: creates taps,
 //! copies fields out of events, forwards to a `TapHandler`. No decisions.
 //! Phase 4a: the button tap may swallow; only after the router says the
-//! event is ours (AGENTS.md footgun 2).
+//! event is ours (AGENTS.md footgun 2). Phase 4b: the keys tap, on only
+//! while the shortcut recorder runs, may swallow when the recorder says so.
 
 use std::{
     cell::{OnceCell, RefCell},
-    ffi::c_void,
+    ffi::{c_ulong, c_void},
     ptr::NonNull,
     rc::Rc,
     sync::{Arc, atomic::AtomicBool},
@@ -21,6 +22,7 @@ use crate::input::{
     engine::TapHandler,
     filter::ScrollFields,
     guard::{DisabledReason, guarded},
+    key_recorder::{KeyEvent, KeyKind},
     router::{ButtonEvent, ButtonKind, Verdict},
     taps::{TapController, TapKind},
 };
@@ -34,7 +36,7 @@ pub fn event_mask(kind: TapKind) -> u64 {
         TapKind::Buttons => bit(CGEventType::OtherMouseDown) | bit(CGEventType::OtherMouseUp),
         TapKind::Scroll => bit(CGEventType::ScrollWheel),
         TapKind::Flags => bit(CGEventType::FlagsChanged),
-        TapKind::Keys => 0, // Task 6.
+        TapKind::Keys => bit(CGEventType::KeyDown) | bit(CGEventType::KeyUp),
     }
 }
 
@@ -76,6 +78,38 @@ pub fn button_event(event_type: CGEventType, event: &CGEvent) -> ButtonEvent {
     }
 }
 
+/// Copies a keys tap event's fields into a stack buffer: no allocation, so
+/// it is safe on the hot path. A key code that doesn't fit a `u16`
+/// saturates to `u16::MAX`, which the recorder passes like any key >= 128.
+pub fn key_event(event_type: CGEventType, event: &CGEvent) -> KeyEvent {
+    let get = |field| CGEvent::integer_value_field(Some(event), field);
+    let mut chars = [0u16; 4];
+    let mut len: c_ulong = 0;
+    // SAFETY: both out-pointers point into live stack locals, and the max
+    // length we pass is the buffer's length, so CoreGraphics can't overrun it.
+    unsafe {
+        CGEvent::keyboard_get_unicode_string(
+            Some(event),
+            chars.len() as c_ulong,
+            &mut len,
+            chars.as_mut_ptr(),
+        );
+    }
+    KeyEvent {
+        kind: if event_type == CGEventType::KeyDown {
+            KeyKind::Down
+        } else {
+            KeyKind::Up
+        },
+        key_code: u16::try_from(get(CGEventField::KeyboardEventKeycode)).unwrap_or(u16::MAX),
+        flags: CGEvent::flags(Some(event)).0,
+        chars,
+        // Clamped in case CoreGraphics ever reports more than it wrote.
+        chars_len: len.min(chars.len() as c_ulong) as u8,
+        user_data: get(CGEventField::EventSourceUserData),
+    }
+}
+
 /// Shared by the input thread and the tap callbacks; must outlive the taps.
 pub struct TapContext {
     pub handler: OnceCell<Rc<RefCell<dyn TapHandler>>>,
@@ -113,7 +147,7 @@ impl MacTapController {
             TapKind::Buttons => button_callback as _,
             TapKind::Scroll => scroll_callback as _,
             TapKind::Flags => flags_callback as _,
-            TapKind::Keys => return false, // Task 6.
+            TapKind::Keys => key_callback as _,
         };
         // SAFETY: the callbacks match `CGEventTapCallBack`; `context` outlives
         // the tap (owned by the input thread, which owns this controller).
@@ -304,14 +338,28 @@ unsafe extern "C-unwind" fn flags_callback(
     })
 }
 
+unsafe extern "C-unwind" fn key_callback(
+    _proxy: CGEventTapProxy,
+    event_type: CGEventType,
+    event: NonNull<CGEvent>,
+    user_info: *mut c_void,
+) -> *mut CGEvent {
+    // Only on while the shortcut recorder runs; the recorder decides what to swallow.
+    dispatch(TapKind::Keys, event_type, event, user_info, |h, e| {
+        h.on_key(&key_event(event_type, e))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use std::{cell::Cell, sync::atomic::Ordering};
 
     use objc2_core_foundation::CGPoint;
-    use objc2_core_graphics::{CGEventMouseSubtype, CGMouseButton, CGScrollEventUnit};
+    use objc2_core_graphics::{
+        CGEventFlags, CGEventMouseSubtype, CGMouseButton, CGScrollEventUnit,
+    };
 
-    use crate::input::{key_recorder::KeyEvent, router::TimerKind};
+    use crate::input::router::TimerKind;
 
     use super::*;
 
@@ -321,6 +369,8 @@ mod tests {
         panics: bool,
         verdict: Verdict,
         button_panics: bool,
+        key_verdict: Verdict,
+        key_panics: bool,
     }
 
     impl TapHandler for Handler {
@@ -338,7 +388,10 @@ mod tests {
         }
         fn on_click_timer(&mut self, _: TimerKind) {}
         fn on_key(&mut self, _: &KeyEvent) -> Verdict {
-            Verdict::Pass
+            if self.key_panics {
+                panic!("handler bug");
+            }
+            self.key_verdict
         }
         fn on_tap_disabled(&mut self, _: TapKind, _: DisabledReason) {}
     }
@@ -362,6 +415,8 @@ mod tests {
             panics,
             verdict: Verdict::Pass,
             button_panics: false,
+            key_verdict: Verdict::Pass,
+            key_panics: false,
         }));
         (handler, scrolls)
     }
@@ -372,7 +427,93 @@ mod tests {
             panics: false,
             verdict,
             button_panics,
+            key_verdict: Verdict::Pass,
+            key_panics: false,
         }))
+    }
+
+    fn key_handler(verdict: Verdict, panics: bool) -> Rc<RefCell<Handler>> {
+        Rc::new(RefCell::new(Handler {
+            scrolls: Rc::new(Cell::new(0)),
+            panics: false,
+            verdict: Verdict::Pass,
+            button_panics: false,
+            key_verdict: verdict,
+            key_panics: panics,
+        }))
+    }
+
+    /// Sets the characters a key event says it typed.
+    fn set_unicode(event: &CGEvent, chars: &[u16]) {
+        // SAFETY: `chars` is a live slice and we pass its exact length.
+        unsafe {
+            CGEvent::keyboard_set_unicode_string(Some(event), chars.len() as _, chars.as_ptr())
+        };
+    }
+
+    /// Feeds a real key event to the keys tap callback.
+    fn key_through(context: &TapContext, event_type: CGEventType) -> (*mut CGEvent, *mut CGEvent) {
+        let event =
+            CGEvent::new_keyboard_event(None, 0x01, event_type == CGEventType::KeyDown).unwrap();
+        let ptr = NonNull::from(&*event);
+        // SAFETY: a real event and a live `TapContext`, as CoreGraphics would pass them.
+        let returned = unsafe {
+            key_callback(
+                std::ptr::null_mut(),
+                event_type,
+                ptr,
+                (context as *const TapContext).cast_mut().cast(),
+            )
+        };
+        (ptr.as_ptr(), returned) // `event` is still alive here, so `ptr` is valid
+    }
+
+    #[test]
+    fn keys_tap_listens_to_key_down_and_up_only_and_can_swallow() {
+        assert_eq!(event_mask(TapKind::Keys), (1 << 10) | (1 << 11));
+        assert_eq!(tap_options(TapKind::Keys), CGEventTapOptions::Default);
+    }
+
+    #[test]
+    fn key_event_fields_are_copied_from_a_real_event() {
+        let e = CGEvent::new_keyboard_event(None, 0x01, true).unwrap();
+        CGEvent::set_flags(Some(&e), CGEventFlags(0x120000));
+        // Set the typed character explicitly so the test doesn't depend on the keyboard layout.
+        set_unicode(&e, &[0x73]);
+        let k = key_event(CGEventType::KeyDown, &e);
+        assert_eq!(
+            (
+                k.kind,
+                k.key_code,
+                k.flags & 0x1E0000,
+                k.chars[0],
+                k.chars_len,
+                k.user_data
+            ),
+            (KeyKind::Down, 0x01, 0x120000, 0x73, 1, 0)
+        );
+    }
+
+    #[test]
+    fn a_swallowing_key_handler_makes_the_key_callback_return_null() {
+        let context = context(Some(key_handler(Verdict::Swallow, false)));
+        let (_, returned) = key_through(&context, CGEventType::KeyDown);
+        assert!(returned.is_null());
+    }
+
+    #[test]
+    fn a_passing_key_handler_returns_the_key_event() {
+        let context = context(Some(key_handler(Verdict::Pass, false)));
+        let (sent, returned) = key_through(&context, CGEventType::KeyUp);
+        assert_eq!(returned, sent);
+    }
+
+    #[test]
+    fn a_panicking_key_handler_passes_the_key_through() {
+        let context = context(Some(key_handler(Verdict::Swallow, true)));
+        let (sent, returned) = key_through(&context, CGEventType::KeyDown);
+        assert_eq!(returned, sent);
+        assert!(context.degraded.load(Ordering::SeqCst));
     }
 
     /// Feeds a real middle-button event to the button tap callback.

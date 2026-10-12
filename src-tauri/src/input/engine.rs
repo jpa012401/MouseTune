@@ -80,13 +80,6 @@ pub trait TapHandler {
     fn on_scroll(&mut self, fields: &ScrollFields);
     fn on_button(&mut self, event: &ButtonEvent) -> Verdict;
     fn on_click_timer(&mut self, kind: TimerKind);
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the keys tap adapter feeds it from Phase 4b Task 6"
-        )
-    )]
     fn on_key(&mut self, event: &KeyEvent) -> Verdict;
     fn on_tap_disabled(&mut self, kind: TapKind, reason: DisabledReason);
 }
