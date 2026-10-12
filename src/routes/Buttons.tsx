@@ -6,6 +6,7 @@ import { buttonClass } from "../components/buttonStyles";
 import { defaultButtonRemaps, remapLabel, waitsForDoubleClick } from "../lib/remaps";
 import { useCaptureStore } from "../store/capture";
 import { useConfigStore } from "../store/config";
+import { useStatusStore } from "../store/status";
 
 const listClass = "mb-6 divide-y divide-black/10 text-sm dark:divide-white/10";
 const rowClass = "flex items-center justify-between py-2";
@@ -22,6 +23,8 @@ export function Buttons() {
   const saveError = useConfigStore((s) => s.error);
   const loadError = useConfigStore((s) => s.loadError);
   const remaps = view?.config.buttons.remaps ?? [];
+  // Capture only sees presses through the buttons tap; without it the panel could only time out.
+  const canCapture = useStatusStore((s) => s.status?.input.taps.buttons ?? false);
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<number | null>(null);
   const [draft, setDraft] = useState<Action | null>(null);
@@ -130,10 +133,14 @@ export function Buttons() {
 
           {adding && <AddRemapPanel remaps={remaps} onDone={() => setAdding(false)} />}
 
-          <div className="flex gap-2">
-            <button type="button" className={buttonClass} aria-expanded={adding} onClick={toggleAdding}>
-              + Add remap
-            </button>
+          <div className="flex flex-wrap gap-2">
+            {canCapture ? (
+              <button type="button" className={buttonClass} aria-expanded={adding} onClick={toggleAdding}>
+                + Add remap
+              </button>
+            ) : (
+              <p className={`self-center text-sm ${muted}`}>Turn on mouse buttons in General to add a remap.</p>
+            )}
             <button type="button" className={buttonClass} onClick={() => void restoreDefaults()}>
               Restore defaults
             </button>
