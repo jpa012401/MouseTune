@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { act, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { emit } from "@tauri-apps/api/event";
 import App from "../App";
-import { device, inputStatus, mockBackend, status } from "../test/backend";
+import { config, configView, device, inputStatus, mockBackend, status } from "../test/backend";
 
 function renderGeneral() {
   window.location.hash = "#/general";
@@ -97,5 +97,142 @@ describe("General page", () => {
     const stats = await screen.findByRole("list", { name: "Scroll events" });
     expect(within(stats).getByText("Mouse wheel").parentElement!.textContent).toContain("12");
     expect(within(stats).getByText("Passed through").parentElement!.textContent).toContain("34");
+  });
+});
+
+describe("General page — Input switches", () => {
+  it("shows each switch as saved", async () => {
+    mockBackend({ get_status: () => status(), get_config: () => configView({ config: config({ scroll_enabled: false }) }) });
+    renderGeneral();
+    expect((await screen.findByRole("switch", { name: "Mouse buttons" })).getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByRole("switch", { name: "Scrolling" }).getAttribute("aria-checked")).toBe("false");
+  });
+
+  it("saves a toggle and shows what Rust saved", async () => {
+    const saved: unknown[] = [];
+    mockBackend({
+      get_status: () => status(),
+      set_config: (args) => {
+        saved.push((args as { config: unknown }).config);
+        return config({ scroll_enabled: false });
+      },
+    });
+    renderGeneral();
+    fireEvent.click(await screen.findByRole("switch", { name: "Scrolling" }));
+    await waitFor(() =>
+      expect(screen.getByRole("switch", { name: "Scrolling" }).getAttribute("aria-checked")).toBe("false"),
+    );
+    expect(saved).toEqual([config({ scroll_enabled: false })]);
+  });
+
+  it("a failed save shows the error and keeps the switch", async () => {
+    mockBackend({
+      get_status: () => status(),
+      set_config: () => {
+        throw { kind: "Io", message: "disk full" };
+      },
+    });
+    renderGeneral();
+    fireEvent.click(await screen.findByRole("switch", { name: "Scrolling" }));
+    expect((await screen.findByText(/Couldn’t save your settings: disk full/)).getAttribute("role")).toBe("alert");
+    expect(screen.getByRole("switch", { name: "Scrolling" }).getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("a save that throws shows why instead of failing silently", async () => {
+    mockBackend({
+      get_status: () => status(),
+      set_config: () => {
+        throw new Error("boom");
+      },
+    });
+    renderGeneral();
+    fireEvent.click(await screen.findByRole("switch", { name: "Scrolling" }));
+    expect((await screen.findByText(/boom/)).getAttribute("role")).toBe("alert");
+    expect(screen.getByRole("switch", { name: "Scrolling" }).getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("a dismiss that throws shows why", async () => {
+    mockBackend({
+      get_status: () => status(),
+      get_config: () => configView({ recovery: { backup_file: "config.1760000000.bak.json" } }),
+      dismiss_config_recovery: () => {
+        throw new Error("boom");
+      },
+    });
+    renderGeneral();
+    fireEvent.click(await screen.findByRole("button", { name: "Dismiss" }));
+    expect((await screen.findByText(/boom/)).getAttribute("role")).toBe("alert");
+  });
+
+  it("says when the settings couldn't be loaded", async () => {
+    mockBackend({
+      get_status: () => status(),
+      get_config: () => {
+        throw "the settings store is unavailable";
+      },
+    });
+    renderGeneral();
+    expect(
+      (await screen.findByText("Couldn’t load your settings: the settings store is unavailable")).getAttribute("role"),
+    ).toBe("alert");
+    expect(screen.queryByRole("switch", { name: "Scrolling" })).toBeNull();
+  });
+
+  it("a change from the tray clears a stale save error", async () => {
+    mockBackend({
+      get_status: () => status(),
+      set_config: () => {
+        throw { kind: "Io", message: "disk full" };
+      },
+    });
+    renderGeneral();
+    fireEvent.click(await screen.findByRole("switch", { name: "Scrolling" }));
+    await screen.findByText(/disk full/);
+    await act(() => emit("config-changed", config({ buttons_enabled: false })));
+    expect(screen.queryByText(/disk full/)).toBeNull();
+  });
+
+  it("a saved change removes the notice that the old file was left in place", async () => {
+    let recovery: { backup_file: string | null } | null = { backup_file: null };
+    mockBackend({
+      get_status: () => status(),
+      get_config: () => configView({ recovery }),
+      set_config: () => {
+        recovery = null;
+        return config({ scroll_enabled: false });
+      },
+    });
+    renderGeneral();
+    await screen.findByText(/was left in place/);
+    fireEvent.click(screen.getByRole("switch", { name: "Scrolling" }));
+    await waitFor(() => expect(screen.queryByText(/was left in place/)).toBeNull());
+    expect(screen.getByRole("switch", { name: "Scrolling" }).getAttribute("aria-checked")).toBe("false");
+  });
+
+  it("follows changes made from the tray", async () => {
+    mockBackend({ get_status: () => status() });
+    renderGeneral();
+    await screen.findByRole("switch", { name: "Mouse buttons" });
+    await act(() => emit("config-changed", config({ buttons_enabled: false })));
+    expect(screen.getByRole("switch", { name: "Mouse buttons" }).getAttribute("aria-checked")).toBe("false");
+  });
+
+  it("tells the user once when the settings file was replaced", async () => {
+    const calls = mockBackend({
+      get_status: () => status(),
+      get_config: () => configView({ recovery: { backup_file: "config.1760000000.bak.json" } }),
+      dismiss_config_recovery: () => null,
+    });
+    renderGeneral();
+    expect(await screen.findByText(/kept as config\.1760000000\.bak\.json/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    await waitFor(() => expect(screen.queryByText(/kept as/)).toBeNull());
+    expect(calls).toContain("dismiss_config_recovery");
+  });
+
+  it("says when the old file couldn't be backed up", async () => {
+    mockBackend({ get_status: () => status(), get_config: () => configView({ recovery: { backup_file: null } }) });
+    renderGeneral();
+    expect(await screen.findByText(/couldn’t be backed up and was left in place/)).toBeTruthy();
   });
 });

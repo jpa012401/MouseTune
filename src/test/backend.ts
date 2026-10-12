@@ -1,5 +1,5 @@
 import { mockIPC } from "@tauri-apps/api/mocks";
-import type { Device, InputStatus, Status } from "../bindings";
+import type { Config, ConfigView, Device, General as GeneralSettings, InputStatus, Status } from "../bindings";
 
 export function device(overrides: Partial<Device> = {}): Device {
   return { id: "1a", name: "MX Master 3", manufacturer: "Logitech", button_count: 5, has_wheel: true, ...overrides };
@@ -25,15 +25,24 @@ export function status(overrides: Partial<Status> = {}): Status {
   };
 }
 
+export function config(overrides: Partial<GeneralSettings> = {}): Config {
+  return { version: 1, general: { buttons_enabled: true, scroll_enabled: true, ...overrides } };
+}
+
+export function configView(overrides: Partial<ConfigView> = {}): ConfigView {
+  return { config: config(), recovery: null, ...overrides };
+}
+
 type Handler = (args: unknown) => unknown;
 
 /** Mocks the Rust backend. Every command must be handled; calls are recorded. */
 export function mockBackend(handlers: Record<string, Handler>) {
   const calls: string[] = [];
+  const all: Record<string, Handler> = { get_config: () => configView(), ...handlers };
   mockIPC(
     (cmd, args) => {
       calls.push(cmd);
-      const handler = handlers[cmd];
+      const handler = all[cmd];
       if (!handler) throw new Error(`unexpected command: ${cmd}`);
       return handler(args);
     },

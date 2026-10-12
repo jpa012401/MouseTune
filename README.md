@@ -50,6 +50,7 @@ Taps pass every event through unchanged in this phase. To check the scroll filte
 3. Scroll with the mouse wheel: the **Mouse wheel** counter rises.
 4. Scroll with the trackpad or a Magic Mouse: only **Passed through** rises, and scrolling feels exactly as before.
 5. Unplug the mouse: the list empties and the taps switch **Off**.
+6. Turn off Settings → General → Scrolling (or the tray's Enable scrolling): Input engine → Scroll shows **Off**. Turn it back on.
 
 ## Building
 
