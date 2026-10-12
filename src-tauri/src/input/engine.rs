@@ -255,8 +255,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        actions::Job,
-        config::schema::{Action, Config, NavDirection, SymbolicHotkeyId},
+        actions::{CompiledAction, Job},
+        config::schema::{Config, NavDirection, SymbolicHotkeyId},
         input::{
             filter::{MOUSETUNE_EVENT_TAG, PassReason},
             remaps::compile,
@@ -340,12 +340,12 @@ mod tests {
             mouse_subtype: 0,
         })
     }
-    const MC: Job = Job::Perform(Action::SymbolicHotkey {
-        id: SymbolicHotkeyId::MissionControl,
-    });
-    const DESKTOP: Job = Job::Perform(Action::SymbolicHotkey {
-        id: SymbolicHotkeyId::ShowDesktop,
-    });
+    const MC: Job = Job::Perform(CompiledAction::SymbolicHotkey(
+        SymbolicHotkeyId::MissionControl,
+    ));
+    const DESKTOP: Job = Job::Perform(CompiledAction::SymbolicHotkey(
+        SymbolicHotkeyId::ShowDesktop,
+    ));
 
     #[test]
     fn a_middle_click_swallows_and_submits_mission_control() {
@@ -382,9 +382,7 @@ mod tests {
         );
         assert_eq!(
             *r.sink.jobs.lock().unwrap(),
-            vec![Job::Perform(Action::Navigate {
-                direction: NavDirection::Back
-            })]
+            vec![Job::Perform(CompiledAction::Navigate(NavDirection::Back))]
         );
     }
 

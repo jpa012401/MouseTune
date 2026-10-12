@@ -11,11 +11,28 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use serde::Serialize;
 use specta::Type;
 
-use crate::config::schema::Action;
+use crate::config::schema::{Action, NavDirection, SymbolicHotkeyId};
+
+/// The engine's copy of an action: plain data the tap callback can copy
+/// without touching the heap. Built by `input::remaps::compile`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompiledAction {
+    SymbolicHotkey(SymbolicHotkeyId),
+    Navigate(NavDirection),
+}
+
+impl From<&Action> for CompiledAction {
+    fn from(action: &Action) -> Self {
+        match *action {
+            Action::SymbolicHotkey { id } => Self::SymbolicHotkey(id),
+            Action::Navigate { direction } => Self::Navigate(direction),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Job {
-    Perform(Action),
+    Perform(CompiledAction),
     /// A plain click of this CG button number.
     Click {
         button: u8,
@@ -76,6 +93,23 @@ pub enum OutputError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn config_actions_compile_to_plain_copies() {
+        use crate::config::schema::{Action, NavDirection, SymbolicHotkeyId};
+        assert_eq!(
+            CompiledAction::from(&Action::SymbolicHotkey {
+                id: SymbolicHotkeyId::MissionControl
+            }),
+            CompiledAction::SymbolicHotkey(SymbolicHotkeyId::MissionControl)
+        );
+        assert_eq!(
+            CompiledAction::from(&Action::Navigate {
+                direction: NavDirection::Back
+            }),
+            CompiledAction::Navigate(NavDirection::Back)
+        );
+    }
 
     #[test]
     fn counters_report_each_kind_separately() {

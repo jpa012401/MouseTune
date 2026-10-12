@@ -11,12 +11,21 @@ use std::{
 use crate::{
     accessibility::Accessibility,
     actions::{
-        ActionSink, Job, OutputError,
+        ActionSink, CompiledAction, Job, OutputError,
         keys::{KeyBinding, KeyStroke},
         perform::{EventPoster, FrontmostApp, HotkeyState, SymbolicHotkeys},
     },
+    config::schema::Action,
     input::router::{ClickTimers, TimerKind},
 };
+
+/// The config form of a compiled action, for building `Remap`s in tests.
+pub fn config_action(action: CompiledAction) -> Action {
+    match action {
+        CompiledAction::SymbolicHotkey(id) => Action::SymbolicHotkey { id },
+        CompiledAction::Navigate(direction) => Action::Navigate { direction },
+    }
+}
 
 /// Records every OS call, in order, with its argument.
 #[derive(Default)]

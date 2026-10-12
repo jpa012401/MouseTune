@@ -1,8 +1,8 @@
 use super::{
-    Job, OutputError,
+    CompiledAction, Job, OutputError,
     keys::{KeyBinding, KeyStroke, ModifierMask, key_combo_strokes},
 };
-use crate::config::schema::{Action, NavDirection, SymbolicHotkeyId};
+use crate::config::schema::{NavDirection, SymbolicHotkeyId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HotkeyState {
@@ -70,8 +70,8 @@ fn default_shortcut(id: SymbolicHotkeyId) -> KeyBinding {
 pub fn perform(job: Job, out: &Outputs) -> Result<(), OutputError> {
     match job {
         Job::Click { button } => out.poster.click(button),
-        Job::Perform(Action::SymbolicHotkey { id }) => symbolic_hotkey(id, out),
-        Job::Perform(Action::Navigate { direction }) => navigate(direction, out),
+        Job::Perform(CompiledAction::SymbolicHotkey(id)) => symbolic_hotkey(id, out),
+        Job::Perform(CompiledAction::Navigate(direction)) => navigate(direction, out),
     }
 }
 
@@ -151,9 +151,9 @@ mod tests {
             install_fails: false,
         }
     }
-    const MC: Job = Job::Perform(Action::SymbolicHotkey {
-        id: SymbolicHotkeyId::MissionControl,
-    });
+    const MC: Job = Job::Perform(CompiledAction::SymbolicHotkey(
+        SymbolicHotkeyId::MissionControl,
+    ));
 
     #[test]
     fn an_enabled_hotkey_posts_its_own_shortcut() {
@@ -210,9 +210,9 @@ mod tests {
                 modifiers: ModifierMask(0),
             },
         };
-        let job = Job::Perform(Action::SymbolicHotkey {
-            id: SymbolicHotkeyId::ShowDesktop,
-        });
+        let job = Job::Perform(CompiledAction::SymbolicHotkey(
+            SymbolicHotkeyId::ShowDesktop,
+        ));
         perform(job, &rig(Some(hotkeys(&log, Some(state))), None, &log)).unwrap();
         assert_eq!(log.all()[1], "install 36 key 436 mods 0xa00000");
     }
@@ -272,9 +272,9 @@ mod tests {
     #[test]
     fn show_desktop_without_cgs_symbols_posts_f11() {
         let log = OutputLog::default();
-        let job = Job::Perform(Action::SymbolicHotkey {
-            id: SymbolicHotkeyId::ShowDesktop,
-        });
+        let job = Job::Perform(CompiledAction::SymbolicHotkey(
+            SymbolicHotkeyId::ShowDesktop,
+        ));
         perform(job, &rig(None, None, &log)).unwrap();
         assert_eq!(log.all(), ["key 0x67 down 0x0", "key 0x67 up 0x0"]);
     }
@@ -283,9 +283,7 @@ mod tests {
     fn forward_in_finder_is_cmd_right_bracket() {
         let log = OutputLog::default();
         perform(
-            Job::Perform(Action::Navigate {
-                direction: NavDirection::Forward,
-            }),
+            Job::Perform(CompiledAction::Navigate(NavDirection::Forward)),
             &rig(None, Some("com.apple.finder"), &log),
         )
         .unwrap();
@@ -304,9 +302,7 @@ mod tests {
     fn back_in_safari_is_cmd_left_bracket() {
         let log = OutputLog::default();
         perform(
-            Job::Perform(Action::Navigate {
-                direction: NavDirection::Back,
-            }),
+            Job::Perform(CompiledAction::Navigate(NavDirection::Back)),
             &rig(None, Some("com.apple.Safari"), &log),
         )
         .unwrap();
@@ -325,9 +321,7 @@ mod tests {
     fn forward_in_chrome_is_mouse_button_5() {
         let log = OutputLog::default();
         perform(
-            Job::Perform(Action::Navigate {
-                direction: NavDirection::Forward,
-            }),
+            Job::Perform(CompiledAction::Navigate(NavDirection::Forward)),
             &rig(None, Some("com.google.Chrome"), &log),
         )
         .unwrap();
@@ -339,9 +333,7 @@ mod tests {
         for app in ["com.apple.dt.Xcode", "com.apple.Notes"] {
             let log = OutputLog::default();
             perform(
-                Job::Perform(Action::Navigate {
-                    direction: NavDirection::Back,
-                }),
+                Job::Perform(CompiledAction::Navigate(NavDirection::Back)),
                 &rig(None, Some(app), &log),
             )
             .unwrap();
@@ -353,9 +345,7 @@ mod tests {
     fn unknown_frontmost_app_uses_the_mouse_button() {
         let log = OutputLog::default();
         perform(
-            Job::Perform(Action::Navigate {
-                direction: NavDirection::Back,
-            }),
+            Job::Perform(CompiledAction::Navigate(NavDirection::Back)),
             &rig(None, None, &log),
         )
         .unwrap();

@@ -4,7 +4,10 @@
 
 use std::time::Duration;
 
-use crate::config::schema::{Action, Config, TriggerDuration};
+use crate::{
+    actions::CompiledAction,
+    config::schema::{Config, TriggerDuration},
+};
 
 pub const MAX_BUTTONS: usize = 32;
 pub const MAX_LEVEL: u8 = 3;
@@ -20,12 +23,12 @@ pub struct Timing {
 /// One button's bindings, indexed by `level - 1`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ButtonRemaps {
-    click: [Option<Action>; MAX_LEVEL as usize],
-    hold: [Option<Action>; MAX_LEVEL as usize],
+    click: [Option<CompiledAction>; MAX_LEVEL as usize],
+    hold: [Option<CompiledAction>; MAX_LEVEL as usize],
 }
 
 impl ButtonRemaps {
-    fn slot(&mut self, level: u8, duration: TriggerDuration) -> &mut Option<Action> {
+    fn slot(&mut self, level: u8, duration: TriggerDuration) -> &mut Option<CompiledAction> {
         let i = usize::from(level - 1);
         match duration {
             TriggerDuration::Click => &mut self.click[i],
@@ -33,7 +36,7 @@ impl ButtonRemaps {
         }
     }
 
-    pub fn action(&self, level: u8, duration: TriggerDuration) -> Option<Action> {
+    pub fn action(&self, level: u8, duration: TriggerDuration) -> Option<CompiledAction> {
         let i = usize::from(level.checked_sub(1)?);
         match duration {
             TriggerDuration::Click => *self.click.get(i)?,
@@ -101,7 +104,7 @@ pub fn compile(config: &Config) -> CompiledRemaps {
             tracing::warn!(?t, "skipping a duplicate remap; the first one wins");
             continue;
         }
-        *slot = Some(remap.effect.action);
+        *slot = Some(CompiledAction::from(&remap.effect.action));
     }
     compiled
 }
@@ -112,25 +115,22 @@ mod tests {
     use crate::config::schema::{
         Buttons, ClickTrigger, Effect, NavDirection, Remap, SymbolicHotkeyId,
     };
+    use crate::test_support::config_action;
 
-    const MC: Action = Action::SymbolicHotkey {
-        id: SymbolicHotkeyId::MissionControl,
-    };
-    const DESKTOP: Action = Action::SymbolicHotkey {
-        id: SymbolicHotkeyId::ShowDesktop,
-    };
-    const BACK: Action = Action::Navigate {
-        direction: NavDirection::Back,
-    };
+    const MC: CompiledAction = CompiledAction::SymbolicHotkey(SymbolicHotkeyId::MissionControl);
+    const DESKTOP: CompiledAction = CompiledAction::SymbolicHotkey(SymbolicHotkeyId::ShowDesktop);
+    const BACK: CompiledAction = CompiledAction::Navigate(NavDirection::Back);
 
-    fn remap(button: u8, level: u8, duration: TriggerDuration, action: Action) -> Remap {
+    fn remap(button: u8, level: u8, duration: TriggerDuration, action: CompiledAction) -> Remap {
         Remap {
             trigger: ClickTrigger {
                 button,
                 level,
                 duration,
             },
-            effect: Effect { action },
+            effect: Effect {
+                action: config_action(action),
+            },
         }
     }
 

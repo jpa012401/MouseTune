@@ -44,12 +44,12 @@ mod tests {
     use super::*;
     use crate::{
         actions::{
-            ActionSink, ActionStats,
+            ActionSink, ActionStats, CompiledAction,
             keys::{KeyBinding, ModifierMask},
             perform::HotkeyState,
             queue::queue,
         },
-        config::schema::{Action, NavDirection, SymbolicHotkeyId},
+        config::schema::{NavDirection, SymbolicHotkeyId},
         test_support::{FakeFrontmost, FakeHotkeys, FakePoster, OutputLog},
     };
 
@@ -88,9 +88,9 @@ mod tests {
     fn a_job_that_returns_an_error_is_counted_as_failed() {
         let log = OutputLog::default();
         let (sink, rx) = queue();
-        sink.submit(Job::Perform(Action::SymbolicHotkey {
-            id: SymbolicHotkeyId::MissionControl,
-        }));
+        sink.submit(Job::Perform(CompiledAction::SymbolicHotkey(
+            SymbolicHotkeyId::MissionControl,
+        )));
         drop(sink);
         let state = HotkeyState {
             enabled: false,
@@ -127,12 +127,10 @@ mod tests {
     fn a_panicking_job_is_counted_as_failed_and_the_next_job_still_runs() {
         let log = OutputLog::default();
         let (sink, rx) = queue();
-        let nav = Job::Perform(Action::Navigate {
-            direction: NavDirection::Back,
-        });
-        sink.submit(Job::Perform(Action::SymbolicHotkey {
-            id: SymbolicHotkeyId::MissionControl,
-        })); // posts keys → panics
+        let nav = Job::Perform(CompiledAction::Navigate(NavDirection::Back));
+        sink.submit(Job::Perform(CompiledAction::SymbolicHotkey(
+            SymbolicHotkeyId::MissionControl,
+        ))); // posts keys → panics
         sink.submit(nav); // no frontmost app → click 3, no key posting
         drop(sink);
         let counters = Arc::new(ActionCounters::default());

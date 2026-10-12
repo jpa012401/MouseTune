@@ -8,7 +8,8 @@
 use std::time::Duration;
 
 use crate::{
-    config::schema::{Action, TriggerDuration},
+    actions::CompiledAction,
+    config::schema::TriggerDuration,
     input::{
         click_cycle::{ClickCycle, Press},
         filter::MOUSETUNE_EVENT_TAG,
@@ -48,7 +49,7 @@ pub enum TimerKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Outcome {
-    Fire(Action),
+    Fire(CompiledAction),
     Click { button: u8 },
     Arm(TimerKind, Duration),
     Disarm(TimerKind),
@@ -333,17 +334,12 @@ mod tests {
             Buttons, ClickTrigger, Config, Effect, NavDirection, Remap, SymbolicHotkeyId,
         },
         input::remaps::compile,
+        test_support::config_action,
     };
 
-    const MC: Action = Action::SymbolicHotkey {
-        id: SymbolicHotkeyId::MissionControl,
-    };
-    const DESKTOP: Action = Action::SymbolicHotkey {
-        id: SymbolicHotkeyId::ShowDesktop,
-    };
-    const BACK: Action = Action::Navigate {
-        direction: NavDirection::Back,
-    };
+    const MC: CompiledAction = CompiledAction::SymbolicHotkey(SymbolicHotkeyId::MissionControl);
+    const DESKTOP: CompiledAction = CompiledAction::SymbolicHotkey(SymbolicHotkeyId::ShowDesktop);
+    const BACK: CompiledAction = CompiledAction::Navigate(NavDirection::Back);
     const HOLD_250: Outcome = Outcome::Arm(TimerKind::Hold, Duration::from_millis(250));
     const EXPIRY_260: Outcome = Outcome::Arm(TimerKind::Expiry, Duration::from_millis(260));
     const MIDDLE: u8 = 2;
@@ -358,14 +354,16 @@ mod tests {
     fn defaults() -> ButtonRouter {
         ButtonRouter::new(compile(&Config::default()))
     }
-    fn remap(button: u8, level: u8, duration: TriggerDuration, action: Action) -> Remap {
+    fn remap(button: u8, level: u8, duration: TriggerDuration, action: CompiledAction) -> Remap {
         Remap {
             trigger: ClickTrigger {
                 button,
                 level,
                 duration,
             },
-            effect: Effect { action },
+            effect: Effect {
+                action: config_action(action),
+            },
         }
     }
     fn event(kind: ButtonKind, button: u8) -> ButtonEvent {
