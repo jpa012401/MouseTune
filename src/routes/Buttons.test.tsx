@@ -333,21 +333,21 @@ describe("Buttons page", () => {
     mockBackend({ get_status: tapsOn, set_config: (a) => { const c = (a as { config: Config }).config; saved.push(c); return c; } });
     renderButtons();
     const hold = await screen.findByRole("slider", { name: "Hold delay" });
-    fireEvent.change(hold, { target: { value: "300" } });
-    fireEvent.change(hold, { target: { value: "400" } });
+    fireEvent.input(hold, { target: { value: "300" } });
+    fireEvent.input(hold, { target: { value: "400" } });
     expect(screen.getByText("400 ms")).toBeTruthy();
     expect(saved).toEqual([]);
-    fireEvent.pointerUp(hold);
+    // The native change event: WebKit fires it once, on release.
+    fireEvent.change(hold);
     await waitFor(() => expect(saved).toEqual([timingConfig({ hold_ms: 400, double_click_ms: 260 })]));
   });
 
-  it("a keyboard change to a slider saves on key release", async () => {
+  it("a committed change to a slider saves it", async () => {
     const saved: Config[] = [];
     mockBackend({ get_status: tapsOn, set_config: (a) => { const c = (a as { config: Config }).config; saved.push(c); return c; } });
     renderButtons();
     const speed = await screen.findByRole("slider", { name: "Double-click speed" });
     fireEvent.change(speed, { target: { value: "270" } });
-    fireEvent.keyUp(speed, { key: "ArrowRight" });
     await waitFor(() => expect(saved).toEqual([timingConfig({ hold_ms: 250, double_click_ms: 270 })]));
   });
 
@@ -377,7 +377,25 @@ describe("Buttons page", () => {
     renderButtons();
     const hold = await screen.findByRole("slider", { name: "Hold delay" });
     fireEvent.change(hold, { target: { value: "600" } });
-    fireEvent.pointerUp(hold);
     expect((await screen.findByText("Couldn’t save your settings: Hold delay must be between 150 and 600 ms.")).getAttribute("role")).toBe("alert");
+  });
+
+  it("a rejected save puts the slider back to the saved value", async () => {
+    mockBackend({ get_status: tapsOn, set_config: () => { throw { kind: "TimingOutOfRange", field: "Hold", ms: 600 }; } });
+    renderButtons();
+    const hold = await screen.findByRole("slider", { name: "Hold delay" });
+    fireEvent.input(hold, { target: { value: "600" } });
+    fireEvent.change(hold);
+    await screen.findByRole("alert");
+    await waitFor(() => expect(screen.getByText("250 ms")).toBeTruthy());
+    expect((hold as HTMLInputElement).value).toBe("250");
+  });
+
+  it("a hand-edited timing outside 150–600 ms shows the value in use", async () => {
+    mockBackend({ get_status: tapsOn, get_config: () => configView({ config: timingConfig({ hold_ms: 50, double_click_ms: 260 }) }) });
+    renderButtons();
+    const hold = await screen.findByRole("slider", { name: "Hold delay" });
+    expect(screen.getByText("150 ms")).toBeTruthy();
+    expect((hold as HTMLInputElement).value).toBe("150");
   });
 });

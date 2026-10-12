@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { Action, Remap } from "../bindings";
 import { ActionPicker } from "../components/ActionPicker";
 import { AddRemapPanel } from "../components/AddRemapPanel";
@@ -18,14 +18,46 @@ function showsDoubleClickHint(remaps: Remap[], index: number): boolean {
   return remaps.findIndex((r) => r.trigger.button === button) === index && waitsForDoubleClick(remaps, button);
 }
 
+/** What the engine uses for a hand-edited value outside 150–600 ms (it clamps when compiling). */
+function clampTiming(ms: number): number {
+  return Math.min(600, Math.max(150, ms));
+}
+
 /** A 150–600 ms slider that saves on release, not on every step. */
-function TimingSlider({ label, help, value, onCommit }: { label: string; help: string; value: number; onCommit: (ms: number) => void }) {
+function TimingSlider({
+  label,
+  help,
+  value,
+  onCommit,
+}: {
+  label: string;
+  help: string;
+  value: number;
+  onCommit: (ms: number) => Promise<boolean>;
+}) {
   const id = useId();
-  const [draft, setDraft] = useState(value);
-  useEffect(() => setDraft(value), [value]);
-  const commit = () => {
-    if (draft !== value) onCommit(draft);
-  };
+  const shown = clampTiming(value);
+  const [draft, setDraft] = useState(shown);
+  useEffect(() => setDraft(shown), [shown]);
+  const input = useRef<HTMLInputElement>(null);
+  // The native listener is attached once, so it reads the latest props through a ref.
+  const latest = useRef({ value, onCommit });
+  latest.current = { value, onCommit };
+  useEffect(() => {
+    const el = input.current;
+    if (!el) return;
+    // Native `change` fires once on release, for mouse and keyboard; React's onChange is every step.
+    const commit = () => {
+      const ms = Number(el.value);
+      const { value: saved, onCommit: save } = latest.current;
+      if (ms === saved) return;
+      void save(ms).then((ok) => {
+        if (!ok) setDraft(clampTiming(latest.current.value));
+      });
+    };
+    el.addEventListener("change", commit);
+    return () => el.removeEventListener("change", commit);
+  }, []);
   return (
     <div className="py-2 text-sm">
       <div className="flex items-center justify-between">
@@ -34,6 +66,7 @@ function TimingSlider({ label, help, value, onCommit }: { label: string; help: s
         <span className="tabular-nums">{draft} ms</span>
       </div>
       <input
+        ref={input}
         id={id}
         type="range"
         min={150}
@@ -41,9 +74,6 @@ function TimingSlider({ label, help, value, onCommit }: { label: string; help: s
         step={10}
         value={draft}
         onChange={(e) => setDraft(Number(e.target.value))}
-        onPointerUp={commit}
-        onKeyUp={commit}
-        onBlur={commit}
         className="w-full"
       />
       <p className={`text-xs ${muted}`}>{help}</p>
@@ -186,13 +216,13 @@ export function Buttons() {
               label="Hold delay"
               help="How long to hold a button before a Hold action fires."
               value={timing.hold_ms}
-              onCommit={(hold_ms) => void setTiming({ ...timing, hold_ms })}
+              onCommit={(hold_ms) => setTiming({ ...timing, hold_ms })}
             />
             <TimingSlider
               label="Double-click speed"
               help="How quickly a second click must follow. Longer is easier, but single clicks on buttons with double-click actions wait this long."
               value={timing.double_click_ms}
-              onCommit={(double_click_ms) => void setTiming({ ...timing, double_click_ms })}
+              onCommit={(double_click_ms) => setTiming({ ...timing, double_click_ms })}
             />
           </div>
           <button type="button" className={buttonClass} onClick={() => void setTiming(DEFAULT_TIMING)}>
