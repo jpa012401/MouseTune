@@ -137,10 +137,20 @@ impl ButtonRouter {
         self.reset()
     }
 
+    /// Ends the click cycle. Keeps the swallowed bits: the button tap is
+    /// still running, so the ups of swallowed downs will arrive.
     pub fn reset(&mut self) -> Decision {
         let mut d = Decision::pass();
         self.end(&mut d.outcomes);
         d
+    }
+
+    /// Drops every swallowed bit. Call when the button tap stops seeing
+    /// events: ups (and fresh downs) went to the OS meanwhile, so a kept bit
+    /// could swallow an up whose down reached an app. An unpaired up passing
+    /// is harmless; that one being swallowed leaves the app's button stuck.
+    pub fn forget_swallowed(&mut self) {
+        self.swallowed = 0;
     }
 
     pub fn on_button(&mut self, event: &ButtonEvent) -> Decision {
@@ -591,6 +601,14 @@ mod tests {
         }));
         assert_eq!(down(&mut r, MIDDLE), (Verdict::Pass, vec![]));
         assert_eq!(up(&mut r, MIDDLE), (Verdict::Pass, vec![]));
+    }
+
+    #[test]
+    fn forgetting_swallowed_bits_lets_the_next_up_pass() {
+        let mut r = defaults();
+        assert_eq!(down(&mut r, MIDDLE).0, Verdict::Swallow);
+        r.forget_swallowed();
+        assert_eq!(up(&mut r, MIDDLE).0, Verdict::Pass);
     }
 
     #[test]

@@ -163,13 +163,18 @@ impl<C: TapController> InputEngine<C> {
         self.publish();
     }
 
-    /// Every trust, demand or device change ends the click cycle. The router
-    /// keeps its swallowed bits, so a press in flight still has its up eaten.
+    /// Every trust, demand or device change ends the click cycle. While the
+    /// button tap stays on, the router keeps its swallowed bits, so a press
+    /// in flight still has its up eaten. Once it is off, ups go to the OS
+    /// unseen, so the bits are dropped (design §2, the up/down invariant).
     fn refresh(&mut self) {
         let reset = self.router.reset();
         self.apply(reset);
         let desired = desired_taps(self.trusted, &self.devices, self.demand);
         self.taps.reconcile(desired);
+        if !self.taps.enabled().buttons {
+            self.router.forget_swallowed();
+        }
         self.publish();
     }
 
@@ -226,11 +231,13 @@ impl<C: TapController> TapHandler for InputEngine<C> {
     }
 
     /// A disabled button tap missed button events, so any cycle in flight is
-    /// stale, whatever the reason. Other taps miss no button events.
+    /// stale and any swallowed bit may belong to an up that already reached
+    /// the OS, whatever the reason. Other taps miss no button events.
     fn on_tap_disabled(&mut self, kind: TapKind, reason: DisabledReason) {
         if kind == TapKind::Buttons {
             let reset = self.router.reset();
             self.apply(reset);
+            self.router.forget_swallowed();
         }
         if on_tap_disabled(reason) == DisabledAction::Reenable {
             self.taps.reenable(kind);
@@ -395,16 +402,18 @@ mod tests {
     }
 
     #[test]
-    fn a_kill_switch_mid_press_still_swallows_the_up() {
-        // Pins the engine contract; with real taps this up wouldn't arrive.
+    fn a_kill_switch_mid_press_lets_the_up_pass() {
+        // The button tap is off, so the up (and any later down) may have
+        // reached the app; swallowing it could leave a button stuck there.
         let mut r = rig(true);
-        button(&mut r, ButtonKind::Down, 2, 10);
+        r.engine.apply_device_event(DeviceEvent::Added(mouse(1)));
+        assert_eq!(button(&mut r, ButtonKind::Down, 2, 10), Verdict::Swallow);
         r.engine.set_demand(TapDemand {
             buttons: false,
             scroll: true,
             flags: true,
         });
-        assert_eq!(button(&mut r, ButtonKind::Up, 2, 10), Verdict::Swallow);
+        assert_eq!(button(&mut r, ButtonKind::Up, 2, 10), Verdict::Pass);
         assert!(
             r.timers
                 .calls()
@@ -412,6 +421,56 @@ mod tests {
         );
         // The cycle was reset, so the release fires nothing.
         assert!(r.sink.jobs.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_refresh_that_keeps_the_button_tap_on_still_swallows_the_up() {
+        let mut r = rig(true);
+        r.engine.apply_device_event(DeviceEvent::Added(mouse(1)));
+        assert_eq!(button(&mut r, ButtonKind::Down, 2, 10), Verdict::Swallow);
+        r.engine.set_demand(TapDemand {
+            buttons: true,
+            scroll: false,
+            flags: true,
+        });
+        assert_eq!(button(&mut r, ButtonKind::Up, 2, 10), Verdict::Swallow);
+    }
+
+    #[test]
+    fn unplugging_the_only_mouse_mid_press_lets_a_later_up_pass() {
+        let mut r = rig(true);
+        r.engine.apply_device_event(DeviceEvent::Added(mouse(1)));
+        assert_eq!(button(&mut r, ButtonKind::Down, 2, 10), Verdict::Swallow);
+        r.engine.apply_device_event(DeviceEvent::Removed { id: 1 });
+        assert_eq!(r.engine.snapshot().taps, TapSet::NONE);
+        assert_eq!(button(&mut r, ButtonKind::Up, 2, 10), Verdict::Pass);
+    }
+
+    #[test]
+    fn revoking_trust_mid_press_lets_a_later_up_pass() {
+        let mut r = rig(true);
+        r.engine.apply_device_event(DeviceEvent::Added(mouse(1)));
+        assert_eq!(button(&mut r, ButtonKind::Down, 2, 10), Verdict::Swallow);
+        r.engine.set_trusted(false);
+        assert_eq!(button(&mut r, ButtonKind::Up, 2, 10), Verdict::Pass);
+    }
+
+    /// Down 1 swallowed; the button tap times out; up 1 and down 2 reach the
+    /// OS, so the app now holds the middle button; the tap comes back and
+    /// up 2 arrives. It must reach the app, or the app's button sticks.
+    #[test]
+    fn an_up_after_a_button_tap_gap_reaches_the_app() {
+        let mut r = rig(true);
+        r.engine.apply_device_event(DeviceEvent::Added(mouse(1)));
+        assert_eq!(button(&mut r, ButtonKind::Down, 2, 10), Verdict::Swallow);
+        r.taps.os_disables(TapKind::Buttons);
+        r.engine
+            .on_tap_disabled(TapKind::Buttons, DisabledReason::Timeout);
+        // up 1 and down 2 happen here, unseen.
+        assert_eq!(button(&mut r, ButtonKind::Up, 2, 10), Verdict::Pass);
+        // The next full press is routed as usual.
+        assert_eq!(button(&mut r, ButtonKind::Down, 2, 10), Verdict::Swallow);
+        assert_eq!(button(&mut r, ButtonKind::Up, 2, 10), Verdict::Swallow);
     }
 
     #[test]
@@ -431,6 +490,8 @@ mod tests {
             .on_tap_disabled(TapKind::Scroll, DisabledReason::Timeout);
         r.engine.on_click_timer(TimerKind::Hold);
         assert_eq!(*r.sink.jobs.lock().unwrap(), vec![DESKTOP]);
+        // The button tap saw every event, so the up is still ours.
+        assert_eq!(button(&mut r, ButtonKind::Up, 2, 10), Verdict::Swallow);
     }
 
     #[test]
@@ -441,6 +502,7 @@ mod tests {
             .on_tap_disabled(TapKind::Buttons, DisabledReason::Timeout);
         r.engine.on_click_timer(TimerKind::Hold);
         assert!(r.sink.jobs.lock().unwrap().is_empty());
+        assert_eq!(button(&mut r, ButtonKind::Up, 2, 10), Verdict::Pass);
     }
 
     #[test]
@@ -451,6 +513,7 @@ mod tests {
             .on_tap_disabled(TapKind::Buttons, DisabledReason::UserInput);
         r.engine.on_click_timer(TimerKind::Hold);
         assert!(r.sink.jobs.lock().unwrap().is_empty());
+        assert_eq!(button(&mut r, ButtonKind::Up, 2, 10), Verdict::Pass);
     }
 
     #[test]
