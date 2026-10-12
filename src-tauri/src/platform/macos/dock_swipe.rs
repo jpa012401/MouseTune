@@ -54,8 +54,11 @@
 //!   (`ResendSchedule`), so a dropped close can't leave Mission Control
 //!   half open. A new Began or a Cancelled withdraws pending re-sends first.
 //! - **A Began is posted only if the matching Ended (with its velocity
-//!   child) also builds**, so the adapter never opens a gesture it can't
-//!   close.
+//!   child) also builds**, and that built Ended is kept as the swipe's
+//!   closer. An end that won't build falls back to an Ended without
+//!   velocity, then a Cancelled, then the closer (`pick`), so a begun
+//!   gesture always gets a closing event. Re-sends re-post the event that
+//!   went out.
 //! - **No `CGEventSource`**: the events are created exactly as the probe
 //!   creates them (`CGEventCreate(NULL)`), so what ships is what was seen.
 //!
@@ -128,6 +131,7 @@
 use std::{
     cell::RefCell,
     ffi::{CStr, c_char, c_int, c_void},
+    rc::Rc,
     sync::{Arc, atomic::AtomicBool},
 };
 
@@ -251,20 +255,44 @@ impl ResendSchedule {
 pub struct Plan {
     /// Withdraw the re-sends of an earlier end.
     pub disarm: bool,
-    pub post: Option<SwipeFields>,
-    /// `post` goes out only if this builds too: the end a begin will need.
+    /// Tried in order; the first that builds is posted (`pick`).
+    pub tries: [Option<SwipeFields>; 3],
+    /// A begin: posted only if this builds too. The built event is kept as
+    /// the swipe's closer, the last resort of a closing plan.
     pub needs: Option<SwipeFields>,
-    /// Re-send `post` at these `CFAbsoluteTime`s.
+    /// This plan closes the swipe: if no try builds, the closer is posted.
+    pub closes: bool,
+    /// Re-send what was posted at these `CFAbsoluteTime`s.
     pub resend_at: Option<[f64; 2]>,
 }
 
 impl Plan {
     pub const NOTHING: Self = Self {
         disarm: false,
-        post: None,
+        tries: [None; 3],
         needs: None,
+        closes: false,
         resend_at: None,
     };
+
+    fn posting(fields: SwipeFields) -> Self {
+        Self {
+            tries: [Some(fields), None, None],
+            ..Self::NOTHING
+        }
+    }
+}
+
+/// What a plan posts: the first try that `build` can build, else, for a
+/// closing plan, `closer` (the end built at begin). So a begun swipe gets a
+/// closing event whenever anything at all could be built.
+pub fn pick<B>(
+    plan: &Plan,
+    build: impl FnMut(&SwipeFields) -> Option<B>,
+    closer: Option<B>,
+) -> Option<B> {
+    let built = plan.tries.iter().flatten().find_map(build);
+    if plan.closes { built.or(closer) } else { built }
 }
 
 /// The swipe in progress, as the Dock has been told it. Pure.
@@ -278,9 +306,8 @@ impl Sequencer {
         self.active = Some((axis, 0.0));
         Plan {
             disarm: true,
-            post: Some(fields(axis, Phase::Began, 0.0, None)),
             needs: Some(fields(axis, Phase::Ended, 0.0, Some(0.0))),
-            resend_at: None,
+            ..Plan::posting(fields(axis, Phase::Began, 0.0, None))
         }
     }
 
@@ -289,10 +316,7 @@ impl Sequencer {
             return Plan::NOTHING;
         };
         *last = progress;
-        Plan {
-            post: Some(fields(*axis, Phase::Changed, progress, None)),
-            ..Plan::NOTHING
-        }
+        Plan::posting(fields(*axis, Phase::Changed, progress, None))
     }
 
     /// `now` is the `CFAbsoluteTime` the end is posted at.
@@ -301,7 +325,12 @@ impl Sequencer {
             return Plan::NOTHING;
         };
         Plan {
-            post: Some(fields(axis, Phase::Ended, progress, Some(velocity))),
+            tries: [
+                Some(fields(axis, Phase::Ended, progress, Some(velocity))),
+                Some(fields(axis, Phase::Ended, progress, None)),
+                Some(fields(axis, Phase::Cancelled, progress, None)),
+            ],
+            closes: true,
             resend_at: Some(ResendSchedule::after_end(now)),
             ..Plan::NOTHING
         }
@@ -314,9 +343,9 @@ impl Sequencer {
         };
         Plan {
             disarm: true,
-            post: Some(fields(axis, Phase::Cancelled, progress, None)),
+            closes: true,
             resend_at: Some(ResendSchedule::after_end(now)),
-            ..Plan::NOTHING
+            ..Plan::posting(fields(axis, Phase::Cancelled, progress, None))
         }
     }
 
@@ -464,10 +493,10 @@ impl Api {
 
 // ---- Adapter ------------------------------------------------------------
 
-/// The two prebuilt Ended re-sends, reached by the re-send timers through
-/// their `info` pointer. Each is posted at most once.
+/// The posted close (Ended or Cancelled), once per re-send timer, reached
+/// by the timers through their `info` pointer. Each slot posts at most once.
 struct Resends {
-    ends: RefCell<[Option<Built>; 2]>,
+    ends: RefCell<[Option<Rc<Built>>; 2]>,
     degraded: Arc<AtomicBool>,
 }
 
@@ -477,6 +506,8 @@ struct Resends {
 pub struct MacDockSwipe {
     api: Api,
     sequencer: Sequencer,
+    /// The end built at begin: posted if nothing else closing will build.
+    closer: Option<Rc<Built>>,
     /// Boxed so the timers' `info` pointer stays put when `self` moves.
     resends: Box<Resends>,
     timers: [CFRetained<CFRunLoopTimer>; 2],
@@ -506,6 +537,7 @@ impl MacDockSwipe {
         Ok(Self {
             api,
             sequencer: Sequencer::default(),
+            closer: None,
             resends,
             timers: [first, second],
         })
@@ -520,18 +552,28 @@ impl MacDockSwipe {
         }
     }
 
-    /// Carries out a plan. No decisions beyond "did it build".
+    /// Carries out a plan; `pick` decides what is posted.
     fn run(&mut self, plan: Plan) {
         if plan.disarm {
             self.disarm();
         }
-        let Some(post) = plan.post else {
-            return;
+        if let Some(needs) = plan.needs {
+            self.closer = self.api.build(&needs).map(Rc::new);
+            if self.closer.is_none() {
+                self.sequencer.abandon();
+                return;
+            }
+        }
+        let closer = if plan.closes {
+            self.closer.take()
+        } else {
+            None
         };
-        let needed = plan.needs.is_none_or(|f| self.api.build(&f).is_some());
-        let Some(built) = self.api.build(&post).filter(|_| needed) else {
+        let api = &self.api;
+        let Some(built) = pick(&plan, |f| api.build(f).map(Rc::new), closer) else {
             if plan.needs.is_some() {
                 self.sequencer.abandon();
+                self.closer = None;
             }
             return;
         };
@@ -543,10 +585,8 @@ impl MacDockSwipe {
             return;
         };
         for ((slot, timer), date) in ends.iter_mut().zip(&self.timers).zip(dates) {
-            *slot = self.api.build(&post);
-            if slot.is_some() {
-                timer.set_next_fire_date(date);
-            }
+            *slot = Some(Rc::clone(&built));
+            timer.set_next_fire_date(date);
         }
     }
 }
@@ -680,7 +720,7 @@ mod tests {
             s.begin(DragAxis::Horizontal),
             Plan {
                 disarm: true,
-                post: Some(sf(1, 0, 0.0, 0x0100_0000, None)),
+                tries: [Some(sf(1, 0, 0.0, 0x0100_0000, None)), None, None],
                 needs: Some(sf(
                     1,
                     0,
@@ -691,6 +731,7 @@ mod tests {
                         value: 0.0
                     })
                 )),
+                closes: false,
                 resend_at: None,
             }
         );
@@ -703,23 +744,30 @@ mod tests {
         assert_eq!(
             s.change(0.5),
             Plan {
-                post: Some(sf(1, 8, 0.5, 0x0200_0000, None)),
+                tries: [Some(sf(1, 8, 0.5, 0x0200_0000, None)), None, None],
                 ..Plan::NOTHING
             }
         );
+        // Falls back to an end without velocity, then a cancel, then the
+        // closer built at begin (`pick`).
         assert_eq!(
             s.end(2.0, 10.0),
             Plan {
-                post: Some(sf(
-                    1,
-                    8,
-                    0.5,
-                    0x0400_0000,
-                    Some(VelocityField {
-                        field: 0x0009_0000,
-                        value: 2.0
-                    })
-                )),
+                tries: [
+                    Some(sf(
+                        1,
+                        8,
+                        0.5,
+                        0x0400_0000,
+                        Some(VelocityField {
+                            field: 0x0009_0000,
+                            value: 2.0
+                        })
+                    )),
+                    Some(sf(1, 8, 0.5, 0x0400_0000, None)),
+                    Some(sf(1, 8, 0.5, 0x0800_0000, None)),
+                ],
+                closes: true,
                 resend_at: Some([10.2, 10.5]),
                 ..Plan::NOTHING
             }
@@ -738,12 +786,78 @@ mod tests {
             s.cancel(10.0),
             Plan {
                 disarm: true,
-                post: Some(sf(2, 1, -0.3, 0x0800_0000, None)),
+                tries: [Some(sf(2, 1, -0.3, 0x0800_0000, None)), None, None],
+                closes: true,
                 resend_at: Some([10.2, 10.5]),
                 ..Plan::NOTHING
             }
         );
         assert_eq!(s.cancel(11.0), Plan::NOTHING);
+    }
+
+    /// A builder that fails for every field set in `broken`.
+    fn builder(broken: &[SwipeFields]) -> impl FnMut(&SwipeFields) -> Option<SwipeFields> + '_ {
+        move |f| (!broken.contains(f)).then_some(*f)
+    }
+
+    const VELOCITY_2: Option<VelocityField> = Some(VelocityField {
+        field: 0x0009_0000,
+        value: 2.0,
+    });
+    const CLOSER: SwipeFields = sf(
+        1,
+        0,
+        0.0,
+        0x0400_0000,
+        Some(VelocityField {
+            field: 0x0009_0000,
+            value: 0.0,
+        }),
+    );
+
+    #[test]
+    fn an_end_that_wont_build_falls_back_to_no_velocity_then_cancel_then_the_closer() {
+        let mut s = Sequencer::default();
+        s.begin(DragAxis::Horizontal);
+        s.change(0.5);
+        let end = s.end(2.0, 10.0);
+        let with_velocity = sf(1, 8, 0.5, 0x0400_0000, VELOCITY_2);
+        let without = sf(1, 8, 0.5, 0x0400_0000, None);
+        let cancelled = sf(1, 8, 0.5, 0x0800_0000, None);
+
+        assert_eq!(pick(&end, builder(&[]), Some(CLOSER)), Some(with_velocity));
+        assert_eq!(
+            pick(&end, builder(&[with_velocity]), Some(CLOSER)),
+            Some(without)
+        );
+        assert_eq!(
+            pick(&end, builder(&[with_velocity, without]), Some(CLOSER)),
+            Some(cancelled)
+        );
+        assert_eq!(
+            pick(
+                &end,
+                builder(&[with_velocity, without, cancelled]),
+                Some(CLOSER)
+            ),
+            Some(CLOSER)
+        );
+    }
+
+    #[test]
+    fn only_a_closing_plan_falls_back_to_the_closer() {
+        let mut s = Sequencer::default();
+        s.begin(DragAxis::Horizontal);
+        let change = s.change(0.5);
+        let changed = sf(1, 8, 0.5, 0x0200_0000, None);
+        assert_eq!(pick(&change, builder(&[changed]), Some(CLOSER)), None);
+        let cancel = s.cancel(10.0);
+        let cancelled = sf(1, 8, 0.5, 0x0800_0000, None);
+        assert_eq!(
+            pick(&cancel, builder(&[cancelled]), Some(CLOSER)),
+            Some(CLOSER)
+        );
+        assert_eq!(pick(&Plan::NOTHING, builder(&[]), Some(CLOSER)), None);
     }
 
     #[test]
@@ -881,7 +995,7 @@ mod read_back {
         let getters = Getters::load();
         let mut s = Sequencer::default();
         let read = |plan: Plan| {
-            let post = plan.post.expect("the plan posts");
+            let post = plan.tries[0].expect("the plan posts");
             getters.read(&api.build(&post).expect("the step builds"))
         };
         let step = |mask, progress, phase, velocity| {
