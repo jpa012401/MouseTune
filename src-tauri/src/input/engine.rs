@@ -12,6 +12,7 @@ use specta::Type;
 
 use crate::{
     actions::{ActionCounters, ActionSink, Job, Notice},
+    config::schema::Scroll,
     input::{
         capture::{ButtonCapture, Clock},
         devices::{DeviceEvent, DeviceInfo, DeviceRegistry},
@@ -25,6 +26,7 @@ use crate::{
             ButtonEvent, ButtonKind, ButtonRouter, ClickTimers, Decision, Outcome, TimerKind,
             Verdict,
         },
+        scroll::{ScrollEngine, ScrollVerdict},
         taps::{TapController, TapDemand, TapKind, TapManager, TapSet, desired_taps},
     },
 };
@@ -77,11 +79,13 @@ pub trait EngineObserver {
 
 /// What tap callbacks and click timers call into. Implemented by `InputEngine`.
 pub trait TapHandler {
-    fn on_scroll(&mut self, fields: &ScrollFields);
+    fn on_scroll(&mut self, fields: &ScrollFields) -> ScrollVerdict;
     fn on_button(&mut self, event: &ButtonEvent) -> Verdict;
     fn on_click_timer(&mut self, kind: TimerKind);
     fn on_key(&mut self, event: &KeyEvent) -> Verdict;
     fn on_tap_disabled(&mut self, kind: TapKind, reason: DisabledReason);
+    /// One display frame for the scroll animation.
+    fn on_frame(&mut self);
 }
 
 /// What the engine needs to route buttons: the compiled bindings, the click
@@ -108,6 +112,7 @@ pub struct InputEngine<C: TapController> {
     capture: ButtonCapture,
     recorder: KeyRecorder,
     clock: Box<dyn Clock>,
+    scroll: ScrollEngine,
     observer: Box<dyn EngineObserver>,
     last_published: Option<EngineSnapshot>,
 }
@@ -119,6 +124,7 @@ impl<C: TapController> InputEngine<C> {
         demand: TapDemand,
         counters: Arc<ScrollCounters>,
         buttons: ButtonSetup,
+        scroll: ScrollEngine,
         observer: Box<dyn EngineObserver>,
     ) -> Self {
         Self {
@@ -134,6 +140,7 @@ impl<C: TapController> InputEngine<C> {
             capture: ButtonCapture::default(),
             recorder: KeyRecorder::default(),
             clock: buttons.clock,
+            scroll,
             observer,
             last_published: None,
         }
@@ -153,6 +160,10 @@ impl<C: TapController> InputEngine<C> {
     pub fn set_demand(&mut self, demand: TapDemand) {
         self.demand = demand;
         self.refresh();
+    }
+
+    pub fn set_scroll(&mut self, settings: Scroll) {
+        self.scroll.set_settings(settings);
     }
 
     pub fn set_remaps(&mut self, remaps: CompiledRemaps) {
@@ -209,6 +220,8 @@ impl<C: TapController> InputEngine<C> {
     /// in flight still has its up eaten. Once it is off, ups go to the OS
     /// unseen, so the bits are dropped (design §2, the up/down invariant).
     fn refresh(&mut self) {
+        // No app may be left mid-gesture once trust, demand or devices change (design §5).
+        self.scroll.cancel();
         let reset = self.router.reset();
         self.apply(reset);
         self.update_taps();
@@ -276,8 +289,18 @@ impl<C: TapController> InputEngine<C> {
 }
 
 impl<C: TapController> TapHandler for InputEngine<C> {
-    fn on_scroll(&mut self, fields: &ScrollFields) {
-        self.counters.record(classify_scroll(fields, &self.devices));
+    /// Hot path: no allocation, no locks, no logging, nothing posted.
+    fn on_scroll(&mut self, fields: &ScrollFields) -> ScrollVerdict {
+        let class = classify_scroll(fields, &self.devices);
+        self.counters.record(class);
+        match class {
+            ScrollClass::MouseWheel => self.scroll.on_wheel(fields, self.clock.now()),
+            ScrollClass::PassThrough(_) => ScrollVerdict::Pass,
+        }
+    }
+
+    fn on_frame(&mut self) {
+        self.scroll.on_frame(self.clock.now());
     }
 
     fn on_button(&mut self, event: &ButtonEvent) -> Verdict {
@@ -356,13 +379,17 @@ mod tests {
     use super::*;
     use crate::{
         actions::{CompiledAction, RawKeyCapture, keys::ModifierMask},
-        config::schema::{Config, NavDirection, SymbolicHotkeyId},
+        config::schema::{Config, NavDirection, Scroll, Smoothness, SymbolicHotkeyId},
         input::{
             filter::PassReason,
             key_recorder::{KeyEvent, KeyKind},
             remaps::compile,
+            scroll::{ScrollEngine, ScrollVerdict},
         },
-        test_support::{FakeClock, FakeSink, FakeTapController, FakeTimers, apple_trackpad, mouse},
+        test_support::{
+            FakeClock, FakeFrames, FakeScrollPoster, FakeSink, FakeTapController, FakeTimers,
+            apple_trackpad, mouse,
+        },
     };
 
     const ALL_ON: TapSet = TapSet {
@@ -399,6 +426,8 @@ mod tests {
         sink: FakeSink,
         actions: Arc<ActionCounters>,
         clock: FakeClock,
+        frames: FakeFrames,
+        posted: FakeScrollPoster,
     }
 
     fn rig(trusted: bool) -> Rig {
@@ -409,6 +438,8 @@ mod tests {
         let sink = FakeSink::default();
         let actions = Arc::new(ActionCounters::default());
         let clock = FakeClock::new();
+        let frames = FakeFrames::default();
+        let posted = FakeScrollPoster::default();
         let mut engine = InputEngine::new(
             taps.clone(),
             trusted,
@@ -421,6 +452,11 @@ mod tests {
                 counters: Arc::clone(&actions),
                 clock: Box::new(clock.clone()),
             },
+            ScrollEngine::new(
+                Scroll::default(),
+                Box::new(frames.clone()),
+                Box::new(posted.clone()),
+            ),
             Box::new(published.clone()),
         );
         engine.start();
@@ -433,6 +469,8 @@ mod tests {
             sink,
             actions,
             clock,
+            frames,
+            posted,
         }
     }
 
@@ -1030,6 +1068,99 @@ mod tests {
                 passed_through: 2
             }
         );
+    }
+
+    fn low() -> Scroll {
+        Scroll {
+            smoothness: Smoothness::Low,
+            ..Scroll::default()
+        }
+    }
+
+    fn wheel_from(sender_id: u64) -> ScrollFields {
+        ScrollFields {
+            delta_axis1: 1,
+            sender_id,
+            ..Default::default()
+        }
+    }
+
+    /// A tracked mouse with a wheel tick mid-animation: "Began" posted.
+    fn scrolling(r: &mut Rig) {
+        r.engine.apply_device_event(DeviceEvent::Added(mouse(1)));
+        r.engine.set_scroll(low());
+        assert_eq!(r.engine.on_scroll(&wheel_from(10)), ScrollVerdict::Swallow);
+        r.engine.on_frame();
+        assert_eq!(r.posted.log(), ["Began"]);
+    }
+
+    #[test]
+    fn frames_advance_the_animation_on_the_engine_clock() {
+        let mut r = rig(true);
+        scrolling(&mut r);
+        r.clock.advance(Duration::from_millis(90));
+        r.engine.on_frame();
+        assert_eq!(r.posted.log(), ["Began", "Changed dy 90", "Ended"]);
+        assert_eq!(r.frames.calls().last(), Some(&"stop"));
+    }
+
+    #[test]
+    fn a_trackpad_scroll_passes_untouched_while_an_animation_runs() {
+        let mut r = rig(true);
+        r.engine
+            .apply_device_event(DeviceEvent::Added(apple_trackpad(2)));
+        scrolling(&mut r);
+        let trackpad = ScrollFields {
+            is_continuous: 1,
+            ..wheel_from(20)
+        };
+        assert_eq!(r.engine.on_scroll(&trackpad), ScrollVerdict::Pass);
+        let tablet = ScrollFields {
+            tablet_device_id: 3,
+            ..wheel_from(10)
+        };
+        assert_eq!(r.engine.on_scroll(&tablet), ScrollVerdict::Pass);
+        assert_eq!(r.posted.log(), ["Began"], "the animation is undisturbed");
+        assert_eq!(r.frames.calls(), ["request"]);
+    }
+
+    #[test]
+    fn turning_scrolling_off_mid_animation_closes_the_gesture() {
+        let mut r = rig(true);
+        scrolling(&mut r);
+        r.engine.set_demand(TapDemand {
+            scroll: false,
+            ..TapDemand::ALL
+        });
+        assert_eq!(r.posted.log(), ["Began", "Ended"]);
+        assert_eq!(r.frames.calls(), ["request", "stop"]);
+    }
+
+    #[test]
+    fn unplugging_the_mouse_mid_animation_closes_the_gesture() {
+        let mut r = rig(true);
+        scrolling(&mut r);
+        r.engine.apply_device_event(DeviceEvent::Removed { id: 1 });
+        assert_eq!(r.posted.log(), ["Began", "Ended"]);
+    }
+
+    #[test]
+    fn losing_accessibility_mid_animation_closes_the_gesture() {
+        let mut r = rig(true);
+        scrolling(&mut r);
+        r.engine.set_trusted(false);
+        assert_eq!(r.posted.log(), ["Began", "Ended"]);
+    }
+
+    #[test]
+    fn a_scroll_tap_timeout_keeps_the_animation_going() {
+        let mut r = rig(true);
+        scrolling(&mut r);
+        r.engine
+            .on_tap_disabled(TapKind::Scroll, DisabledReason::Timeout);
+        r.clock.advance(Duration::from_millis(90));
+        r.engine.on_frame();
+        assert_eq!(r.posted.log(), ["Began", "Changed dy 90", "Ended"]);
     }
 
     #[test]

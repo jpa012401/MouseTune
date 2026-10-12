@@ -151,7 +151,7 @@ export function General() {
         <StatRow label="Passed through" value={input?.scroll_stats.passed_through ?? 0} />
       </ul>
       <p className={`mt-2 max-w-prose text-xs ${muted}`}>
-        Mouse wheel ticks are what MouseTune will smooth. Trackpad and Magic Mouse scrolling should
+        Mouse wheel ticks are what MouseTune smooths. Trackpad and Magic Mouse scrolling should
         only ever count as passed through.
       </p>
 

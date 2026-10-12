@@ -14,7 +14,7 @@ use crossbeam_channel::Sender;
 use crate::{
     actions::{ActionCounters, ActionSink},
     config::{
-        schema::{Config, tap_demand},
+        schema::{Config, Scroll, tap_demand},
         store::ConfigObserver,
     },
     input::{
@@ -34,6 +34,8 @@ pub enum Control {
     /// Boxed: the compiled tables are large, and every message pays for the
     /// biggest variant.
     SetRemaps(Box<CompiledRemaps>),
+    /// New scroll settings; closes any gesture in flight.
+    SetScroll(Scroll),
     /// Report the next press of button 3 or higher instead of acting on it.
     StartCapture,
     StopCapture,
@@ -129,6 +131,7 @@ impl ConfigObserver for InputConfigBridge {
     fn config_changed(&self, config: &Config) {
         self.0.send(Control::SetDemand(tap_demand(config)));
         self.0.send(Control::SetRemaps(Box::new(compile(config))));
+        self.0.send(Control::SetScroll(config.scroll));
     }
 }
 
@@ -144,6 +147,10 @@ pub fn handle_control<C: TapController>(engine: &mut InputEngine<C>, msg: Contro
         }
         Control::SetRemaps(remaps) => {
             engine.set_remaps(*remaps);
+            Flow::Continue
+        }
+        Control::SetScroll(settings) => {
+            engine.set_scroll(settings);
             Flow::Continue
         }
         Control::StartCapture => {
@@ -181,12 +188,13 @@ impl EngineObserver for StoreSnapshot {
 }
 
 /// Starts `mt-input` and returns once its run loop is ready for messages.
-/// `remaps` are the saved bindings at startup; `sink` is where fired
+/// `remaps` and `scroll` are the saved settings at startup; `sink` is where fired
 /// actions go (the only sender of `mt-exec`'s queue).
 pub fn spawn(
     trusted: bool,
     demand: TapDemand,
     remaps: CompiledRemaps,
+    scroll: Scroll,
     sink: Box<dyn ActionSink + Send>,
     ui: Box<dyn EngineObserver + Send>,
 ) -> Arc<InputHandle> {
@@ -196,15 +204,15 @@ pub fn spawn(
         shared: Arc::clone(&shared),
         ui,
     });
-    let (join, waker) = input_loop::start(
+    let setup = input_loop::StartSetup {
         trusted,
         demand,
         remaps,
+        scroll,
         sink,
         observer,
-        rx,
-        Arc::clone(&shared),
-    );
+    };
+    let (join, waker) = input_loop::start(setup, rx, Arc::clone(&shared));
     Arc::new(InputHandle::new(tx, waker, shared, Some(join)))
 }
 
@@ -218,14 +226,18 @@ mod tests {
     use super::*;
     use crate::{
         actions::{CompiledAction, Job, Notice},
-        config::schema::{General, NavDirection},
+        config::schema::{General, NavDirection, Scroll},
         input::{
             devices::DeviceEvent,
             engine::{ButtonSetup, EngineObserver, InputEngine, TapHandler},
+            filter::ScrollFields,
             router::{ButtonEvent, ButtonKind, Verdict},
+            scroll::{ScrollEngine, ScrollVerdict},
             taps::{TapDemand, TapSet},
         },
-        test_support::{FakeClock, FakeSink, FakeTapController, FakeTimers, mouse},
+        test_support::{
+            FakeClock, FakeFrames, FakeScrollPoster, FakeSink, FakeTapController, FakeTimers, mouse,
+        },
     };
 
     #[derive(Default)]
@@ -262,6 +274,11 @@ mod tests {
                 counters: Arc::default(),
                 clock: Box::new(FakeClock::new()),
             },
+            ScrollEngine::new(
+                Scroll::default(),
+                Box::new(FakeFrames::default()),
+                Box::new(FakeScrollPoster::default()),
+            ),
             Box::new(Ignore),
         );
         engine.start();
@@ -324,7 +341,34 @@ mod tests {
             rx.try_recv(),
             Ok(Control::SetRemaps(Box::new(compile(&config))))
         );
-        assert_eq!(waker.0.load(Ordering::SeqCst), 2);
+        assert_eq!(rx.try_recv(), Ok(Control::SetScroll(config.scroll)));
+        assert_eq!(waker.0.load(Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn set_scroll_reaches_the_engine_and_continues() {
+        let (mut engine, _) = engine(true);
+        let off = Scroll {
+            smooth: false,
+            invert_vertical: true,
+            ..Scroll::default()
+        };
+        assert_eq!(
+            handle_control(&mut engine, Control::SetScroll(off)),
+            Flow::Continue
+        );
+        let wheel = ScrollFields {
+            delta_axis1: 1,
+            sender_id: 10,
+            ..Default::default()
+        };
+        assert_eq!(
+            engine.on_scroll(&wheel),
+            ScrollVerdict::Invert {
+                vertical: true,
+                horizontal: false
+            }
+        );
     }
 
     #[test]
@@ -455,6 +499,7 @@ mod tests {
             false,
             TapDemand::ALL,
             CompiledRemaps::empty(),
+            Scroll::default(),
             Box::new(crate::actions::queue::queue().0),
             Box::new(Ignore2),
         );

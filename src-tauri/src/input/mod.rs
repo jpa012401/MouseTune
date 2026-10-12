@@ -10,5 +10,6 @@ pub mod guard;
 pub mod key_recorder;
 pub mod remaps;
 pub mod router;
+pub mod scroll;
 pub mod taps;
 pub mod thread;

@@ -3,6 +3,8 @@
 //! Phase 4a: the button tap may swallow; only after the router says the
 //! event is ours (AGENTS.md footgun 2). Phase 4b: the keys tap, on only
 //! while the shortcut recorder runs, may swallow when the recorder says so.
+//! Phase 5a: the scroll tap swallows plain mouse-wheel ticks while smoothing
+//! is on, and inverts others in place.
 
 use std::{
     cell::{OnceCell, RefCell},
@@ -24,6 +26,7 @@ use crate::input::{
     guard::{DisabledReason, guarded},
     key_recorder::{KeyEvent, KeyKind},
     router::{ButtonEvent, ButtonKind, Verdict},
+    scroll::ScrollVerdict,
     taps::{TapController, TapKind},
 };
 
@@ -57,7 +60,45 @@ pub fn scroll_fields(event: &CGEvent) -> ScrollFields {
         delta_axis1: get(CGEventField::ScrollWheelEventDeltaAxis1),
         delta_axis2: get(CGEventField::ScrollWheelEventDeltaAxis2),
         sender_id: get(SENDER_ID_FIELD) as u64,
+        point_delta_axis1: get(CGEventField::ScrollWheelEventPointDeltaAxis1),
+        point_delta_axis2: get(CGEventField::ScrollWheelEventPointDeltaAxis2),
+        flags: CGEvent::flags(Some(event)).0,
         user_data: get(CGEventField::EventSourceUserData),
+    }
+}
+
+/// Negates the chosen axes' line, fixed-point and point deltas on the event
+/// itself (Phase 5a design §2). Allocation-free and panic-free: runs in the
+/// scroll tap callback.
+pub fn invert_scroll(event: &CGEvent, vertical: bool, horizontal: bool) {
+    let axes = [
+        (
+            vertical,
+            CGEventField::ScrollWheelEventDeltaAxis1,
+            CGEventField::ScrollWheelEventFixedPtDeltaAxis1,
+            CGEventField::ScrollWheelEventPointDeltaAxis1,
+        ),
+        (
+            horizontal,
+            CGEventField::ScrollWheelEventDeltaAxis2,
+            CGEventField::ScrollWheelEventFixedPtDeltaAxis2,
+            CGEventField::ScrollWheelEventPointDeltaAxis2,
+        ),
+    ];
+    for (flip, line, fixed, point) in axes {
+        if !flip {
+            continue;
+        }
+        // Setting the line delta (DeltaAxisN) makes CoreGraphics rewrite
+        // that axis's fixed-point delta (to the line value) and point delta
+        // (to an accelerated value); setting fixed or point changes nothing
+        // else. So read all three first, then write line, fixed, point.
+        let get = |field| CGEvent::integer_value_field(Some(event), field);
+        let (line_value, point_value) = (get(line), get(point));
+        let fine = CGEvent::double_value_field(Some(event), fixed);
+        CGEvent::set_integer_value_field(Some(event), line, line_value.wrapping_neg());
+        CGEvent::set_double_value_field(Some(event), fixed, -fine);
+        CGEvent::set_integer_value_field(Some(event), point, point_value.wrapping_neg());
     }
 }
 
@@ -308,11 +349,23 @@ unsafe extern "C-unwind" fn scroll_callback(
     event: NonNull<CGEvent>,
     user_info: *mut c_void,
 ) -> *mut CGEvent {
-    // Scroll events are only observed until Phase 5; they always pass.
-    dispatch(TapKind::Scroll, event_type, event, user_info, |h, e| {
-        h.on_scroll(&scroll_fields(e));
-        Verdict::Pass
-    })
+    dispatch(
+        TapKind::Scroll,
+        event_type,
+        event,
+        user_info,
+        |h, e| match h.on_scroll(&scroll_fields(e)) {
+            ScrollVerdict::Pass => Verdict::Pass,
+            ScrollVerdict::Swallow => Verdict::Swallow,
+            ScrollVerdict::Invert {
+                vertical,
+                horizontal,
+            } => {
+                invert_scroll(e, vertical, horizontal);
+                Verdict::Pass
+            }
+        },
+    )
 }
 
 unsafe extern "C-unwind" fn button_callback(
@@ -371,14 +424,16 @@ mod tests {
         button_panics: bool,
         key_verdict: Verdict,
         key_panics: bool,
+        scroll_verdict: ScrollVerdict,
     }
 
     impl TapHandler for Handler {
-        fn on_scroll(&mut self, _: &ScrollFields) {
+        fn on_scroll(&mut self, _: &ScrollFields) -> ScrollVerdict {
             self.scrolls.set(self.scrolls.get() + 1);
             if self.panics {
                 panic!("handler bug");
             }
+            self.scroll_verdict
         }
         fn on_button(&mut self, _: &ButtonEvent) -> Verdict {
             if self.button_panics {
@@ -394,6 +449,7 @@ mod tests {
             self.key_verdict
         }
         fn on_tap_disabled(&mut self, _: TapKind, _: DisabledReason) {}
+        fn on_frame(&mut self) {}
     }
 
     fn context(handler: Option<Rc<RefCell<Handler>>>) -> TapContext {
@@ -417,6 +473,7 @@ mod tests {
             button_panics: false,
             key_verdict: Verdict::Pass,
             key_panics: false,
+            scroll_verdict: ScrollVerdict::Pass,
         }));
         (handler, scrolls)
     }
@@ -429,6 +486,7 @@ mod tests {
             button_panics,
             key_verdict: Verdict::Pass,
             key_panics: false,
+            scroll_verdict: ScrollVerdict::Pass,
         }))
     }
 
@@ -440,6 +498,7 @@ mod tests {
             button_panics: false,
             key_verdict: verdict,
             key_panics: panics,
+            scroll_verdict: ScrollVerdict::Pass,
         }))
     }
 
@@ -607,6 +666,48 @@ mod tests {
         assert_eq!(scrolls.get(), 1);
     }
 
+    fn scroll_handler(verdict: ScrollVerdict) -> Rc<RefCell<Handler>> {
+        let (handler, _) = handler(false);
+        handler.borrow_mut().scroll_verdict = verdict;
+        handler
+    }
+
+    #[test]
+    fn a_swallowing_scroll_handler_makes_the_scroll_callback_return_null() {
+        let context = context(Some(scroll_handler(ScrollVerdict::Swallow)));
+        let (_, returned) = scroll_through(&context);
+        assert!(returned.is_null());
+    }
+
+    #[test]
+    fn an_inverting_scroll_handler_returns_the_same_event_flipped() {
+        let context = context(Some(scroll_handler(ScrollVerdict::Invert {
+            vertical: true,
+            horizontal: false,
+        })));
+        // Built here rather than with `scroll_through`, which drops its event
+        // on return: this test reads the event afterwards.
+        let event =
+            CGEvent::new_scroll_wheel_event2(None, CGScrollEventUnit::Line, 1, -1, 0, 0).unwrap();
+        let sent = NonNull::from(&*event);
+        // SAFETY: a real event and a live `TapContext`, as CoreGraphics would
+        // pass them; the proxy is unused.
+        let returned = unsafe {
+            scroll_callback(
+                std::ptr::null_mut(),
+                CGEventType::ScrollWheel,
+                sent,
+                (&context as *const TapContext).cast_mut().cast(),
+            )
+        };
+        assert_eq!(returned, sent.as_ptr(), "modified in place, not replaced");
+        assert_eq!(
+            CGEvent::integer_value_field(Some(&event), CGEventField::ScrollWheelEventDeltaAxis1),
+            1,
+            "the −1 line delta is flipped"
+        );
+    }
+
     #[test]
     fn a_swallowing_handler_makes_the_button_callback_return_null() {
         let context = context(Some(button_handler(Verdict::Swallow, false)));
@@ -652,15 +753,100 @@ mod tests {
     }
 
     #[test]
+    fn inverting_vertical_negates_only_axis_1_in_place() {
+        let event =
+            CGEvent::new_scroll_wheel_event2(None, CGScrollEventUnit::Line, 2, -3, 1, 0).unwrap();
+        CGEvent::set_double_value_field(
+            Some(&event),
+            CGEventField::ScrollWheelEventFixedPtDeltaAxis1,
+            -30.5,
+        );
+        CGEvent::set_integer_value_field(
+            Some(&event),
+            CGEventField::ScrollWheelEventPointDeltaAxis1,
+            -30,
+        );
+        CGEvent::set_integer_value_field(
+            Some(&event),
+            CGEventField::ScrollWheelEventPointDeltaAxis2,
+            10,
+        );
+        invert_scroll(&event, true, false);
+        let int = |f| CGEvent::integer_value_field(Some(&event), f);
+        assert_eq!(int(CGEventField::ScrollWheelEventDeltaAxis1), 3);
+        assert_eq!(int(CGEventField::ScrollWheelEventPointDeltaAxis1), 30);
+        let fine = CGEvent::double_value_field(
+            Some(&event),
+            CGEventField::ScrollWheelEventFixedPtDeltaAxis1,
+        );
+        assert!((fine - 30.5).abs() < 1e-3, "{fine}");
+        assert_eq!(
+            int(CGEventField::ScrollWheelEventDeltaAxis2),
+            1,
+            "axis 2 untouched"
+        );
+        assert_eq!(
+            int(CGEventField::ScrollWheelEventPointDeltaAxis2),
+            10,
+            "axis 2 untouched"
+        );
+    }
+
+    #[test]
+    fn inverting_horizontal_negates_only_axis_2_in_place() {
+        // Line 3 / −2 first: setting a line delta rewrites that axis's fixed
+        // and point deltas, so the distinct fixed and point values below
+        // are written after it.
+        let event =
+            CGEvent::new_scroll_wheel_event2(None, CGScrollEventUnit::Line, 2, 3, -2, 0).unwrap();
+        let set = |f, v| CGEvent::set_integer_value_field(Some(&event), f, v);
+        let set_fine = |f, v| CGEvent::set_double_value_field(Some(&event), f, v);
+        set_fine(CGEventField::ScrollWheelEventFixedPtDeltaAxis1, 3.25);
+        set(CGEventField::ScrollWheelEventPointDeltaAxis1, 31);
+        set_fine(CGEventField::ScrollWheelEventFixedPtDeltaAxis2, -2.75);
+        set(CGEventField::ScrollWheelEventPointDeltaAxis2, -23);
+
+        invert_scroll(&event, false, true);
+
+        let int = |f| CGEvent::integer_value_field(Some(&event), f);
+        let fine = |f| CGEvent::double_value_field(Some(&event), f);
+        assert_eq!(int(CGEventField::ScrollWheelEventDeltaAxis2), 2);
+        let fine2 = fine(CGEventField::ScrollWheelEventFixedPtDeltaAxis2);
+        assert!((fine2 - 2.75).abs() < 1e-3, "{fine2}");
+        assert_eq!(int(CGEventField::ScrollWheelEventPointDeltaAxis2), 23);
+        assert_eq!(
+            int(CGEventField::ScrollWheelEventDeltaAxis1),
+            3,
+            "axis 1 untouched"
+        );
+        let fine1 = fine(CGEventField::ScrollWheelEventFixedPtDeltaAxis1);
+        assert!((fine1 - 3.25).abs() < 1e-3, "axis 1 untouched: {fine1}");
+        assert_eq!(
+            int(CGEventField::ScrollWheelEventPointDeltaAxis1),
+            31,
+            "axis 1 untouched"
+        );
+    }
+
+    #[test]
     fn scroll_fields_are_copied_from_a_real_event() {
         let event =
             CGEvent::new_scroll_wheel_event2(None, CGScrollEventUnit::Line, 2, -3, 1, 0).unwrap();
         CGEvent::set_integer_value_field(Some(&event), CGEventField::EventSourceUserData, 42);
         CGEvent::set_integer_value_field(Some(&event), SENDER_ID_FIELD, 12345);
 
+        CGEvent::set_integer_value_field(
+            Some(&event),
+            CGEventField::ScrollWheelEventPointDeltaAxis1,
+            -36,
+        );
+        CGEvent::set_flags(Some(&event), CGEventFlags::MaskControl);
+
         let fields = scroll_fields(&event);
 
         assert_eq!(fields.delta_axis1, -3);
+        assert_eq!(fields.point_delta_axis1, -36);
+        assert_eq!(fields.flags & 0x0004_0000, 0x0004_0000, "Control held");
         assert_eq!(fields.delta_axis2, 1);
         assert_eq!(fields.user_data, 42);
         assert_eq!(fields.sender_id, 12345);

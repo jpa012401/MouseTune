@@ -21,7 +21,7 @@ use crate::{
 
 /// "Not armed": a fire date about 31 years away, also used as the repeat
 /// interval so a fired timer parks itself instead of firing again.
-const NEVER_SECS: f64 = 1.0e9;
+pub(crate) const NEVER_SECS: f64 = 1.0e9;
 
 type TimerCallback = unsafe extern "C-unwind" fn(*mut CFRunLoopTimer, *mut c_void);
 
@@ -150,12 +150,15 @@ mod tests {
         guard::DisabledReason,
         key_recorder::KeyEvent,
         router::{ButtonEvent, Verdict},
+        scroll::ScrollVerdict,
         taps::TapKind,
     };
 
     struct Recorder(Rc<RefCell<Vec<TimerKind>>>);
     impl TapHandler for Recorder {
-        fn on_scroll(&mut self, _: &ScrollFields) {}
+        fn on_scroll(&mut self, _: &ScrollFields) -> ScrollVerdict {
+            ScrollVerdict::Pass
+        }
         fn on_button(&mut self, _: &ButtonEvent) -> Verdict {
             Verdict::Pass
         }
@@ -166,6 +169,7 @@ mod tests {
             Verdict::Pass
         }
         fn on_tap_disabled(&mut self, _: TapKind, _: DisabledReason) {}
+        fn on_frame(&mut self) {}
     }
 
     fn run_for(secs: f64) {

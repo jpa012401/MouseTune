@@ -38,6 +38,14 @@ export function config(overrides: Partial<GeneralSettings> = {}): Config {
     version: 1,
     general: { buttons_enabled: true, scroll_enabled: true, ...overrides },
     buttons: { remaps: defaultRemaps },
+    scroll: {
+      smooth: true,
+      smoothness: "regular",
+      speed: "medium",
+      trackpad_simulation: true,
+      invert_vertical: false,
+      invert_horizontal: false,
+    },
   };
 }
 

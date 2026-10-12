@@ -16,6 +16,7 @@ pub struct Config {
     pub version: u32,
     pub general: General,
     pub buttons: Buttons,
+    pub scroll: Scroll,
 }
 
 impl Default for Config {
@@ -24,6 +25,7 @@ impl Default for Config {
             version: CURRENT_VERSION,
             general: General::default(),
             buttons: Buttons::default(),
+            scroll: Scroll::default(),
         }
     }
 }
@@ -180,12 +182,61 @@ pub enum NavDirection {
     Forward,
 }
 
+/// Smooth scrolling (Phase 5a design §1). Every field is `Copy`, so the
+/// input engine takes the whole section as its settings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct Scroll {
+    /// Animate wheel ticks. Off: inversion only, done in place.
+    pub smooth: bool,
+    pub smoothness: Smoothness,
+    pub speed: ScrollSpeed,
+    /// Send the coasting tail as momentum events instead of `Changed`.
+    pub trackpad_simulation: bool,
+    /// Flip that axis relative to what macOS delivers (which already
+    /// includes the Natural Scrolling setting).
+    pub invert_vertical: bool,
+    pub invert_horizontal: bool,
+}
+
+impl Default for Scroll {
+    fn default() -> Self {
+        Self {
+            smooth: true,
+            smoothness: Smoothness::Regular,
+            speed: ScrollSpeed::Medium,
+            trackpad_simulation: true,
+            invert_vertical: false,
+            invert_horizontal: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "lowercase")]
+pub enum Smoothness {
+    Low,
+    Regular,
+    High,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "lowercase")]
+pub enum ScrollSpeed {
+    /// The distance macOS would have scrolled, just smoothed.
+    System,
+    Low,
+    Medium,
+    High,
+}
+
 /// Which event taps the settings ask for.
 pub fn tap_demand(config: &Config) -> TapDemand {
     let g = &config.general;
+    let s = &config.scroll;
     TapDemand {
         buttons: g.buttons_enabled,
-        scroll: g.scroll_enabled,
+        // Off when no setting would change a wheel event (spec §4.1).
+        scroll: g.scroll_enabled && (s.smooth || s.invert_vertical || s.invert_horizontal),
         flags: g.buttons_enabled || g.scroll_enabled,
         keys: false,
     }
@@ -214,6 +265,7 @@ mod tests {
                 scroll_enabled: scroll,
             },
             buttons: Buttons::default(),
+            scroll: Scroll::default(),
         }
     }
 
@@ -282,7 +334,8 @@ mod tests {
             serde_json::json!({
                 "version": 1,
                 "general": { "buttons_enabled": true, "scroll_enabled": false },
-                "buttons": serde_json::to_value(Buttons::default()).unwrap()
+                "buttons": serde_json::to_value(Buttons::default()).unwrap(),
+                "scroll": serde_json::to_value(Scroll::default()).unwrap()
             })
         );
     }
@@ -325,5 +378,37 @@ mod tests {
             serde_json::to_value(&action).unwrap(),
             serde_json::json!({ "type": "KeyCombo", "key_code": 1, "modifiers": ["Command", "Shift"], "key_label": "S" })
         );
+    }
+
+    #[test]
+    fn default_scroll_section_is_the_design_shape() {
+        assert_eq!(
+            serde_json::to_value(Config::default().scroll).unwrap(),
+            serde_json::json!({
+                "smooth": true,
+                "smoothness": "regular",
+                "speed": "medium",
+                "trackpad_simulation": true,
+                "invert_vertical": false,
+                "invert_horizontal": false
+            })
+        );
+    }
+
+    #[test]
+    fn the_scroll_tap_runs_only_when_a_setting_would_change_wheel_events() {
+        let demand = |enabled, smooth, invert_vertical, invert_horizontal| {
+            let mut c = Config::default();
+            c.general.scroll_enabled = enabled;
+            c.scroll.smooth = smooth;
+            c.scroll.invert_vertical = invert_vertical;
+            c.scroll.invert_horizontal = invert_horizontal;
+            tap_demand(&c).scroll
+        };
+        assert!(demand(true, true, false, false));
+        assert!(demand(true, false, true, false));
+        assert!(demand(true, false, false, true));
+        assert!(!demand(true, false, false, false), "nothing would change");
+        assert!(!demand(false, true, true, true), "kill switch wins");
     }
 }

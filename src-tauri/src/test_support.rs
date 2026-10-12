@@ -389,3 +389,53 @@ impl NoticeObserver for FakeNotices {
         self.0.push("cancelled".into());
     }
 }
+
+use crate::input::scroll::animator::{MomentumPhase, ScrollOut};
+
+/// One scroll event as text: its phase ("Began", "momentum End"), then the
+/// axis that moved, if any ("Changed dy 79", "Began dx -38").
+pub fn describe_scroll(e: &ScrollOut) -> String {
+    let phase = match e.momentum {
+        MomentumPhase::None => format!("{:?}", e.phase),
+        m => format!("momentum {m:?}"),
+    };
+    match (e.dy, e.dx) {
+        (0, 0) => phase,
+        (dy, 0) => format!("{phase} dy {dy}"),
+        (0, dx) => format!("{phase} dx {dx}"),
+        (dy, dx) => format!("{phase} dy {dy} dx {dx}"),
+    }
+}
+
+use crate::input::scroll::{FrameDriver, ScrollPoster};
+
+/// Records "request" and "stop" in order. Clones share the log.
+#[derive(Clone, Default)]
+pub struct FakeFrames(Arc<Mutex<Vec<&'static str>>>);
+impl FakeFrames {
+    pub fn calls(&self) -> Vec<&'static str> {
+        self.0.lock().unwrap().clone()
+    }
+}
+impl FrameDriver for FakeFrames {
+    fn request(&mut self) {
+        self.0.lock().unwrap().push("request");
+    }
+    fn stop(&mut self) {
+        self.0.lock().unwrap().push("stop");
+    }
+}
+
+/// Records posted scroll events as `describe_scroll` text. Clones share the log.
+#[derive(Clone, Default)]
+pub struct FakeScrollPoster(Arc<Mutex<Vec<String>>>);
+impl FakeScrollPoster {
+    pub fn log(&self) -> Vec<String> {
+        self.0.lock().unwrap().clone()
+    }
+}
+impl ScrollPoster for FakeScrollPoster {
+    fn post(&mut self, event: &ScrollOut) {
+        self.0.lock().unwrap().push(describe_scroll(event));
+    }
+}

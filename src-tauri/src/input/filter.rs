@@ -18,6 +18,11 @@ pub struct ScrollFields {
     pub tablet_device_id: i64,
     pub delta_axis1: i64,
     pub delta_axis2: i64,
+    /// What macOS would have scrolled, in pixels.
+    pub point_delta_axis1: i64,
+    pub point_delta_axis2: i64,
+    /// `CGEventFlags` bits: which modifier keys were held.
+    pub flags: u64,
     pub sender_id: u64,
     pub user_data: i64,
 }
