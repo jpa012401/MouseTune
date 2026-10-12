@@ -130,7 +130,14 @@ impl Animator {
     /// it and begins a new one (design §3).
     pub fn tick(&mut self, tick: Tick, now: Instant) {
         let x = self.rate.observe(&tick, now);
-        let swipes = self.swipes.observe(&tick, now);
+        // A precise tick ends any streak and starts none, so letting go of
+        // the key after quick precise flicks doesn't jump to a swipe factor.
+        let swipes = if tick.precise {
+            self.swipes.reset();
+            0
+        } else {
+            self.swipes.observe(&tick, now)
+        };
         let px = tick_px(self.settings.speed, self.settings.precise, x, &tick)
             * swift_factor(swipes, &tick);
         let params = params(self.settings.smoothness, x);
@@ -412,6 +419,29 @@ mod tests {
         a.cancel();
         a.tick(system_tick(), at.ms(340));
         a.frame(at.ms(340));
+        assert_eq!(frame(&mut a, at.ms(430)), ["Changed dy 10", "Ended"]);
+    }
+
+    #[test]
+    fn precise_ticks_build_no_flick_streak() {
+        // Three quick precise ticks (0, 20, 40 ms) would be a swipe if they
+        // counted. A plain tick 300 ms later must scroll as a first tick:
+        // speed = system → its own 10 px, × 1.0, not × 1.33 = 13.
+        let at = Clock(Instant::now());
+        let mut a = system_low();
+        let precise = Tick {
+            precise: true,
+            ..system_tick()
+        };
+        for ms in [0, 20, 40] {
+            a.tick(precise, at.ms(ms));
+            if ms == 0 {
+                a.frame(at.ms(0));
+            }
+        }
+        a.frame(at.ms(130));
+        a.tick(system_tick(), at.ms(340));
+        assert_eq!(frame(&mut a, at.ms(340)), ["Began"]);
         assert_eq!(frame(&mut a, at.ms(430)), ["Changed dy 10", "Ended"]);
     }
 
