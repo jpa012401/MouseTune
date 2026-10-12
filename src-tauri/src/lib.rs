@@ -47,6 +47,7 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             ipc::stop_capture,
             ipc::start_key_capture,
             ipc::stop_key_capture,
+            ipc::scroll_curve_preview,
         ])
         .events(tauri_specta::collect_events![
             events::PermissionChanged,

@@ -7,6 +7,7 @@ pub mod acceleration;
 pub mod animator;
 pub mod curves;
 pub mod modifiers;
+pub mod preview;
 
 use std::time::Instant;
 

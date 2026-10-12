@@ -1,5 +1,5 @@
 import { mockIPC } from "@tauri-apps/api/mocks";
-import type { Config, ConfigView, Device, General as GeneralSettings, InputStatus, Remap, Scroll as ScrollSettings, Status } from "../bindings";
+import type { Config, ConfigView, CurvePreview, Device, General as GeneralSettings, InputStatus, Remap, Scroll as ScrollSettings, Status } from "../bindings";
 
 export function device(overrides: Partial<Device> = {}): Device {
   return { id: "1a", name: "MX Master 3", manufacturer: "Logitech", button_count: 5, has_wheel: true, ...overrides };
@@ -64,9 +64,17 @@ export function configView(overrides: Partial<ConfigView> = {}): ConfigView {
 type Handler = (args: unknown) => unknown;
 
 /** Mocks the Rust backend. Every command must be handled; calls are recorded. */
+/** A short, hand-made preview: 3 points per line. */
+export function curvePreview(): CurvePreview {
+  return {
+    slow: [[0, 0], [100, 60], [252, 90]],
+    fast: [[0, 0], [100, 150], [230, 180]],
+  };
+}
+
 export function mockBackend(handlers: Record<string, Handler>) {
   const calls: string[] = [];
-  const all: Record<string, Handler> = { get_config: () => configView(), ...handlers };
+  const all: Record<string, Handler> = { get_config: () => configView(), scroll_curve_preview: () => curvePreview(), ...handlers };
   mockIPC(
     (cmd, args) => {
       calls.push(cmd);

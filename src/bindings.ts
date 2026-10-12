@@ -24,6 +24,11 @@ export const commands = {
 	/**  Record the next key-down as a `key-captured` event. */
 	startKeyCapture: () => __TAURI_INVOKE<void>("start_key_capture"),
 	stopKeyCapture: () => __TAURI_INVOKE<void>("stop_key_capture"),
+	/**
+	 *  The Scroll screen's curve plot: the engine's own curve for the given
+	 *  settings (spec §10). Pure; no engine state.
+	 */
+	scrollCurvePreview: (scroll: Scroll) => __TAURI_INVOKE<CurvePreview>("scroll_curve_preview", { scroll }),
 };
 
 /** Events */
@@ -84,6 +89,15 @@ export type ConfigError = { kind: "Io"; message: string } | { kind: "Unsupported
 export type ConfigView = {
 	config: Config,
 	recovery: RecoveryNotice | null,
+};
+
+/**
+ *  `[milliseconds, pixels]` points for a tick at the slowest and the
+ *  fastest wheel rate.
+ */
+export type CurvePreview = {
+	slow: ([(number | null), (number | null)])[],
+	fast: ([(number | null), (number | null)])[],
 };
 
 /**  A tracked mouse as the UI sees it. */
