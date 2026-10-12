@@ -89,6 +89,18 @@ Taps pass every event through unchanged in this phase (since Phase 4a the button
 
 Report how the scroll feels (too short a coast, too fast, too slow). The curve's constants are tuning knobs (spec §8.2, §8.3).
 
+### Verifying scroll modifiers and the Scroll screen (Phase 5b acceptance, any wheel mouse)
+
+1. Shift + scroll in Safari scrolls sideways, smoothly.
+2. Option + scroll moves a few pixels per tick.
+3. With Accessibility Zoom on (System Settings → Accessibility → Zoom → "Use scroll gesture with modifier keys"), Ctrl + scroll still zooms the screen.
+4. Settings → Scroll → *Scroll faster* = ⌃ Control: Ctrl + scroll is now faster and Zoom no longer gets it. Set it back to None.
+5. Flick the wheel down three or four times in quick succession: each flick goes further than the last.
+6. Turn on *Precise when scrolling slowly*: slow ticks move a pixel or two, a fast spin still flies.
+7. Every Scroll-screen control changes the feel at once; the curve plot changes with smoothness, speed and precise.
+8. Toggle *Smooth scrolling* in the tray: the Scroll screen follows, and the other way round.
+9. Unplug or sleep the external display in the middle of a coast: scrolling stops cleanly without another tick.
+
 ## Building
 
 ```sh
