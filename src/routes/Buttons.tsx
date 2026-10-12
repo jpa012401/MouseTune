@@ -4,7 +4,7 @@ import { ActionPicker } from "../components/ActionPicker";
 import { AddRemapPanel } from "../components/AddRemapPanel";
 import { ActsAsPicker, DragEffectPicker, ScrollEffectPicker } from "../components/BindingEffectPicker";
 import { buttonClass } from "../components/buttonStyles";
-import { bindingRows, DEFAULT_TIMING, defaultButtons, waitsForDoubleClick, type BindingRow } from "../lib/remaps";
+import { bindingRows, dragEffectReady, DEFAULT_TIMING, defaultButtons, waitsForDoubleClick, type BindingRow } from "../lib/remaps";
 import { useCaptureStore } from "../store/capture";
 import { useConfigStore } from "../store/config";
 import { useStatusStore } from "../store/status";
@@ -42,7 +42,7 @@ function draftOf(b: ButtonSettings, row: BindingRow): Draft {
 }
 
 /** A recorded-but-cancelled shortcut sets a remap draft to null; the others always hold a choice. */
-const draftReady = (d: Draft) => d.value !== null;
+const draftReady = (d: Draft) => (d.kind === "drag" ? dragEffectReady(d.value) : d.value !== null);
 
 /** Saves into the one list at `row.index`; the other lists are carried over untouched. */
 function withDraft(b: ButtonSettings, row: BindingRow, d: Draft): ButtonSettings {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Buttons, Remap } from "../bindings";
-import { actsAsLabel, bindingConflict, bindingRows, defaultButtonRemaps, defaultButtons, dragLabel, findTrigger, remapLabel, scrollLabel, waitsForDoubleClick } from "./remaps";
+import { actsAsLabel, dragEffectReady, bindingConflict, bindingRows, defaultButtonRemaps, defaultButtons, dragLabel, findTrigger, remapLabel, scrollLabel, waitsForDoubleClick } from "./remaps";
 import { config, defaultRemaps } from "../test/backend";
 
 describe("remapLabel", () => {
@@ -103,6 +103,13 @@ describe("binding labels", () => {
     expect(bindingConflict(b, 3, "through")).toBe("Middle button already has other bindings, so it can’t act as another button.");
     expect(bindingConflict(b, 6, "scroll")).toBe("Button 6 acts as another button, so it can’t have other bindings.");
     expect(bindingConflict(b, 4, "scroll")).toBeNull();
+  });
+
+  it("a drag effect is ready unless separate actions has no direction", () => {
+    expect(dragEffectReady(null)).toBe(false);
+    expect(dragEffectReady({ type: "ScrollSwipe" })).toBe(true);
+    expect(dragEffectReady({ type: "Discrete", left: null, right: null, up: null, down: null })).toBe(false);
+    expect(dragEffectReady({ type: "Discrete", left: null, right: null, up: null, down: { type: "Navigate", direction: "Back" } })).toBe(true);
   });
 
   it("defaultButtons matches the fixture's default config", () => {

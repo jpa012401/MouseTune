@@ -46,6 +46,15 @@ export const defaultButtonRemaps: Remap[] = [
   remap(5, "click", { type: "Navigate", direction: "Forward" }),
 ];
 
+export function dragEffectReady(effect: DragEffect | null): boolean {
+  if (!effect) return false;
+  return effect.type !== "Discrete" || [effect.left, effect.right, effect.up, effect.down].some((a) => a !== null);
+}
+
+/** The one wording for "this binding is taken", shared by remap and other-binding conflicts. */
+export const alreadySetMessage = (trigger: string, action: string): string =>
+  `${trigger} is already set to ${action}. Change that row instead.`;
+
 export type BindingKind = "drag" | "scroll" | "through";
 export type BindingRow = { kind: "remap" | BindingKind; index: number; button: number; trigger: string; action: string };
 
@@ -114,7 +123,7 @@ export function bindingConflict(b: Buttons, button: number, kind: BindingKind | 
     if (taken) return `${name} already has other bindings, so it can’t act as another button.`;
   }
   const existing = bindingRows(b).find((r) => r.button === button && r.kind === kind && kind !== "remap");
-  return existing ? `${existing.trigger} is already set to ${existing.action}. Change that row instead.` : null;
+  return existing ? alreadySetMessage(existing.trigger, existing.action) : null;
 }
 
 /** Mirrors Rust's full `Buttons::default()`; pinned to the fixture by a test. */

@@ -278,6 +278,30 @@ describe("Buttons page", () => {
     expect(saved!.buttons.remaps).toEqual(defaultRemaps);
   });
 
+  it("separate actions needs a direction before Add is enabled", async () => {
+    mockBackend({ get_status: tapsOn, start_capture: () => null, stop_capture: () => null });
+    renderButtons();
+    fireEvent.click(await screen.findByRole("button", { name: "+ Add remap" }));
+    await act(() => emit("button-captured", { button: 7 }));
+    fireEvent.click(screen.getByRole("radio", { name: "Drag" }));
+    fireEvent.change(screen.getByLabelText("Drag effect"), { target: { value: "Discrete" } });
+    expect(screen.getByText("Choose at least one direction.")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Add" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText("Left"), { target: { value: "nav:Back" } });
+    expect(screen.queryByText("Choose at least one direction.")).toBeNull();
+    expect((screen.getByRole("button", { name: "Add" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("an edited drag row can't be saved with no direction", async () => {
+    mockBackend({ get_status: tapsOn });
+    renderButtons();
+    const row = (await screen.findByText("Middle button · Drag")).closest("li")!;
+    fireEvent.click(within(row).getByRole("button", { name: "Change" }));
+    fireEvent.change(within(row).getByLabelText("Drag effect"), { target: { value: "Discrete" } });
+    expect(within(row).getByText("Choose at least one direction.")).toBeTruthy();
+    expect((within(row).getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it("changes a drag row's effect", async () => {
     let saved: Config | undefined;
     mockBackend({ get_status: tapsOn, set_config: (a) => (saved = (a as { config: Config }).config) });

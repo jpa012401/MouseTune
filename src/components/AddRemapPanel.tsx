@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Action, Buttons, ClickTrigger, DragEffect, MouseButton, ScrollEffect } from "../bindings";
-import { bindingConflict, buttonName, findTrigger, remapLabel, type BindingKind } from "../lib/remaps";
+import { alreadySetMessage, bindingConflict, dragEffectReady, buttonName, findTrigger, remapLabel, type BindingKind } from "../lib/remaps";
 import { CAPTURE_TIMEOUT_MS, useCaptureStore } from "../store/capture";
 import { useConfigStore } from "../store/config";
 import { ActionPicker } from "./ActionPicker";
@@ -75,13 +75,13 @@ export function AddRemapPanel({ buttons, onDone }: { buttons: Buttons; onDone: (
   // Remaps keep their own exact-trigger check; the others share `bindingConflict`.
   const bindingProblem =
     conflictLabel
-      ? `${conflictLabel.trigger} is already set to ${conflictLabel.action}. Change that row instead.`
+      ? alreadySetMessage(conflictLabel.trigger, conflictLabel.action)
       : button !== null && choice
         ? bindingConflict(buttons, button, choice.kind)
         : null;
   const effectChosen =
     choice?.kind === "remap" ? action !== null
-    : choice?.kind === "drag" ? dragEffect !== null
+    : choice?.kind === "drag" ? dragEffectReady(dragEffect)
     : choice?.kind === "scroll" ? scrollEffect !== null
     : choice?.kind === "through" ? actsAs !== null
     : false;

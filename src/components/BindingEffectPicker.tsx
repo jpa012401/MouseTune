@@ -1,5 +1,5 @@
 import type { Action, DragEffect, MouseButton, ScrollEffect } from "../bindings";
-import { ACTS_AS_LABELS, SCROLL_LABELS } from "../lib/remaps";
+import { ACTS_AS_LABELS, dragEffectReady, SCROLL_LABELS } from "../lib/remaps";
 import { ActionPicker } from "./ActionPicker";
 
 const selectClass = "rounded-md border border-black/15 bg-transparent px-2 py-1 text-sm dark:border-white/20";
@@ -40,6 +40,9 @@ export function DragEffectPicker({ value, onChange }: { value: DragEffect | null
         DIRECTIONS.map((d) => (
           <ActionPicker key={d} label={d[0]!.toUpperCase() + d.slice(1)} value={discrete[d]} onChange={(a) => setDirection(d, a)} />
         ))}
+      {value?.type === "Discrete" && !dragEffectReady(value) && (
+        <p className="text-xs text-neutral-500">Choose at least one direction.</p>
+      )}
     </div>
   );
 }
