@@ -2,4 +2,5 @@
 //! and the event poster are ports implemented in `platform::macos`.
 
 pub mod acceleration;
+pub mod animator;
 pub mod curves;

@@ -389,3 +389,20 @@ impl NoticeObserver for FakeNotices {
         self.0.push("cancelled".into());
     }
 }
+
+use crate::input::scroll::animator::{MomentumPhase, ScrollOut};
+
+/// One scroll event as text: its phase ("Began", "momentum End"), then the
+/// axis that moved, if any ("Changed dy 79", "Began dx -38").
+pub fn describe_scroll(e: &ScrollOut) -> String {
+    let phase = match e.momentum {
+        MomentumPhase::None => format!("{:?}", e.phase),
+        m => format!("momentum {m:?}"),
+    };
+    match (e.dy, e.dx) {
+        (0, 0) => phase,
+        (dy, 0) => format!("{phase} dy {dy}"),
+        (0, dx) => format!("{phase} dx {dx}"),
+        (dy, dx) => format!("{phase} dy {dy} dx {dx}"),
+    }
+}
