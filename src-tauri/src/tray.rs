@@ -11,7 +11,7 @@ use tauri::{
 
 use crate::{
     config::{
-        schema::{Config, General},
+        schema::Config,
         store::{ConfigObserver, ConfigStore},
     },
     permission_monitor::PermissionObserver,
@@ -25,16 +25,19 @@ struct TrayItems {
     status: MenuItem<Wry>,
     buttons: CheckMenuItem<Wry>,
     scroll: CheckMenuItem<Wry>,
+    smooth: CheckMenuItem<Wry>,
+    invert_vertical: CheckMenuItem<Wry>,
 }
 
-pub fn build(app: &AppHandle, accessibility_trusted: bool, general: &General) -> tauri::Result<()> {
+pub fn build(app: &AppHandle, accessibility_trusted: bool, config: &Config) -> tauri::Result<()> {
+    let checks = switch_checks(config);
     let status = MenuItem::with_id(app, "status", "", false, None::<&str>)?;
     let buttons = CheckMenuItem::with_id(
         app,
         "toggle-buttons",
         "Enable buttons",
         true,
-        general.buttons_enabled,
+        checks.buttons,
         None::<&str>,
     )?;
     let scroll = CheckMenuItem::with_id(
@@ -42,7 +45,23 @@ pub fn build(app: &AppHandle, accessibility_trusted: bool, general: &General) ->
         "toggle-scroll",
         "Enable scrolling",
         true,
-        general.scroll_enabled,
+        checks.scroll,
+        None::<&str>,
+    )?;
+    let smooth = CheckMenuItem::with_id(
+        app,
+        "toggle-smooth",
+        "Smooth scrolling",
+        checks.scroll_options_enabled,
+        checks.smooth,
+        None::<&str>,
+    )?;
+    let invert_vertical = CheckMenuItem::with_id(
+        app,
+        "toggle-invert-vertical",
+        "Invert vertical scrolling",
+        checks.scroll_options_enabled,
+        checks.invert_vertical,
         None::<&str>,
     )?;
     let open = MenuItem::with_id(
@@ -59,6 +78,8 @@ pub fn build(app: &AppHandle, accessibility_trusted: bool, general: &General) ->
             &status,
             &buttons,
             &scroll,
+            &smooth,
+            &invert_vertical,
             &PredefinedMenuItem::separator(app)?,
             &open,
             &quit,
@@ -76,6 +97,8 @@ pub fn build(app: &AppHandle, accessibility_trusted: bool, general: &General) ->
             "status" | "open-settings" => window::open_settings(app),
             "toggle-buttons" => toggle(app, Switch::Buttons),
             "toggle-scroll" => toggle(app, Switch::Scroll),
+            "toggle-smooth" => toggle(app, Switch::Smooth),
+            "toggle-invert-vertical" => toggle(app, Switch::InvertVertical),
             "quit" => app.exit(0),
             _ => {}
         })
@@ -85,6 +108,8 @@ pub fn build(app: &AppHandle, accessibility_trusted: bool, general: &General) ->
         status,
         buttons,
         scroll,
+        smooth,
+        invert_vertical,
     });
     set_accessibility(app, accessibility_trusted);
     Ok(())
@@ -95,25 +120,33 @@ fn toggle(app: &AppHandle, which: Switch) {
         return;
     };
     let mut store = store.lock().unwrap_or_else(PoisonError::into_inner);
-    let next = toggled(&store.current().general, which);
-    if let Err(err) = store.update_general(|g| *g = next) {
+    let next = toggled(store.current(), which);
+    if let Err(err) = store.update(next) {
         tracing::warn!(%err, "couldn't save the tray switch");
     }
     // macOS flips a check item on click by itself, so a failed save must be
     // visibly undone. `set_switches` never touches the store.
-    set_switches(app, &store.current().general);
+    set_switches(app, store.current());
 }
 
 /// Shows the saved switches as checkmarks.
-fn set_switches(app: &AppHandle, general: &General) {
+fn set_switches(app: &AppHandle, config: &Config) {
     let Some(items) = app.try_state::<TrayItems>() else {
         return;
     };
-    let checks = switch_checks(general);
+    let checks = switch_checks(config);
     if let Err(err) = items
         .buttons
         .set_checked(checks.buttons)
         .and_then(|()| items.scroll.set_checked(checks.scroll))
+        .and_then(|()| items.smooth.set_checked(checks.smooth))
+        .and_then(|()| items.smooth.set_enabled(checks.scroll_options_enabled))
+        .and_then(|()| items.invert_vertical.set_checked(checks.invert_vertical))
+        .and_then(|()| {
+            items
+                .invert_vertical
+                .set_enabled(checks.scroll_options_enabled)
+        })
     {
         tracing::warn!(%err, "failed to update tray switches");
     }
@@ -124,7 +157,7 @@ pub struct TrayConfigStatus(pub AppHandle);
 
 impl ConfigObserver for TrayConfigStatus {
     fn config_changed(&self, config: &Config) {
-        set_switches(&self.0, &config.general);
+        set_switches(&self.0, config);
     }
 }
 
@@ -150,32 +183,44 @@ fn status_line(trusted: bool) -> StatusLine {
     }
 }
 
-/// Which tray switches show a checkmark.
+/// Which tray switches show a checkmark, and whether the scroll options
+/// can be clicked.
 #[derive(Debug, PartialEq, Eq)]
 struct SwitchChecks {
     buttons: bool,
     scroll: bool,
+    smooth: bool,
+    invert_vertical: bool,
+    /// The scroll options are greyed out while scrolling is off.
+    scroll_options_enabled: bool,
 }
 
 #[derive(Clone, Copy)]
 enum Switch {
     Buttons,
     Scroll,
+    Smooth,
+    InvertVertical,
 }
 
-fn switch_checks(general: &General) -> SwitchChecks {
+fn switch_checks(config: &Config) -> SwitchChecks {
     SwitchChecks {
-        buttons: general.buttons_enabled,
-        scroll: general.scroll_enabled,
+        buttons: config.general.buttons_enabled,
+        scroll: config.general.scroll_enabled,
+        smooth: config.scroll.smooth,
+        invert_vertical: config.scroll.invert_vertical,
+        scroll_options_enabled: config.general.scroll_enabled,
     }
 }
 
 /// The settings after clicking `which` in the tray.
-fn toggled(general: &General, which: Switch) -> General {
-    let mut next = general.clone();
+fn toggled(config: &Config, which: Switch) -> Config {
+    let mut next = config.clone();
     match which {
-        Switch::Buttons => next.buttons_enabled = !next.buttons_enabled,
-        Switch::Scroll => next.scroll_enabled = !next.scroll_enabled,
+        Switch::Buttons => next.general.buttons_enabled = !next.general.buttons_enabled,
+        Switch::Scroll => next.general.scroll_enabled = !next.general.scroll_enabled,
+        Switch::Smooth => next.scroll.smooth = !next.scroll.smooth,
+        Switch::InvertVertical => next.scroll.invert_vertical = !next.scroll.invert_vertical,
     }
     next
 }
@@ -207,41 +252,54 @@ impl PermissionObserver for TrayPermissionStatus {
 mod tests {
     use super::*;
 
+    fn config(scroll_enabled: bool) -> Config {
+        let mut c = Config::default();
+        c.general.scroll_enabled = scroll_enabled;
+        c
+    }
+
     #[test]
-    fn checkmarks_follow_the_saved_switches() {
-        let general = General {
-            buttons_enabled: false,
-            scroll_enabled: true,
-        };
+    fn checkmarks_follow_the_saved_settings() {
+        let mut c = config(true);
+        c.general.buttons_enabled = false;
+        c.scroll.invert_vertical = true;
         assert_eq!(
-            switch_checks(&general),
+            switch_checks(&c),
             SwitchChecks {
                 buttons: false,
-                scroll: true
+                scroll: true,
+                smooth: true,
+                invert_vertical: true,
+                scroll_options_enabled: true,
             }
         );
     }
 
     #[test]
-    fn clicking_a_switch_flips_only_that_switch() {
-        let general = General {
-            buttons_enabled: true,
-            scroll_enabled: true,
-        };
-        assert_eq!(
-            toggled(&general, Switch::Scroll),
-            General {
-                buttons_enabled: true,
-                scroll_enabled: false
-            }
-        );
-        assert_eq!(
-            toggled(&general, Switch::Buttons),
-            General {
-                buttons_enabled: false,
-                scroll_enabled: true
-            }
-        );
+    fn scroll_options_are_greyed_out_while_scrolling_is_off() {
+        assert!(!switch_checks(&config(false)).scroll_options_enabled);
+    }
+
+    #[test]
+    fn clicking_a_switch_flips_only_that_setting() {
+        let c = config(true);
+        let flipped = |which| toggled(&c, which);
+
+        let mut expected = c.clone();
+        expected.general.scroll_enabled = false;
+        assert_eq!(flipped(Switch::Scroll), expected);
+
+        let mut expected = c.clone();
+        expected.general.buttons_enabled = false;
+        assert_eq!(flipped(Switch::Buttons), expected);
+
+        let mut expected = c.clone();
+        expected.scroll.smooth = false;
+        assert_eq!(flipped(Switch::Smooth), expected);
+
+        let mut expected = c.clone();
+        expected.scroll.invert_vertical = true;
+        assert_eq!(flipped(Switch::InvertVertical), expected);
     }
 
     #[test]

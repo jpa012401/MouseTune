@@ -6,7 +6,7 @@ use specta::Type;
 use crate::config::{
     file::ConfigFile,
     load::parse_config,
-    schema::{CURRENT_VERSION, Config, General},
+    schema::{CURRENT_VERSION, Config},
     validate::{RemapProblem, validate_remaps},
 };
 
@@ -108,11 +108,6 @@ impl ConfigStore {
         }
         Ok(self.current.clone())
     }
-    pub fn update_general(&mut self, f: impl FnOnce(&mut General)) -> Result<Config, ConfigError> {
-        let mut next = self.current.clone();
-        f(&mut next.general);
-        self.update(next)
-    }
     pub fn reset(&mut self) -> Result<Config, ConfigError> {
         self.update(Config::default())
     }
@@ -129,6 +124,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::*;
+    use crate::config::schema::General;
     use crate::test_support::FakeConfigFile;
 
     const SCROLL_OFF: &str =
@@ -320,9 +316,9 @@ mod tests {
         );
         let mut store = ConfigStore::load(Box::new(file.clone()));
 
-        let saved = store
-            .update_general(|g| g.buttons_enabled = false)
-            .expect("the kill switch saves");
+        let mut next = store.current().clone();
+        next.general.buttons_enabled = false;
+        let saved = store.update(next).expect("the kill switch saves");
 
         assert!(!saved.general.buttons_enabled);
         assert_eq!(file.writes().len(), 1);
@@ -340,16 +336,6 @@ mod tests {
         assert_eq!(store.update(Config::default()), Ok(Config::default()));
         assert!(file.writes().is_empty());
         assert!(seen.log().is_empty());
-    }
-
-    #[test]
-    fn update_general_edits_one_switch() {
-        let mut store = ConfigStore::load(Box::new(FakeConfigFile::missing()));
-        assert_eq!(
-            store.update_general(|g| g.scroll_enabled = false),
-            Ok(scroll_off())
-        );
-        assert_eq!(store.current(), &scroll_off());
     }
 
     #[test]

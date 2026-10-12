@@ -92,7 +92,7 @@ pub fn run() {
             let mut store = config::store::ConfigStore::load(Box::new(
                 config::system_file::SystemConfigFile::new(config_path),
             ));
-            let general = store.current().general.clone();
+            let config = store.current().clone();
             let remap_count = store.current().buttons.remaps.len();
 
             // Read once so the engine and the tray start from the same value.
@@ -121,7 +121,7 @@ pub fn run() {
             );
             app.manage(ExecThread(Mutex::new(Some(exec))));
 
-            tray::build(app.handle(), trusted, &general)?;
+            tray::build(app.handle(), trusted, &config)?;
             store.subscribe(Box::new(input::thread::InputConfigBridge(Arc::clone(
                 &input,
             ))));
@@ -143,8 +143,8 @@ pub fn run() {
                 version = app.package_info().version.to_string(),
                 os = %platform::os_version::current(),
                 accessibility = trusted,
-                buttons_enabled = general.buttons_enabled,
-                scroll_enabled = general.scroll_enabled,
+                buttons_enabled = config.general.buttons_enabled,
+                scroll_enabled = config.general.scroll_enabled,
                 remaps = remap_count,
                 "MouseTune started"
             );
