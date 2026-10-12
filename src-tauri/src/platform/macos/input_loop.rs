@@ -45,31 +45,15 @@ const WATCHDOG_INTERVAL_SECS: f64 = 5.0;
 const QOS_CLASS_USER_INTERACTIVE: u32 = 0x21;
 
 /// Spawns `mt-input` and waits until its run loop can take messages.
-/// `observer` receives every engine snapshot; `rx` carries control messages,
-/// which are applied after the returned waker is woken. The engine owns
-/// `sink`, so `mt-exec`'s queue closes when this thread stops.
-// Composition seam: each argument is one startup input, moved straight into
-// `StartSetup`; bundling them at the call site would only rename that struct.
-#[allow(clippy::too_many_arguments)]
+/// `setup.observer` receives every engine snapshot; `rx` carries control
+/// messages, which are applied after the returned waker is woken. The engine
+/// owns `setup.sink`, so `mt-exec`'s queue closes when this thread stops.
 pub fn start(
-    trusted: bool,
-    demand: TapDemand,
-    remaps: CompiledRemaps,
-    scroll: Scroll,
-    sink: Box<dyn ActionSink + Send>,
-    observer: Box<dyn EngineObserver + Send>,
+    setup: StartSetup,
     rx: Receiver<Control>,
     shared: Arc<InputShared>,
 ) -> (JoinHandle<()>, Arc<dyn Waker>) {
     let (waker_tx, waker_rx) = mpsc::sync_channel::<Arc<dyn Waker>>(1);
-    let setup = StartSetup {
-        trusted,
-        demand,
-        remaps,
-        scroll,
-        sink,
-        observer,
-    };
     let join = thread::Builder::new()
         .name("mt-input".into())
         .spawn(move || run_input_thread(setup, rx, shared, waker_tx))
@@ -83,13 +67,13 @@ pub fn start(
 type Engine = Rc<RefCell<InputEngine<MacTapController>>>;
 
 /// What the engine starts from, moved onto `mt-input`.
-struct StartSetup {
-    trusted: bool,
-    demand: TapDemand,
-    remaps: CompiledRemaps,
-    scroll: Scroll,
-    sink: Box<dyn ActionSink + Send>,
-    observer: Box<dyn EngineObserver + Send>,
+pub(crate) struct StartSetup {
+    pub(crate) trusted: bool,
+    pub(crate) demand: TapDemand,
+    pub(crate) remaps: CompiledRemaps,
+    pub(crate) scroll: Scroll,
+    pub(crate) sink: Box<dyn ActionSink + Send>,
+    pub(crate) observer: Box<dyn EngineObserver + Send>,
 }
 
 /// What the control source and watchdog timer callbacks reach through their

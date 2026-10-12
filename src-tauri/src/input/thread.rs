@@ -204,16 +204,15 @@ pub fn spawn(
         shared: Arc::clone(&shared),
         ui,
     });
-    let (join, waker) = input_loop::start(
+    let setup = input_loop::StartSetup {
         trusted,
         demand,
         remaps,
         scroll,
         sink,
         observer,
-        rx,
-        Arc::clone(&shared),
-    );
+    };
+    let (join, waker) = input_loop::start(setup, rx, Arc::clone(&shared));
     Arc::new(InputHandle::new(tx, waker, shared, Some(join)))
 }
 
