@@ -63,7 +63,6 @@ export function configView(overrides: Partial<ConfigView> = {}): ConfigView {
 
 type Handler = (args: unknown) => unknown;
 
-/** Mocks the Rust backend. Every command must be handled; calls are recorded. */
 /** A short, hand-made preview: 3 points per line. */
 export function curvePreview(): CurvePreview {
   return {
@@ -72,6 +71,7 @@ export function curvePreview(): CurvePreview {
   };
 }
 
+/** Mocks the Rust backend. Every command must be handled; calls are recorded. */
 export function mockBackend(handlers: Record<string, Handler>) {
   const calls: string[] = [];
   const all: Record<string, Handler> = { get_config: () => configView(), scroll_curve_preview: () => curvePreview(), ...handlers };
