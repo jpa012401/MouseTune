@@ -34,13 +34,14 @@ pub fn event_mask(kind: TapKind) -> u64 {
         TapKind::Buttons => bit(CGEventType::OtherMouseDown) | bit(CGEventType::OtherMouseUp),
         TapKind::Scroll => bit(CGEventType::ScrollWheel),
         TapKind::Flags => bit(CGEventType::FlagsChanged),
+        TapKind::Keys => 0, // Task 6.
     }
 }
 
 pub fn tap_options(kind: TapKind) -> CGEventTapOptions {
     match kind {
         TapKind::Flags => CGEventTapOptions::ListenOnly,
-        TapKind::Buttons | TapKind::Scroll => CGEventTapOptions::Default,
+        TapKind::Buttons | TapKind::Scroll | TapKind::Keys => CGEventTapOptions::Default,
     }
 }
 
@@ -84,7 +85,7 @@ pub struct TapContext {
 pub struct MacTapController {
     context: *const TapContext,
     run_loop: CFRetained<CFRunLoop>,
-    ports: [Option<CFRetained<CFMachPort>>; 3],
+    ports: [Option<CFRetained<CFMachPort>>; 4],
 }
 
 impl MacTapController {
@@ -94,7 +95,7 @@ impl MacTapController {
         Self {
             context,
             run_loop,
-            ports: [None, None, None],
+            ports: [None, None, None, None],
         }
     }
 
@@ -103,6 +104,7 @@ impl MacTapController {
             TapKind::Buttons => 0,
             TapKind::Scroll => 1,
             TapKind::Flags => 2,
+            TapKind::Keys => 3,
         }
     }
 
@@ -111,6 +113,7 @@ impl MacTapController {
             TapKind::Buttons => button_callback as _,
             TapKind::Scroll => scroll_callback as _,
             TapKind::Flags => flags_callback as _,
+            TapKind::Keys => return false, // Task 6.
         };
         // SAFETY: the callbacks match `CGEventTapCallBack`; `context` outlives
         // the tap (owned by the input thread, which owns this controller).
@@ -308,7 +311,7 @@ mod tests {
     use objc2_core_foundation::CGPoint;
     use objc2_core_graphics::{CGEventMouseSubtype, CGMouseButton, CGScrollEventUnit};
 
-    use crate::input::router::TimerKind;
+    use crate::input::{key_recorder::KeyEvent, router::TimerKind};
 
     use super::*;
 
@@ -334,6 +337,9 @@ mod tests {
             self.verdict
         }
         fn on_click_timer(&mut self, _: TimerKind) {}
+        fn on_key(&mut self, _: &KeyEvent) -> Verdict {
+            Verdict::Pass
+        }
         fn on_tap_disabled(&mut self, _: TapKind, _: DisabledReason) {}
     }
 

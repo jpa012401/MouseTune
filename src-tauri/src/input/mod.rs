@@ -7,6 +7,7 @@ pub mod devices;
 pub mod engine;
 pub mod filter;
 pub mod guard;
+pub mod key_recorder;
 pub mod remaps;
 pub mod router;
 pub mod taps;

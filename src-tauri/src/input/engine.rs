@@ -19,6 +19,7 @@ use crate::{
             MOUSETUNE_EVENT_TAG, ScrollClass, ScrollFields, classify_scroll, is_foreign_button_down,
         },
         guard::{DisabledAction, DisabledReason, on_tap_disabled},
+        key_recorder::{KeyEvent, KeyRecorder},
         remaps::CompiledRemaps,
         router::{
             ButtonEvent, ButtonKind, ButtonRouter, ClickTimers, Decision, Outcome, TimerKind,
@@ -79,6 +80,14 @@ pub trait TapHandler {
     fn on_scroll(&mut self, fields: &ScrollFields);
     fn on_button(&mut self, event: &ButtonEvent) -> Verdict;
     fn on_click_timer(&mut self, kind: TimerKind);
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "the keys tap adapter feeds it from Phase 4b Task 6"
+        )
+    )]
+    fn on_key(&mut self, event: &KeyEvent) -> Verdict;
     fn on_tap_disabled(&mut self, kind: TapKind, reason: DisabledReason);
 }
 
@@ -104,6 +113,7 @@ pub struct InputEngine<C: TapController> {
     sink: Box<dyn ActionSink>,
     actions: Arc<ActionCounters>,
     capture: ButtonCapture,
+    recorder: KeyRecorder,
     clock: Box<dyn Clock>,
     observer: Box<dyn EngineObserver>,
     last_published: Option<EngineSnapshot>,
@@ -129,6 +139,7 @@ impl<C: TapController> InputEngine<C> {
             sink: buttons.sink,
             actions: buttons.counters,
             capture: ButtonCapture::default(),
+            recorder: KeyRecorder::default(),
             clock: buttons.clock,
             observer,
             last_published: None,
@@ -166,6 +177,21 @@ impl<C: TapController> InputEngine<C> {
         self.capture.stop();
     }
 
+    /// The next real key-down, with its modifiers, is reported as a
+    /// `KeyCaptured` notice and swallowed, within `CAPTURE_TIMEOUT`. Runs the
+    /// keys tap only while needed.
+    ///
+    /// Doesn't reset the router: a button press in flight carries on.
+    pub fn start_key_capture(&mut self) {
+        self.recorder.start(self.clock.now());
+        self.update_taps();
+    }
+
+    pub fn stop_key_capture(&mut self) {
+        self.recorder.stop();
+        self.update_taps();
+    }
+
     pub fn apply_device_event(&mut self, event: DeviceEvent) {
         match event {
             DeviceEvent::Added(device) => self.devices.insert(device),
@@ -192,12 +218,26 @@ impl<C: TapController> InputEngine<C> {
     fn refresh(&mut self) {
         let reset = self.router.reset();
         self.apply(reset);
-        let desired = desired_taps(self.trusted, &self.devices, self.demand);
-        self.taps.reconcile(desired);
+        self.update_taps();
+    }
+
+    /// Brings the taps in line with the current state, without touching the
+    /// click cycle, then publishes.
+    fn update_taps(&mut self) {
+        self.taps.reconcile(self.desired());
         if !self.taps.enabled().buttons {
             self.router.forget_swallowed();
         }
         self.publish();
+    }
+
+    /// The config's demand, plus the keys tap while the recorder needs it.
+    fn desired(&self) -> TapSet {
+        let demand = TapDemand {
+            keys: self.recorder.wants_tap(),
+            ..self.demand
+        };
+        desired_taps(self.trusted, &self.devices, demand)
     }
 
     /// Carries out a router decision. Hot path: no allocation, no locks, no
@@ -266,14 +306,35 @@ impl<C: TapController> TapHandler for InputEngine<C> {
         self.apply(decision);
     }
 
+    /// Hot path: no allocation, no locks, no logging.
+    fn on_key(&mut self, event: &KeyEvent) -> Verdict {
+        let had_tap = self.recorder.wants_tap();
+        let (verdict, notice) = self.recorder.on_key(event, self.clock.now());
+        if let Some(notice) = notice {
+            self.submit(Job::Notice(notice));
+        }
+        if had_tap && !self.recorder.wants_tap() {
+            // Turning a tap off inside its own callout is allowed (set_enabled
+            // never discards a valid port). No publish here: it allocates; the
+            // next watchdog tick publishes the new tap state.
+            self.taps.reconcile(self.desired());
+        }
+        verdict
+    }
+
     /// A disabled button tap missed button events, so any cycle in flight is
     /// stale and any swallowed bit may belong to an up that already reached
-    /// the OS, whatever the reason. Other taps miss no button events.
+    /// the OS, whatever the reason. Other taps miss no button events. A
+    /// disabled keys tap may likewise have let a swallowed key's up through.
     fn on_tap_disabled(&mut self, kind: TapKind, reason: DisabledReason) {
-        if kind == TapKind::Buttons {
-            let reset = self.router.reset();
-            self.apply(reset);
-            self.router.forget_swallowed();
+        match kind {
+            TapKind::Buttons => {
+                let reset = self.router.reset();
+                self.apply(reset);
+                self.router.forget_swallowed();
+            }
+            TapKind::Keys => self.recorder.forget_swallowed(),
+            TapKind::Scroll | TapKind::Flags => {}
         }
         if on_tap_disabled(reason) == DisabledAction::Reenable {
             self.taps.reenable(kind);
@@ -287,9 +348,13 @@ mod tests {
 
     use super::*;
     use crate::{
-        actions::CompiledAction,
+        actions::{CompiledAction, RawKeyCapture, keys::ModifierMask},
         config::schema::{Config, NavDirection, SymbolicHotkeyId},
-        input::{filter::PassReason, remaps::compile},
+        input::{
+            filter::PassReason,
+            key_recorder::{KeyEvent, KeyKind},
+            remaps::compile,
+        },
         test_support::{FakeClock, FakeSink, FakeTapController, FakeTimers, apple_trackpad, mouse},
     };
 
@@ -297,6 +362,7 @@ mod tests {
         buttons: true,
         scroll: true,
         flags: true,
+        keys: false,
     };
 
     #[derive(Clone, Default)]
@@ -384,6 +450,89 @@ mod tests {
     ));
     const BACK: Job = Job::Perform(CompiledAction::Navigate(NavDirection::Back));
     const CAPTURED_3: Job = Job::Notice(Notice::ButtonCaptured { button: 3 });
+
+    fn key_down(key_code: u16, flags: u64, ch: char) -> KeyEvent {
+        KeyEvent {
+            kind: KeyKind::Down,
+            key_code,
+            flags,
+            chars: [ch as u16, 0, 0, 0],
+            chars_len: 1,
+            user_data: 0,
+        }
+    }
+
+    fn key_up(key_code: u16) -> KeyEvent {
+        KeyEvent {
+            kind: KeyKind::Up,
+            key_code,
+            flags: 0,
+            chars: [0; 4],
+            chars_len: 0,
+            user_data: 0,
+        }
+    }
+
+    #[test]
+    fn recording_turns_the_keys_tap_on_and_releasing_the_key_turns_it_off() {
+        let mut r = rig(true);
+        r.engine.start_key_capture();
+        assert!(r.engine.snapshot().taps.keys);
+        assert_eq!(
+            r.engine.on_key(&key_down(0x01, 0x100000, 's')),
+            Verdict::Swallow
+        );
+        assert!(
+            r.engine.snapshot().taps.keys,
+            "the recorded key is still down"
+        );
+        assert_eq!(r.engine.on_key(&key_up(0x01)), Verdict::Swallow);
+        assert!(!r.engine.snapshot().taps.keys);
+        assert_eq!(
+            jobs(&r),
+            vec![Job::Notice(Notice::KeyCaptured(RawKeyCapture {
+                key_code: 0x01,
+                modifiers: ModifierMask(0x100000),
+                chars: [0x73, 0, 0, 0],
+                chars_len: 1
+            }))]
+        );
+    }
+
+    #[test]
+    fn recording_needs_accessibility() {
+        let mut r = rig(false);
+        r.engine.start_key_capture();
+        assert!(!r.engine.snapshot().taps.keys);
+    }
+
+    #[test]
+    fn stop_key_capture_drops_the_keys_tap() {
+        let mut r = rig(true);
+        r.engine.start_key_capture();
+        r.engine.stop_key_capture();
+        assert!(!r.engine.snapshot().taps.keys);
+    }
+
+    #[test]
+    fn a_keys_tap_timeout_forgets_swallowed_keys() {
+        let mut r = rig(true);
+        r.engine.start_key_capture();
+        r.engine.on_key(&key_down(0x01, 0, 's'));
+        r.engine
+            .on_tap_disabled(TapKind::Keys, DisabledReason::Timeout);
+        assert_eq!(r.engine.on_key(&key_up(0x01)), Verdict::Pass);
+    }
+
+    #[test]
+    fn starting_a_recording_doesnt_cancel_a_button_press_in_flight() {
+        let mut r = rig(true);
+        r.engine.apply_device_event(DeviceEvent::Added(mouse(1)));
+        button(&mut r, ButtonKind::Down, 2, 10);
+        r.engine.start_key_capture();
+        r.engine.on_click_timer(TimerKind::Hold);
+        assert_eq!(jobs(&r), vec![DESKTOP]);
+    }
 
     #[test]
     fn a_captured_press_is_swallowed_reported_once_and_ends_capture() {
@@ -540,6 +689,7 @@ mod tests {
             buttons: false,
             scroll: true,
             flags: true,
+            keys: false,
         });
         assert_eq!(button(&mut r, ButtonKind::Up, 2, 10), Verdict::Pass);
         assert!(
@@ -560,6 +710,7 @@ mod tests {
             buttons: true,
             scroll: false,
             flags: true,
+            keys: false,
         });
         assert_eq!(button(&mut r, ButtonKind::Up, 2, 10), Verdict::Swallow);
     }
@@ -713,13 +864,15 @@ mod tests {
             buttons: true,
             scroll: false,
             flags: true,
+            keys: false,
         });
         assert_eq!(
             r.published.last().taps,
             TapSet {
                 buttons: true,
                 scroll: false,
-                flags: true
+                flags: true,
+                keys: false
             }
         );
 
@@ -735,6 +888,7 @@ mod tests {
             buttons: false,
             scroll: false,
             flags: false,
+            keys: false,
         });
         assert_eq!(r.published.last().taps, TapSet::NONE);
     }

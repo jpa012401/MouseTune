@@ -84,10 +84,59 @@ pub fn key_combo_strokes(binding: KeyBinding) -> Vec<KeyStroke> {
     strokes
 }
 
-/// The label the UI shows for a captured key: the typed characters,
-/// upper-cased.
-pub fn key_label(_key_code: u16, chars: &[u16]) -> String {
-    String::from_utf16_lossy(chars).trim().to_uppercase()
+/// Keys whose typed characters are blank, invisible or layout-independent,
+/// by macOS virtual key code.
+const SPECIAL_KEYS: [(u16, &str); 35] = [
+    (0x24, "↩"),
+    (0x30, "⇥"),
+    (0x31, "Space"),
+    (0x33, "⌫"),
+    (0x35, "Esc"),
+    (0x4C, "⌤"),
+    (0x75, "⌦"),
+    (0x73, "Home"),
+    (0x77, "End"),
+    (0x74, "Page Up"),
+    (0x79, "Page Down"),
+    (0x7B, "←"),
+    (0x7C, "→"),
+    (0x7D, "↓"),
+    (0x7E, "↑"),
+    (0x7A, "F1"),
+    (0x78, "F2"),
+    (0x63, "F3"),
+    (0x76, "F4"),
+    (0x60, "F5"),
+    (0x61, "F6"),
+    (0x62, "F7"),
+    (0x64, "F8"),
+    (0x65, "F9"),
+    (0x6D, "F10"),
+    (0x67, "F11"),
+    (0x6F, "F12"),
+    (0x69, "F13"),
+    (0x6B, "F14"),
+    (0x71, "F15"),
+    (0x6A, "F16"),
+    (0x40, "F17"),
+    (0x4F, "F18"),
+    (0x50, "F19"),
+    (0x5A, "F20"),
+];
+
+/// The label the UI shows for a captured key: a fixed name for special keys,
+/// otherwise the typed characters upper-cased, or `Key {code}` when they
+/// aren't printable.
+pub fn key_label(key_code: u16, chars: &[u16]) -> String {
+    if let Some((_, label)) = SPECIAL_KEYS.iter().find(|(code, _)| *code == key_code) {
+        return (*label).to_string();
+    }
+    let typed = String::from_utf16_lossy(chars).trim().to_uppercase();
+    if typed.is_empty() || typed.chars().any(char::is_control) {
+        format!("Key {key_code}")
+    } else {
+        typed
+    }
 }
 
 #[cfg(test)]
@@ -97,6 +146,26 @@ mod tests {
     #[test]
     fn a_printable_key_is_labelled_by_its_upper_cased_character() {
         assert_eq!(key_label(1, &[0x73]), "S");
+    }
+
+    #[test]
+    fn special_keys_have_fixed_labels() {
+        assert_eq!(key_label(0x7E, &[]), "↑");
+        assert_eq!(key_label(0x31, &[0x20]), "Space");
+        assert_eq!(key_label(0x60, &[]), "F5");
+        assert_eq!(key_label(0x24, &[0x0D]), "↩");
+    }
+
+    #[test]
+    fn printable_keys_use_their_character_uppercased() {
+        assert_eq!(key_label(0x01, &[0x73]), "S");
+        assert_eq!(key_label(0x15, &[0x34]), "4");
+    }
+
+    #[test]
+    fn unknown_unprintable_keys_fall_back_to_their_code() {
+        assert_eq!(key_label(0x47, &[0x10]), "Key 71");
+        assert_eq!(key_label(0x47, &[]), "Key 71");
     }
 
     #[test]

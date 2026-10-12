@@ -243,6 +243,7 @@ mod tests {
                 buttons: true,
                 scroll: true,
                 flags: false,
+                keys: false,
             },
             devices: vec![mouse(255)],
         };
@@ -260,7 +261,8 @@ mod tests {
             TapSet {
                 buttons: true,
                 scroll: true,
-                flags: false
+                flags: false,
+                keys: false
             }
         );
         assert_eq!(

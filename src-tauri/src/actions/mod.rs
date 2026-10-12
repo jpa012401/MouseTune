@@ -68,16 +68,10 @@ pub enum Job {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Notice {
     /// 1-based, as the config and UI count buttons (3 = middle).
-    ButtonCaptured { button: u8 },
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the key recorder produces it in Phase 4b Task 5")
-    )]
+    ButtonCaptured {
+        button: u8,
+    },
     KeyCaptured(RawKeyCapture),
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the key recorder produces it in Phase 4b Task 5")
-    )]
     KeyCaptureCancelled,
 }
 
@@ -111,10 +105,7 @@ pub fn deliver(notice: Notice, observer: &dyn NoticeObserver) {
     match notice {
         Notice::ButtonCaptured { button } => observer.button_captured(button),
         Notice::KeyCaptured(raw) => {
-            let chars = raw
-                .chars
-                .get(..usize::from(raw.chars_len))
-                .unwrap_or(&raw.chars);
+            let chars = &raw.chars[..usize::from(raw.chars_len).min(4)];
             observer.key_captured(KeyCapture {
                 key_code: raw.key_code,
                 modifiers: modifier_names(raw.modifiers),
@@ -245,6 +236,50 @@ mod tests {
                 modifiers: ModifierMask(0x120000)
             })
         );
+    }
+
+    #[test]
+    fn modifier_names_come_out_in_display_order() {
+        use crate::config::schema::KeyModifier::*;
+        assert_eq!(
+            modifier_names(ModifierMask(0x40000 | 0x80000 | 0x20000 | 0x100000)),
+            vec![Control, Option, Shift, Command]
+        );
+    }
+
+    #[derive(Default)]
+    struct Labels(std::sync::Mutex<Vec<String>>);
+    impl NoticeObserver for Labels {
+        fn button_captured(&self, _: u8) {}
+        fn key_captured(&self, capture: KeyCapture) {
+            self.0.lock().unwrap().push(capture.key_label);
+        }
+        fn key_capture_cancelled(&self) {}
+    }
+
+    fn label_for(chars_len: u8) -> String {
+        let labels = Labels::default();
+        let a = u16::from(b'a');
+        deliver(
+            Notice::KeyCaptured(RawKeyCapture {
+                key_code: 0x00,
+                modifiers: ModifierMask(0),
+                chars: [a, a + 1, a + 2, a + 3],
+                chars_len,
+            }),
+            &labels,
+        );
+        labels.0.lock().unwrap().pop().expect("no key captured")
+    }
+
+    #[test]
+    fn a_captured_label_uses_only_the_valid_chars() {
+        assert_eq!(label_for(1), "A");
+    }
+
+    #[test]
+    fn a_chars_len_past_four_is_clamped_to_the_four_chars_there_are() {
+        assert_eq!(label_for(9), "ABCD");
     }
 
     #[test]

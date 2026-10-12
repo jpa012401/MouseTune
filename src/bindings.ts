@@ -151,6 +151,7 @@ export type TapSet = {
 	buttons: boolean,
 	scroll: boolean,
 	flags: boolean,
+	keys: boolean,
 };
 
 export type TriggerDuration = "click" | "hold";

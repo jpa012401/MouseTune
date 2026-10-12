@@ -45,6 +45,17 @@ pub enum Control {
         expect(dead_code, reason = "IPC sends it from Phase 4b Task 7")
     )]
     StopCapture,
+    /// Record the next key-down (with modifiers) instead of letting it through.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "IPC sends it from Phase 4b Task 7")
+    )]
+    StartKeyCapture,
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "IPC sends it from Phase 4b Task 7")
+    )]
+    StopKeyCapture,
     Shutdown,
 }
 
@@ -157,6 +168,14 @@ pub fn handle_control<C: TapController>(engine: &mut InputEngine<C>, msg: Contro
         }
         Control::StopCapture => {
             engine.stop_capture();
+            Flow::Continue
+        }
+        Control::StartKeyCapture => {
+            engine.start_key_capture();
+            Flow::Continue
+        }
+        Control::StopKeyCapture => {
+            engine.stop_key_capture();
             Flow::Continue
         }
         Control::Shutdown => Flow::Stop,
@@ -283,6 +302,7 @@ mod tests {
             buttons: false,
             scroll: false,
             flags: false,
+            keys: false,
         };
         assert_eq!(
             handle_control(&mut engine, Control::SetDemand(off)),
@@ -312,7 +332,8 @@ mod tests {
             Ok(Control::SetDemand(TapDemand {
                 buttons: true,
                 scroll: false,
-                flags: true
+                flags: true,
+                keys: false
             }))
         );
         assert_eq!(
@@ -376,6 +397,21 @@ mod tests {
                 Job::Perform(CompiledAction::Navigate(NavDirection::Back)),
             ]
         );
+    }
+
+    #[test]
+    fn key_capture_controls_reach_the_engine_and_continue() {
+        let (mut engine, _) = engine(true);
+        assert_eq!(
+            handle_control(&mut engine, Control::StartKeyCapture),
+            Flow::Continue
+        );
+        assert!(engine.snapshot().taps.keys);
+        assert_eq!(
+            handle_control(&mut engine, Control::StopKeyCapture),
+            Flow::Continue
+        );
+        assert!(!engine.snapshot().taps.keys);
     }
 
     #[test]
