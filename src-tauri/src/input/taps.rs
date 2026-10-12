@@ -139,6 +139,13 @@ impl<C: TapController> TapManager<C> {
         }
     }
 
+    /// Turns one tap off and stops wanting it. Callback-safe and O(1): it
+    /// touches no other tap, and disabling never discards a port.
+    pub fn release(&mut self, kind: TapKind) {
+        self.desired.set(kind, false);
+        self.controller.set_enabled(kind, false);
+    }
+
     /// Turns a tap back on if it's supposed to be on. Returns whether it is on afterwards.
     /// Callback-safe: never rebuilds a tap; a tap that won't come back is left for the watchdog.
     pub fn reenable(&mut self, kind: TapKind) -> bool {
@@ -318,6 +325,40 @@ mod tests {
         };
         assert!(desired_taps(true, &DeviceRegistry::default(), demand).keys);
         assert!(!desired_taps(false, &DeviceRegistry::default(), demand).keys);
+    }
+
+    #[test]
+    fn release_turns_off_only_that_tap_and_the_watchdog_leaves_it_off() {
+        let fake = FakeTapController::default();
+        let mut manager = TapManager::new(fake.clone());
+        manager.reconcile(TapSet {
+            buttons: false,
+            scroll: true,
+            flags: false,
+            keys: true,
+        });
+        fake.os_disables(TapKind::Scroll);
+
+        manager.release(TapKind::Keys);
+
+        assert_eq!(
+            fake.calls(),
+            [
+                (TapKind::Scroll, true),
+                (TapKind::Keys, true),
+                (TapKind::Keys, false)
+            ]
+        );
+        assert_eq!(manager.enabled(), TapSet::NONE);
+        assert_eq!(
+            manager.watchdog(),
+            TapSet {
+                buttons: false,
+                scroll: true,
+                flags: false,
+                keys: false
+            }
+        );
     }
 
     #[test]

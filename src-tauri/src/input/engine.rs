@@ -228,6 +228,11 @@ impl<C: TapController> InputEngine<C> {
         if !self.taps.enabled().buttons {
             self.router.forget_swallowed();
         }
+        // Likewise for keys: with the keys tap off, a held key's up goes to
+        // the OS unseen.
+        if !self.taps.enabled().keys {
+            self.recorder.forget_swallowed();
+        }
         self.publish();
     }
 
@@ -314,10 +319,11 @@ impl<C: TapController> TapHandler for InputEngine<C> {
             self.submit(Job::Notice(notice));
         }
         if had_tap && !self.recorder.wants_tap() {
-            // Turning a tap off inside its own callout is allowed (set_enabled
-            // never discards a valid port). No publish here: it allocates; the
-            // next watchdog tick publishes the new tap state.
-            self.taps.reconcile(self.desired());
+            // Only the keys tap is touched: reconciling every tap could create
+            // or log for another one inside this callout. Disabling never
+            // discards a port, so it is safe in the tap's own callout. No
+            // publish here: it allocates; the next watchdog tick publishes.
+            self.taps.release(TapKind::Keys);
         }
         verdict
     }
@@ -333,7 +339,15 @@ impl<C: TapController> TapHandler for InputEngine<C> {
                 self.apply(reset);
                 self.router.forget_swallowed();
             }
-            TapKind::Keys => self.recorder.forget_swallowed(),
+            TapKind::Keys => {
+                self.recorder.forget_swallowed();
+                if !self.recorder.wants_tap() {
+                    // Nothing left to record or swallow: don't bring back a
+                    // tap that would only pass everything.
+                    self.taps.release(TapKind::Keys);
+                    return;
+                }
+            }
             TapKind::Scroll | TapKind::Flags => {}
         }
         if on_tap_disabled(reason) == DisabledAction::Reenable {
@@ -497,6 +511,46 @@ mod tests {
                 chars_len: 1
             }))]
         );
+    }
+
+    #[test]
+    fn ending_a_recording_in_the_key_callback_touches_no_other_tap() {
+        let mut r = rig(true);
+        r.engine.apply_device_event(DeviceEvent::Added(mouse(1)));
+        r.engine.start_key_capture();
+        r.taps.os_disables(TapKind::Scroll);
+        let before = r.taps.calls().len();
+        r.engine.on_key(&key_down(0x01, 0, 's'));
+        r.engine.on_key(&key_up(0x01));
+        assert_eq!(r.taps.calls()[before..], [(TapKind::Keys, false)]);
+        assert!(!r.engine.snapshot().taps.keys);
+    }
+
+    #[test]
+    fn a_key_held_when_the_keys_tap_went_off_is_recorded_next_time() {
+        let mut r = rig(true);
+        r.engine.start_key_capture();
+        r.engine.on_key(&key_down(0x01, 0, 's'));
+        r.engine.set_trusted(false);
+        r.engine.set_trusted(true);
+        assert!(!r.engine.snapshot().taps.keys, "nothing left to record");
+        r.engine.start_key_capture();
+        assert_eq!(r.engine.on_key(&key_down(0x01, 0, 's')), Verdict::Swallow);
+        assert_eq!(jobs(&r).len(), 2, "recorded twice: {:?}", jobs(&r));
+        assert_eq!(r.engine.on_key(&key_up(0x02)), Verdict::Pass);
+    }
+
+    #[test]
+    fn a_keys_tap_timeout_with_nothing_to_record_leaves_the_tap_off() {
+        let mut r = rig(true);
+        r.engine.start_key_capture();
+        r.engine.on_key(&key_down(0x01, 0, 's'));
+        r.taps.os_disables(TapKind::Keys);
+        r.engine
+            .on_tap_disabled(TapKind::Keys, DisabledReason::Timeout);
+        assert!(!r.engine.snapshot().taps.keys);
+        r.engine.watchdog();
+        assert!(!r.engine.snapshot().taps.keys);
     }
 
     #[test]
