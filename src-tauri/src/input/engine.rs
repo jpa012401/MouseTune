@@ -29,7 +29,7 @@ use crate::{
             MagnifyOutput, PointerFreeze,
         },
         key_recorder::{KeyEvent, KeyRecorder},
-        remaps::CompiledRemaps,
+        remaps::{CompiledRemaps, SwipeKind},
         router::{
             ButtonEvent, ButtonKind, ButtonRouter, ClickTimers, Decision, MotionEvent, Outcome,
             TimerKind, Verdict,
@@ -378,6 +378,11 @@ impl<C: TapController> InputEngine<C> {
                         self.set_frozen(true);
                     }
                     if let Some(kind) = swipe {
+                        if kind == SwipeKind::ScrollSwipe {
+                            // Close a coasting smooth scroll first, so no
+                            // app sees two scroll gestures at once.
+                            self.scroll.cancel();
+                        }
                         self.session.begin(axis, kind, self.clock.now());
                     }
                 }
@@ -1991,6 +1996,22 @@ mod tests {
         r.engine.on_scroll(&wheel(1));
         r.engine.on_frame();
         assert_eq!(r.posted.log(), ["Began", "Ended"]);
+    }
+
+    #[test]
+    fn a_two_finger_swipe_drag_ends_a_coasting_scroll_gesture_first() {
+        let mut r = drag_rig();
+        r.engine.set_scroll(low());
+        assert_eq!(r.engine.on_scroll(&wheel(1)), ScrollVerdict::Swallow);
+        r.engine.on_frame();
+        assert_eq!(r.posted.log(), ["Began"]);
+        press_and_drag(&mut r);
+        assert_eq!(
+            r.posted.log(),
+            ["Began", "Ended"],
+            "closed before the swipe's own Began"
+        );
+        assert_eq!(r.gesture_scroll.log(), ["Began", "Changed dy 12"]);
     }
 
     #[test]
