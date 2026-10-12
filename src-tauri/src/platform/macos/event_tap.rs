@@ -25,7 +25,7 @@ use crate::input::{
     filter::ScrollFields,
     guard::{DisabledReason, guarded},
     key_recorder::{KeyEvent, KeyKind},
-    router::{ButtonEvent, ButtonKind, Verdict},
+    router::{ButtonEvent, ButtonKind, MotionEvent, Verdict},
     scroll::ScrollVerdict,
     taps::{TapController, TapKind},
 };
@@ -40,12 +40,18 @@ pub fn event_mask(kind: TapKind) -> u64 {
         TapKind::Scroll => bit(CGEventType::ScrollWheel),
         TapKind::Flags => bit(CGEventType::FlagsChanged),
         TapKind::Keys => bit(CGEventType::KeyDown) | bit(CGEventType::KeyUp),
+        TapKind::Drag => {
+            bit(CGEventType::MouseMoved)
+                | bit(CGEventType::LeftMouseDragged)
+                | bit(CGEventType::RightMouseDragged)
+                | bit(CGEventType::OtherMouseDragged)
+        }
     }
 }
 
 pub fn tap_options(kind: TapKind) -> CGEventTapOptions {
     match kind {
-        TapKind::Flags => CGEventTapOptions::ListenOnly,
+        TapKind::Flags | TapKind::Drag => CGEventTapOptions::ListenOnly,
         TapKind::Buttons | TapKind::Scroll | TapKind::Keys => CGEventTapOptions::Default,
     }
 }
@@ -160,7 +166,7 @@ pub struct TapContext {
 pub struct MacTapController {
     context: *const TapContext,
     run_loop: CFRetained<CFRunLoop>,
-    ports: [Option<CFRetained<CFMachPort>>; 4],
+    ports: [Option<CFRetained<CFMachPort>>; 5],
 }
 
 impl MacTapController {
@@ -170,7 +176,7 @@ impl MacTapController {
         Self {
             context,
             run_loop,
-            ports: [None, None, None, None],
+            ports: [None, None, None, None, None],
         }
     }
 
@@ -180,6 +186,7 @@ impl MacTapController {
             TapKind::Scroll => 1,
             TapKind::Flags => 2,
             TapKind::Keys => 3,
+            TapKind::Drag => 4,
         }
     }
 
@@ -189,6 +196,7 @@ impl MacTapController {
             TapKind::Scroll => scroll_callback as _,
             TapKind::Flags => flags_callback as _,
             TapKind::Keys => key_callback as _,
+            TapKind::Drag => motion_callback as _,
         };
         // SAFETY: the callbacks match `CGEventTapCallBack`; `context` outlives
         // the tap (owned by the input thread, which owns this controller).
@@ -391,6 +399,29 @@ unsafe extern "C-unwind" fn flags_callback(
     })
 }
 
+pub fn motion_event(event: &CGEvent) -> MotionEvent {
+    let get = |field| CGEvent::integer_value_field(Some(event), field);
+    let clamp = |v: i64| i32::try_from(v).unwrap_or(if v < 0 { i32::MIN } else { i32::MAX });
+    MotionEvent {
+        dx: clamp(get(CGEventField::MouseEventDeltaX)),
+        dy: clamp(get(CGEventField::MouseEventDeltaY)),
+        user_data: get(CGEventField::EventSourceUserData),
+    }
+}
+
+unsafe extern "C-unwind" fn motion_callback(
+    _proxy: CGEventTapProxy,
+    event_type: CGEventType,
+    event: NonNull<CGEvent>,
+    user_info: *mut c_void,
+) -> *mut CGEvent {
+    // Listen-only: the verdict is ignored, movement is never changed.
+    dispatch(TapKind::Drag, event_type, event, user_info, |h, e| {
+        h.on_motion(&motion_event(e));
+        Verdict::Pass
+    })
+}
+
 unsafe extern "C-unwind" fn key_callback(
     _proxy: CGEventTapProxy,
     event_type: CGEventType,
@@ -450,6 +481,8 @@ mod tests {
         }
         fn on_tap_disabled(&mut self, _: TapKind, _: DisabledReason) {}
         fn on_frame(&mut self) {}
+        fn on_motion(&mut self, _: &MotionEvent) {}
+        fn on_intents(&mut self) {}
     }
 
     fn context(handler: Option<Rc<RefCell<Handler>>>) -> TapContext {
@@ -746,7 +779,31 @@ mod tests {
     }
 
     #[test]
-    fn only_the_flags_tap_is_listen_only() {
+    fn drag_tap_listens_to_moves_and_drags_only() {
+        assert_eq!(
+            event_mask(TapKind::Drag),
+            (1 << 5) | (1 << 6) | (1 << 7) | (1 << 27)
+        );
+    }
+
+    #[test]
+    fn motion_fields_are_copied_from_a_real_event() {
+        let e = CGEvent::new_mouse_event(
+            None,
+            CGEventType::MouseMoved,
+            CGPoint { x: 0.0, y: 0.0 },
+            objc2_core_graphics::CGMouseButton::Left,
+        )
+        .unwrap();
+        CGEvent::set_integer_value_field(Some(&e), CGEventField::MouseEventDeltaX, 12);
+        CGEvent::set_integer_value_field(Some(&e), CGEventField::MouseEventDeltaY, -5);
+        let m = motion_event(&e);
+        assert_eq!((m.dx, m.dy), (12, -5));
+    }
+
+    #[test]
+    fn only_the_flags_and_drag_taps_are_listen_only() {
+        assert_eq!(tap_options(TapKind::Drag), CGEventTapOptions::ListenOnly);
         assert_eq!(tap_options(TapKind::Flags), CGEventTapOptions::ListenOnly);
         assert_eq!(tap_options(TapKind::Buttons), CGEventTapOptions::Default);
         assert_eq!(tap_options(TapKind::Scroll), CGEventTapOptions::Default);

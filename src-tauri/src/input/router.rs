@@ -23,6 +23,14 @@ pub enum ButtonKind {
     Up,
 }
 
+/// Fields the Drag tap copies out of a mouse-moved or -dragged event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MotionEvent {
+    pub dx: i32,
+    pub dy: i32,
+    pub user_data: i64,
+}
+
 /// Fields the button tap copies out of a CGEvent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ButtonEvent {
@@ -275,10 +283,6 @@ impl ButtonRouter {
         d
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the engine uses it from Phase 6 Task 5")
-    )]
     /// Pointer movement while a button is down (Drag tap). Hot path.
     pub fn on_motion(&mut self, dx: i32, dy: i32) -> Decision {
         let mut d = Decision::pass();

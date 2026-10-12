@@ -311,6 +311,7 @@ mod tests {
             scroll: false,
             flags: false,
             keys: false,
+            drag: false,
         };
         assert_eq!(
             handle_control(&mut engine, Control::SetDemand(off)),
@@ -346,7 +347,8 @@ mod tests {
                 buttons: true,
                 scroll: false,
                 flags: true,
-                keys: false
+                keys: false,
+                drag: false
             }))
         );
         assert_eq!(

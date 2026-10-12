@@ -7,7 +7,7 @@ export function device(overrides: Partial<Device> = {}): Device {
 
 export function inputStatus(overrides: Partial<InputStatus> = {}): InputStatus {
   return {
-    taps: { buttons: false, scroll: false, flags: false, keys: false },
+    taps: { buttons: false, scroll: false, flags: false, keys: false, drag: false },
     devices: [],
     scroll_stats: { mouse_wheel: 0, passed_through: 0 },
     actions: { performed: 0, dropped: 0, failed: 0 },

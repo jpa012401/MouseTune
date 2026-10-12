@@ -23,8 +23,8 @@ use crate::{
         key_recorder::{KeyEvent, KeyRecorder},
         remaps::CompiledRemaps,
         router::{
-            ButtonEvent, ButtonKind, ButtonRouter, ClickTimers, Decision, Outcome, TimerKind,
-            Verdict,
+            ButtonEvent, ButtonKind, ButtonRouter, ClickTimers, Decision, MotionEvent, Outcome,
+            TimerKind, Verdict,
         },
         scroll::{ScrollEngine, ScrollVerdict},
         taps::{TapController, TapDemand, TapKind, TapManager, TapSet, desired_taps},
@@ -86,6 +86,11 @@ pub trait TapHandler {
     fn on_tap_disabled(&mut self, kind: TapKind, reason: DisabledReason);
     /// One display frame for the scroll animation.
     fn on_frame(&mut self);
+    /// Pointer movement from the Drag tap (listen-only).
+    fn on_motion(&mut self, event: &MotionEvent);
+    /// Carries out queued intents, outside any callout.
+    #[expect(dead_code, reason = "the run-loop source calls it from Phase 6 Task 5")]
+    fn on_intents(&mut self);
 }
 
 /// What the engine needs to route buttons: the compiled bindings, the click
@@ -246,6 +251,7 @@ impl<C: TapController> InputEngine<C> {
     fn desired(&self) -> TapSet {
         let demand = TapDemand {
             keys: self.recorder.wants_tap(),
+            drag: self.router.wants_motion(),
             ..self.demand
         };
         desired_taps(self.trusted, &self.devices, demand)
@@ -328,6 +334,17 @@ impl<C: TapController> TapHandler for InputEngine<C> {
         self.apply(decision)
     }
 
+    /// Hot path: no allocation, no locks, no logging, nothing posted.
+    fn on_motion(&mut self, event: &MotionEvent) {
+        if event.user_data == MOUSETUNE_EVENT_TAG {
+            return;
+        }
+        let decision = self.router.on_motion(event.dx, event.dy);
+        self.apply(decision);
+    }
+
+    fn on_intents(&mut self) {}
+
     fn on_click_timer(&mut self, kind: TimerKind) {
         let decision = self.router.on_timer(kind);
         self.apply(decision);
@@ -370,7 +387,7 @@ impl<C: TapController> TapHandler for InputEngine<C> {
                     return;
                 }
             }
-            TapKind::Scroll | TapKind::Flags => {}
+            TapKind::Scroll | TapKind::Flags | TapKind::Drag => {}
         }
         if on_tap_disabled(reason) == DisabledAction::Reenable {
             self.taps.reenable(kind);
@@ -403,6 +420,7 @@ mod tests {
         scroll: true,
         flags: true,
         keys: false,
+        drag: false,
     };
 
     #[derive(Clone, Default)]
@@ -525,6 +543,56 @@ mod tests {
             chars_len: 0,
             user_data: 0,
         }
+    }
+
+    fn drag_rig() -> Rig {
+        let mut r = rig(true);
+        r.engine.apply_device_event(DeviceEvent::Added(mouse(1)));
+        let mut c = Config {
+            buttons: phase4_buttons(),
+            ..Config::default()
+        };
+        c.buttons.drags = vec![crate::config::schema::DragBinding {
+            button: 3,
+            effect: crate::config::schema::DragEffect::ScrollSwipe,
+        }];
+        r.engine.set_remaps(compile(&c));
+        r
+    }
+
+    #[test]
+    fn motion_reaches_the_router_and_separate_actions_fire_from_the_callout() {
+        let mut r = rig(true);
+        r.engine.apply_device_event(DeviceEvent::Added(mouse(1)));
+        let mut c = Config {
+            buttons: phase4_buttons(),
+            ..Config::default()
+        };
+        c.buttons.drags = vec![crate::config::schema::DragBinding {
+            button: 3,
+            effect: crate::config::schema::DragEffect::Discrete {
+                left: None,
+                right: Some(crate::config::schema::Action::Navigate {
+                    direction: NavDirection::Back,
+                }),
+                up: None,
+                down: None,
+            },
+        }];
+        r.engine.set_remaps(compile(&c));
+        button(&mut r, ButtonKind::Down, 2, 10);
+        r.engine.on_motion(&MotionEvent {
+            dx: 45,
+            dy: 0,
+            user_data: 0,
+        });
+        assert!(jobs(&r).contains(&BACK), "{:?}", jobs(&r));
+    }
+
+    #[test]
+    fn the_drag_tap_is_not_wanted_until_a_drag_button_is_down() {
+        let r = drag_rig();
+        assert!(!r.engine.snapshot().taps.drag);
     }
 
     #[test]
@@ -784,6 +852,7 @@ mod tests {
             scroll: true,
             flags: true,
             keys: false,
+            drag: false,
         });
         assert_eq!(button(&mut r, ButtonKind::Up, 2, 10), Verdict::Pass);
         assert!(
@@ -805,6 +874,7 @@ mod tests {
             scroll: false,
             flags: true,
             keys: false,
+            drag: false,
         });
         assert_eq!(button(&mut r, ButtonKind::Up, 2, 10), Verdict::Swallow);
     }
@@ -959,6 +1029,7 @@ mod tests {
             scroll: false,
             flags: true,
             keys: false,
+            drag: false,
         });
         assert_eq!(
             r.published.last().taps,
@@ -966,7 +1037,8 @@ mod tests {
                 buttons: true,
                 scroll: false,
                 flags: true,
-                keys: false
+                keys: false,
+                drag: false
             }
         );
 
@@ -983,6 +1055,7 @@ mod tests {
             scroll: false,
             flags: false,
             keys: false,
+            drag: false,
         });
         assert_eq!(r.published.last().taps, TapSet::NONE);
     }

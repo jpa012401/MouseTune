@@ -425,6 +425,7 @@ pub fn tap_demand(config: &Config) -> TapDemand {
         scroll: g.scroll_enabled && (s.smooth || s.invert_vertical || s.invert_horizontal),
         flags: g.buttons_enabled || g.scroll_enabled,
         keys: false,
+        drag: false,
     }
 }
 
@@ -466,7 +467,8 @@ mod tests {
                 buttons: true,
                 scroll: true,
                 flags: true,
-                keys: false
+                keys: false,
+                drag: false
             }
         );
     }
@@ -479,7 +481,8 @@ mod tests {
                 buttons: true,
                 scroll: false,
                 flags: true,
-                keys: false
+                keys: false,
+                drag: false
             }
         );
     }
@@ -492,7 +495,8 @@ mod tests {
                 buttons: false,
                 scroll: true,
                 flags: true,
-                keys: false
+                keys: false,
+                drag: false
             }
         );
     }
@@ -505,7 +509,8 @@ mod tests {
                 buttons: false,
                 scroll: false,
                 flags: false,
-                keys: false
+                keys: false,
+                drag: false
             }
         );
     }

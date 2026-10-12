@@ -295,6 +295,7 @@ export type TapSet = {
 	scroll: boolean,
 	flags: boolean,
 	keys: boolean,
+	drag: boolean,
 };
 
 /**  The click-cycle timers (spec §5.1). Both within `TIMING_MS`. */

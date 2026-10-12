@@ -170,6 +170,8 @@ mod tests {
         }
         fn on_tap_disabled(&mut self, _: TapKind, _: DisabledReason) {}
         fn on_frame(&mut self) {}
+        fn on_motion(&mut self, _: &crate::input::router::MotionEvent) {}
+        fn on_intents(&mut self) {}
     }
 
     fn run_for(secs: f64) {

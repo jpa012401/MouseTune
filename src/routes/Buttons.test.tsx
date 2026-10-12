@@ -7,7 +7,7 @@ import { config, configView, defaultRemaps, inputStatus, mockBackend, status, ti
 
 /** Capture only sees presses through the buttons tap, so most tests need it on. */
 function tapsOn() {
-  return status({ input: inputStatus({ taps: { buttons: true, scroll: true, flags: true, keys: false } }) });
+  return status({ input: inputStatus({ taps: { buttons: true, scroll: true, flags: true, keys: false, drag: false } }) });
 }
 
 function renderButtons() {
