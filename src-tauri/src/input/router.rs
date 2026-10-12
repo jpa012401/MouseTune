@@ -59,8 +59,14 @@ pub struct Decision {
 }
 
 /// Port: two reusable one-shot timers on `mt-input`.
+///
+/// The router tracks one armed flag per kind and ignores fires it didn't
+/// arm, so at most one fire per kind may ever be pending.
 pub trait ClickTimers {
+    /// Schedules `kind` to fire once after `after`, replacing any pending
+    /// fire of that timer. Never queues a second fire.
     fn arm(&mut self, kind: TimerKind, after: Duration);
+    /// Cancels the pending fire of `kind`, if any.
     fn disarm(&mut self, kind: TimerKind);
 }
 
@@ -143,7 +149,7 @@ impl ButtonRouter {
         }
         match event.kind {
             ButtonKind::Down => self.down(event.button, event.sender_id),
-            ButtonKind::Up => self.up(event.button),
+            ButtonKind::Up => self.up(event.button, event.sender_id),
         }
     }
 
@@ -208,7 +214,7 @@ impl ButtonRouter {
         d
     }
 
-    fn up(&mut self, button: u8) -> Decision {
+    fn up(&mut self, button: u8, sender_id: u64) -> Decision {
         let bit = 1 << button;
         if self.swallowed & bit == 0 {
             return Decision::pass();
@@ -218,7 +224,9 @@ impl ButtonRouter {
         let Some(c) = self.cycle.current() else {
             return d;
         };
-        if c.press.button != button || !c.down {
+        // Another mouse's up for the same button number: still swallowed (its
+        // down was), but it must not release this mouse's press.
+        if c.press.button != button || c.press.sender_id != sender_id || !c.down {
             return d;
         }
         self.cycle.release();
@@ -336,18 +344,27 @@ mod tests {
         }
     }
     fn event(kind: ButtonKind, button: u8) -> ButtonEvent {
+        event_from(kind, button, SENDER)
+    }
+    fn event_from(kind: ButtonKind, button: u8, sender_id: u64) -> ButtonEvent {
         ButtonEvent {
             kind,
             button,
-            sender_id: SENDER,
+            sender_id,
             user_data: 0,
         }
     }
     fn down(r: &mut ButtonRouter, button: u8) -> (Verdict, Vec<Outcome>) {
-        split(r.on_button(&event(ButtonKind::Down, button)))
+        down_from(r, button, SENDER)
     }
     fn up(r: &mut ButtonRouter, button: u8) -> (Verdict, Vec<Outcome>) {
-        split(r.on_button(&event(ButtonKind::Up, button)))
+        up_from(r, button, SENDER)
+    }
+    fn down_from(r: &mut ButtonRouter, button: u8, sender_id: u64) -> (Verdict, Vec<Outcome>) {
+        split(r.on_button(&event_from(ButtonKind::Down, button, sender_id)))
+    }
+    fn up_from(r: &mut ButtonRouter, button: u8, sender_id: u64) -> (Verdict, Vec<Outcome>) {
+        split(r.on_button(&event_from(ButtonKind::Up, button, sender_id)))
     }
     fn timer(r: &mut ButtonRouter, kind: TimerKind) -> Vec<Outcome> {
         split(r.on_timer(kind)).1
@@ -529,6 +546,36 @@ mod tests {
         down(&mut r, MIDDLE); // unbound: passes
         r.set_remaps(compile(&Config::default())); // now bound
         assert_eq!(up(&mut r, MIDDLE), (Verdict::Pass, vec![]));
+    }
+
+    #[test]
+    fn an_up_from_another_mouse_doesnt_release_this_mouses_press() {
+        let mut r = defaults();
+        down_from(&mut r, MIDDLE, 70);
+        down_from(&mut r, MIDDLE, 71); // ends 70's cycle, starts 71's
+        assert_eq!(up_from(&mut r, MIDDLE, 70), (Verdict::Swallow, vec![]));
+        assert_eq!(timer(&mut r, TimerKind::Hold), vec![Outcome::Fire(DESKTOP)]);
+    }
+
+    #[test]
+    fn a_second_mouse_flushes_a_pending_click_of_the_first() {
+        let mut r = router(vec![
+            remap(3, 1, TriggerDuration::Click, BACK),
+            remap(3, 2, TriggerDuration::Click, MC),
+        ]);
+        down_from(&mut r, MIDDLE, 70);
+        up_from(&mut r, MIDDLE, 70);
+        assert_eq!(
+            down_from(&mut r, MIDDLE, 71),
+            (
+                Verdict::Swallow,
+                vec![
+                    Outcome::Fire(BACK),
+                    Outcome::Disarm(TimerKind::Expiry),
+                    EXPIRY_260
+                ]
+            )
+        );
     }
 
     #[test]
