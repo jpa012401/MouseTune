@@ -179,7 +179,7 @@ If you can't name the requirement a pattern serves, don't add it. **DRY is about
 - **Implemented on `phase-4a-button-engine`, not yet merged:** Phase 4a (click cycle, router, `mt-exec` executor with `Navigate` and symbolic hotkeys, read-only Buttons page). **Pending manual hardware acceptance** (README); the button tap now swallows routed events.
 - **Next:** Phase 4b (capture mode, Buttons editor).
 - **Known gaps:**
-  - Config holds only the two kill switches; later phases add their sections.
+  - Config holds the two kill switches and `buttons.remaps` (read-only in the UI until Phase 4b); later phases add their sections.
   - The Accessibility commands still return `Result<(), String>`; config commands use the typed `ConfigError`.
   - Parked UI edge cases (bridge-failure-only): a failed Dismiss or config load is only reported on the General page; brief stale switch if a tray change races the initial load.
   - Deferred: a shutdown join timeout (also for `mt-exec` on quit; the 7 px drag cancel waits for Phase 6), a tap-timeout counter, a degraded indicator in the tray, and moving `spawn` out of `input/`.
@@ -193,7 +193,7 @@ If you can't name the requirement a pattern serves, don't add it. **DRY is about
 - **Tailwind 3.4, not 4**: v4 needs Safari 16.4 and Monterey ships Safari 15 (§3.4).
 - **Name MouseTune, bundle ID `com.johnpaulalabe.mousetune`, macOS 12–27.**
 - **Tray toggles moved to Phase 3**: they need the config store.
-- **Config v1 is kill switches only**; the loader deep-merges the file over the defaults so it grows additively, and IPC types stay strict.
+- **Config v1 holds the kill switches and button remaps**, and grows a section per phase; the loader deep-merges the file over the defaults so it grows additively, and IPC types stay strict.
 - **Phase 4 is split into 4a (button engine) and 4b (capture mode, editor).** **B3 click default = Mission Control.**
 - **The engine owns `CompiledRemaps`**, delivered by `Control::SetRemaps`; no `ArcSwap`.
 - Click-cycle, suppression and hotkey-fallback details: `input/{click_cycle,router}.rs` and `actions/` docs and tests.
