@@ -169,8 +169,6 @@ pub enum MouseButton {
 
 impl MouseButton {
     /// The CoreGraphics button number (left = 0).
-    // Task 2 removes this: the executor becomes the first caller.
-    #[allow(dead_code)]
     pub fn cg_button(self) -> u8 {
         match self {
             Self::Left => 0,

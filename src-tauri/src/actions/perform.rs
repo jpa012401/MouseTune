@@ -2,7 +2,7 @@ use super::{
     CompiledAction, Job, NoticeObserver, OutputError, deliver,
     keys::{KeyBinding, KeyStroke, ModifierMask, key_combo_strokes},
 };
-use crate::config::schema::{NavDirection, SymbolicHotkeyId};
+use crate::config::schema::{NavDirection, SymbolicHotkeyId, SystemKey};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HotkeyState {
@@ -18,7 +18,10 @@ pub trait SymbolicHotkeys: Send {
 
 pub trait EventPoster: Send {
     fn post_keys(&self, strokes: &[KeyStroke]) -> Result<(), OutputError>;
-    fn click(&self, cg_button: u8) -> Result<(), OutputError>;
+    /// A full click at the cursor; `clicks` = 2 is a double click.
+    fn click(&self, cg_button: u8, clicks: u8) -> Result<(), OutputError>;
+    /// A media or brightness key, down then up.
+    fn post_system_key(&self, key: SystemKey) -> Result<(), OutputError>;
 }
 
 pub trait FrontmostApp: Send {
@@ -124,10 +127,14 @@ pub fn hotkey(id: SymbolicHotkeyId) -> (u16, Option<KeyBinding>) {
 
 pub fn perform(job: Job, out: &Outputs) -> Result<(), OutputError> {
     match job {
-        Job::Click { button } => out.poster.click(button),
+        Job::Click { button } => out.poster.click(button, 1),
         Job::Perform(CompiledAction::SymbolicHotkey(id)) => symbolic_hotkey(id, out),
         Job::Perform(CompiledAction::Navigate(direction)) => navigate(direction, out),
         Job::Perform(CompiledAction::KeyCombo(binding)) => post(binding, out),
+        Job::Perform(CompiledAction::MouseClick { cg_button, clicks }) => {
+            out.poster.click(cg_button, clicks)
+        }
+        Job::Perform(CompiledAction::SystemKey(key)) => out.poster.post_system_key(key),
         Job::Notice(notice) => {
             deliver(notice, out.notices.as_ref());
             Ok(())
@@ -181,8 +188,8 @@ fn navigate(direction: NavDirection, out: &Outputs) -> Result<(), OutputError> {
             out,
         ),
         // Mouse buttons 4 and 5 are CG buttons 3 and 4.
-        (false, NavDirection::Back) => out.poster.click(3),
-        (false, NavDirection::Forward) => out.poster.click(4),
+        (false, NavDirection::Back) => out.poster.click(3, 1),
+        (false, NavDirection::Forward) => out.poster.click(4, 1),
     }
 }
 
@@ -558,5 +565,32 @@ mod tests {
                 "key 0x38 up 0x0",
             ]
         );
+    }
+
+    #[test]
+    fn a_double_middle_click_remap_clicks_twice() {
+        let log = OutputLog::default();
+        perform(
+            Job::Perform(CompiledAction::MouseClick {
+                cg_button: 2,
+                clicks: 2,
+            }),
+            &rig(None, None, &log),
+        )
+        .unwrap();
+        assert_eq!(log.all(), ["click 2 x2"]);
+    }
+
+    #[test]
+    fn a_media_key_remap_posts_the_system_key() {
+        let log = OutputLog::default();
+        perform(
+            Job::Perform(CompiledAction::SystemKey(
+                crate::config::schema::SystemKey::PlayPause,
+            )),
+            &rig(None, None, &log),
+        )
+        .unwrap();
+        assert_eq!(log.all(), ["system key PlayPause"]);
     }
 }

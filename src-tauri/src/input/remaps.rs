@@ -244,4 +244,50 @@ mod tests {
         assert_eq!(b.max_click_level(), 2);
         assert!(b.has_higher_level(1));
     }
+
+    #[test]
+    fn mouse_clicks_and_media_keys_compile_to_copy_actions() {
+        use crate::config::schema::{Action, MouseButton, SystemKey};
+        let mut config = Config::default();
+        config.buttons.remaps = vec![
+            Remap {
+                trigger: ClickTrigger {
+                    button: 4,
+                    level: 1,
+                    duration: TriggerDuration::Click,
+                },
+                effect: Effect {
+                    action: Action::MouseClick {
+                        button: MouseButton::Back,
+                        clicks: 2,
+                    },
+                },
+            },
+            Remap {
+                trigger: ClickTrigger {
+                    button: 5,
+                    level: 1,
+                    duration: TriggerDuration::Click,
+                },
+                effect: Effect {
+                    action: Action::SystemKey {
+                        key: SystemKey::Mute,
+                    },
+                },
+            },
+        ];
+        let c = compile(&config);
+        // Config buttons are 1-based: B4 is CG 3, B5 is CG 4. Back is CG button 3.
+        assert_eq!(
+            c.button(3).action(1, TriggerDuration::Click),
+            Some(CompiledAction::MouseClick {
+                cg_button: 3,
+                clicks: 2
+            })
+        );
+        assert_eq!(
+            c.button(4).action(1, TriggerDuration::Click),
+            Some(CompiledAction::SystemKey(SystemKey::Mute))
+        );
+    }
 }

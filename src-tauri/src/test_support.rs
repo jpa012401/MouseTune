@@ -16,7 +16,7 @@ use crate::{
         keys::{KeyBinding, KeyStroke},
         perform::{EventPoster, FrontmostApp, HotkeyState, SymbolicHotkeys},
     },
-    config::schema::Action,
+    config::schema::{Action, MouseButton, SystemKey},
     input::{
         capture::Clock,
         router::{ClickTimers, TimerKind},
@@ -34,6 +34,17 @@ pub fn config_action(action: CompiledAction) -> Action {
             modifiers: Vec::new(),
             key_label: format!("{:X}", binding.key_code),
         },
+        CompiledAction::MouseClick { cg_button, clicks } => Action::MouseClick {
+            button: match cg_button {
+                0 => MouseButton::Left,
+                1 => MouseButton::Right,
+                3 => MouseButton::Back,
+                4 => MouseButton::Forward,
+                _ => MouseButton::Middle,
+            },
+            clicks,
+        },
+        CompiledAction::SystemKey(key) => Action::SystemKey { key },
     }
 }
 
@@ -323,8 +334,16 @@ impl EventPoster for FakePoster {
         }
         Ok(())
     }
-    fn click(&self, b: u8) -> Result<(), OutputError> {
-        self.log.push(format!("click {b}"));
+    fn click(&self, b: u8, clicks: u8) -> Result<(), OutputError> {
+        self.log.push(if clicks == 1 {
+            format!("click {b}")
+        } else {
+            format!("click {b} x{clicks}")
+        });
+        Ok(())
+    }
+    fn post_system_key(&self, key: SystemKey) -> Result<(), OutputError> {
+        self.log.push(format!("system key {key:?}"));
         Ok(())
     }
 }
