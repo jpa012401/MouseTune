@@ -20,18 +20,22 @@ use objc2_core_foundation::{
 
 use crate::{
     actions::ActionSink,
+    config::schema::Scroll,
     input::{
         capture::SystemClock,
         engine::{ButtonSetup, EngineObserver, InputEngine, TapHandler},
         guard::guarded,
         remaps::CompiledRemaps,
+        scroll::ScrollEngine,
         taps::TapDemand,
         thread::{Control, Flow, InputShared, Waker, handle_control},
     },
     platform::{
         click_timers::MacClickTimers,
+        display_link::MacFrameDriver,
         event_tap::{MacTapController, TapContext},
         hid::DeviceMonitor,
+        scroll_poster::MacScrollPoster,
     },
 };
 
@@ -44,10 +48,14 @@ const QOS_CLASS_USER_INTERACTIVE: u32 = 0x21;
 /// `observer` receives every engine snapshot; `rx` carries control messages,
 /// which are applied after the returned waker is woken. The engine owns
 /// `sink`, so `mt-exec`'s queue closes when this thread stops.
+// Composition seam: each argument is one startup input, moved straight into
+// `StartSetup`; bundling them at the call site would only rename that struct.
+#[allow(clippy::too_many_arguments)]
 pub fn start(
     trusted: bool,
     demand: TapDemand,
     remaps: CompiledRemaps,
+    scroll: Scroll,
     sink: Box<dyn ActionSink + Send>,
     observer: Box<dyn EngineObserver + Send>,
     rx: Receiver<Control>,
@@ -58,6 +66,7 @@ pub fn start(
         trusted,
         demand,
         remaps,
+        scroll,
         sink,
         observer,
     };
@@ -78,6 +87,7 @@ struct StartSetup {
     trusted: bool,
     demand: TapDemand,
     remaps: CompiledRemaps,
+    scroll: Scroll,
     sink: Box<dyn ActionSink + Send>,
     observer: Box<dyn EngineObserver + Send>,
 }
@@ -151,6 +161,17 @@ fn run_input_thread(
     // The engine owns the click timers, so they are invalidated when it drops,
     // before `context` (their `info`) is freed below.
     let timers = MacClickTimers::new(Rc::as_ptr(&context), &run_loop);
+    // Owned by the engine (through `ScrollEngine`), so the frame source and
+    // timer are invalidated when it drops, before `context` is freed below.
+    let frames = MacFrameDriver::new(&run_loop, Arc::clone(&shared.degraded), {
+        let context = Rc::as_ptr(&context);
+        Box::new(move || frame_tick(context))
+    });
+    let scroll = ScrollEngine::new(
+        setup.scroll,
+        Box::new(frames),
+        Box::new(MacScrollPoster::new()),
+    );
     let engine: Engine = Rc::new(RefCell::new(InputEngine::new(
         controller,
         setup.trusted,
@@ -163,6 +184,7 @@ fn run_input_thread(
             counters: Arc::clone(&shared.actions),
             clock: Box::new(SystemClock),
         },
+        scroll,
         setup.observer,
     )));
     let handler: Rc<RefCell<dyn TapHandler>> = engine.clone();
@@ -247,14 +269,15 @@ fn run_input_thread(
     // 2. The device monitor and its clone of the engine.
     drop(devices);
     // 3. The engine, which drops `MacTapController` (tearing down the taps),
-    //    `MacClickTimers` (invalidating both click timers) and the action
-    //    sink (closing `mt-exec`'s queue). The context's handler holds the
+    //    `MacClickTimers` (invalidating both click timers), `MacFrameDriver`
+    //    (invalidating the frame source and timer) and the action sink
+    //    (closing `mt-exec`'s queue). The context's handler holds the
     //    last reference.
     drop(engine);
     let handler = Rc::get_mut(&mut context).and_then(|context| context.handler.take());
     debug_assert!(handler.is_some(), "the tap context is uniquely owned");
     drop(handler);
-    // 4. Only now the context the taps and click timers pointed to.
+    // 4. Only now the context the taps, click timers and frames pointed to.
     drop(context);
     tracing::info!("input thread stopped");
 }
@@ -272,6 +295,21 @@ unsafe extern "C-unwind" fn perform_control(info: *mut c_void) {
             }
         }
     });
+}
+
+/// Frame callback body; the driver wraps it in `guarded`. Same borrow rule
+/// as the click timers: a re-entrant frame is dropped, not waited for.
+fn frame_tick(context: *const TapContext) {
+    // SAFETY: the frame driver is owned by the engine, which drops (and so
+    // invalidates the frame source and timer) before `context` is freed.
+    let context = unsafe { &*context };
+    let Some(handler) = context.handler.get() else {
+        return;
+    };
+    let Ok(mut handler) = handler.try_borrow_mut() else {
+        return;
+    };
+    handler.on_frame();
 }
 
 /// Watchdog timer callback (every 5 s).

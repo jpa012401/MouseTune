@@ -3,6 +3,8 @@
 //! Phase 4a: the button tap may swallow; only after the router says the
 //! event is ours (AGENTS.md footgun 2). Phase 4b: the keys tap, on only
 //! while the shortcut recorder runs, may swallow when the recorder says so.
+//! Phase 5a: the scroll tap swallows plain mouse-wheel ticks while smoothing
+//! is on, and inverts others in place.
 
 use std::{
     cell::{OnceCell, RefCell},
@@ -24,6 +26,7 @@ use crate::input::{
     guard::{DisabledReason, guarded},
     key_recorder::{KeyEvent, KeyKind},
     router::{ButtonEvent, ButtonKind, Verdict},
+    scroll::ScrollVerdict,
     taps::{TapController, TapKind},
 };
 
@@ -67,7 +70,6 @@ pub fn scroll_fields(event: &CGEvent) -> ScrollFields {
 /// Negates the chosen axes' line, fixed-point and point deltas on the event
 /// itself (Phase 5a design §2). Allocation-free and panic-free: runs in the
 /// scroll tap callback.
-#[allow(dead_code)] // Wired into the engine in Phase 5a Task 8.
 pub fn invert_scroll(event: &CGEvent, vertical: bool, horizontal: bool) {
     let axes = [
         (
@@ -345,11 +347,23 @@ unsafe extern "C-unwind" fn scroll_callback(
     event: NonNull<CGEvent>,
     user_info: *mut c_void,
 ) -> *mut CGEvent {
-    // Scroll events are only observed until Phase 5; they always pass.
-    dispatch(TapKind::Scroll, event_type, event, user_info, |h, e| {
-        h.on_scroll(&scroll_fields(e));
-        Verdict::Pass
-    })
+    dispatch(
+        TapKind::Scroll,
+        event_type,
+        event,
+        user_info,
+        |h, e| match h.on_scroll(&scroll_fields(e)) {
+            ScrollVerdict::Pass => Verdict::Pass,
+            ScrollVerdict::Swallow => Verdict::Swallow,
+            ScrollVerdict::Invert {
+                vertical,
+                horizontal,
+            } => {
+                invert_scroll(e, vertical, horizontal);
+                Verdict::Pass
+            }
+        },
+    )
 }
 
 unsafe extern "C-unwind" fn button_callback(
@@ -408,14 +422,16 @@ mod tests {
         button_panics: bool,
         key_verdict: Verdict,
         key_panics: bool,
+        scroll_verdict: ScrollVerdict,
     }
 
     impl TapHandler for Handler {
-        fn on_scroll(&mut self, _: &ScrollFields) {
+        fn on_scroll(&mut self, _: &ScrollFields) -> ScrollVerdict {
             self.scrolls.set(self.scrolls.get() + 1);
             if self.panics {
                 panic!("handler bug");
             }
+            self.scroll_verdict
         }
         fn on_button(&mut self, _: &ButtonEvent) -> Verdict {
             if self.button_panics {
@@ -431,6 +447,7 @@ mod tests {
             self.key_verdict
         }
         fn on_tap_disabled(&mut self, _: TapKind, _: DisabledReason) {}
+        fn on_frame(&mut self) {}
     }
 
     fn context(handler: Option<Rc<RefCell<Handler>>>) -> TapContext {
@@ -454,6 +471,7 @@ mod tests {
             button_panics: false,
             key_verdict: Verdict::Pass,
             key_panics: false,
+            scroll_verdict: ScrollVerdict::Pass,
         }));
         (handler, scrolls)
     }
@@ -466,6 +484,7 @@ mod tests {
             button_panics,
             key_verdict: Verdict::Pass,
             key_panics: false,
+            scroll_verdict: ScrollVerdict::Pass,
         }))
     }
 
@@ -477,6 +496,7 @@ mod tests {
             button_panics: false,
             key_verdict: verdict,
             key_panics: panics,
+            scroll_verdict: ScrollVerdict::Pass,
         }))
     }
 
@@ -642,6 +662,48 @@ mod tests {
 
         assert_eq!(returned, sent);
         assert_eq!(scrolls.get(), 1);
+    }
+
+    fn scroll_handler(verdict: ScrollVerdict) -> Rc<RefCell<Handler>> {
+        let (handler, _) = handler(false);
+        handler.borrow_mut().scroll_verdict = verdict;
+        handler
+    }
+
+    #[test]
+    fn a_swallowing_scroll_handler_makes_the_scroll_callback_return_null() {
+        let context = context(Some(scroll_handler(ScrollVerdict::Swallow)));
+        let (_, returned) = scroll_through(&context);
+        assert!(returned.is_null());
+    }
+
+    #[test]
+    fn an_inverting_scroll_handler_returns_the_same_event_flipped() {
+        let context = context(Some(scroll_handler(ScrollVerdict::Invert {
+            vertical: true,
+            horizontal: false,
+        })));
+        // Built here rather than with `scroll_through`, which drops its event
+        // on return: this test reads the event afterwards.
+        let event =
+            CGEvent::new_scroll_wheel_event2(None, CGScrollEventUnit::Line, 1, -1, 0, 0).unwrap();
+        let sent = NonNull::from(&*event);
+        // SAFETY: a real event and a live `TapContext`, as CoreGraphics would
+        // pass them; the proxy is unused.
+        let returned = unsafe {
+            scroll_callback(
+                std::ptr::null_mut(),
+                CGEventType::ScrollWheel,
+                sent,
+                (&context as *const TapContext).cast_mut().cast(),
+            )
+        };
+        assert_eq!(returned, sent.as_ptr(), "modified in place, not replaced");
+        assert_eq!(
+            CGEvent::integer_value_field(Some(&event), CGEventField::ScrollWheelEventDeltaAxis1),
+            1,
+            "the −1 line delta is flipped"
+        );
     }
 
     #[test]

@@ -150,12 +150,15 @@ mod tests {
         guard::DisabledReason,
         key_recorder::KeyEvent,
         router::{ButtonEvent, Verdict},
+        scroll::ScrollVerdict,
         taps::TapKind,
     };
 
     struct Recorder(Rc<RefCell<Vec<TimerKind>>>);
     impl TapHandler for Recorder {
-        fn on_scroll(&mut self, _: &ScrollFields) {}
+        fn on_scroll(&mut self, _: &ScrollFields) -> ScrollVerdict {
+            ScrollVerdict::Pass
+        }
         fn on_button(&mut self, _: &ButtonEvent) -> Verdict {
             Verdict::Pass
         }
@@ -166,6 +169,7 @@ mod tests {
             Verdict::Pass
         }
         fn on_tap_disabled(&mut self, _: TapKind, _: DisabledReason) {}
+        fn on_frame(&mut self) {}
     }
 
     fn run_for(secs: f64) {

@@ -10,7 +10,6 @@ pub mod guard;
 pub mod key_recorder;
 pub mod remaps;
 pub mod router;
-#[allow(dead_code)] // Wired into the engine in Phase 5a Task 8.
 pub mod scroll;
 pub mod taps;
 pub mod thread;
