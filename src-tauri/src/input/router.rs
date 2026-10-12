@@ -355,10 +355,6 @@ impl ButtonRouter {
         }
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the engine uses it from Phase 6 Task 7")
-    )]
     /// A scroll tick was consumed by the held button's binding: it's a
     /// modifier now, so its release clicks nothing.
     pub fn acted_as_modifier(&mut self) -> Decision {

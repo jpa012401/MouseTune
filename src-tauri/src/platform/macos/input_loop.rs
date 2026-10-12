@@ -38,6 +38,7 @@ use crate::{
         event_poster::MacEventPoster,
         event_tap::{MacTapController, OnUnwind, TapContext},
         hid::DeviceMonitor,
+        magnify::MacMagnify,
         pointer::{self, MacPointerFreeze},
         scroll_poster::MacScrollPoster,
     },
@@ -202,6 +203,7 @@ fn run_input_thread(
         // Task 9 replaces this once dock swipes are verified.
         swipe: Box::new(NoSwipe),
         scroll: Box::new(MacScrollPoster::new()),
+        magnify: Box::new(MacMagnify),
     };
     let engine: Engine = Rc::new(RefCell::new(InputEngine::new(
         controller,

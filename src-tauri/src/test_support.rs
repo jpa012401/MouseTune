@@ -581,6 +581,21 @@ pub fn fake_gestures() -> crate::input::intents::GestureSetup {
         signal: Box::new(FakeSignal::default()),
         swipe: Box::new(FakeSwipe::default()),
         scroll: Box::new(FakeScrollPoster::default()),
+        magnify: Box::new(FakeMagnify::default()),
+    }
+}
+
+/// Records zoom steps as "step 1.00". Clones share the log.
+#[derive(Clone, Default)]
+pub struct FakeMagnify(Arc<Mutex<Vec<String>>>);
+impl FakeMagnify {
+    pub fn log(&self) -> Vec<String> {
+        self.0.lock().unwrap().clone()
+    }
+}
+impl crate::input::intents::MagnifyOutput for FakeMagnify {
+    fn step(&mut self, amount: f64) {
+        self.0.lock().unwrap().push(format!("step {amount:.2}"));
     }
 }
 

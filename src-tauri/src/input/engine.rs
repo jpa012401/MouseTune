@@ -2,9 +2,12 @@
 //! (spec §4.4). OS access goes through `TapController`; results go out
 //! through `EngineObserver`.
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicU32, Ordering},
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicU32, Ordering},
+    },
+    time::Instant,
 };
 
 use serde::Serialize;
@@ -12,7 +15,7 @@ use specta::Type;
 
 use crate::{
     actions::{ActionCounters, ActionSink, Job, Notice},
-    config::schema::Scroll,
+    config::schema::{Scroll, ScrollEffect},
     input::{
         capture::{ButtonCapture, Clock},
         devices::{DeviceEvent, DeviceInfo, DeviceRegistry},
@@ -21,14 +24,17 @@ use crate::{
             MOUSETUNE_EVENT_TAG, ScrollClass, ScrollFields, classify_scroll, is_foreign_button_down,
         },
         guard::{DisabledAction, DisabledReason, on_tap_disabled},
-        intents::{GestureSetup, InputPoster, Intent, IntentRing, IntentSignal, PointerFreeze},
+        intents::{
+            AppSwitchStep, GestureSetup, InputPoster, Intent, IntentRing, IntentSignal,
+            MagnifyOutput, PointerFreeze,
+        },
         key_recorder::{KeyEvent, KeyRecorder},
         remaps::CompiledRemaps,
         router::{
             ButtonEvent, ButtonKind, ButtonRouter, ClickTimers, Decision, MotionEvent, Outcome,
             TimerKind, Verdict,
         },
-        scroll::{ScrollEngine, ScrollVerdict},
+        scroll::{ScrollEngine, ScrollVerdict, acceleration::Tick},
         taps::{TapController, TapDemand, TapKind, TapManager, TapSet, desired_taps},
     },
 };
@@ -123,7 +129,10 @@ pub struct InputEngine<C: TapController> {
     freeze: Box<dyn PointerFreeze>,
     poster: Box<dyn InputPoster>,
     signal: Box<dyn IntentSignal>,
+    magnify: Box<dyn MagnifyOutput>,
     session: DragSession,
+    /// ⌘ is held for an App Switcher: the next release must let go of it.
+    app_switching: bool,
     /// What the engine last told `PointerFreeze`.
     frozen: bool,
     observer: Box<dyn EngineObserver>,
@@ -163,7 +172,9 @@ impl<C: TapController> InputEngine<C> {
             freeze: gestures.freeze,
             poster: gestures.poster,
             signal: gestures.signal,
+            magnify: gestures.magnify,
             session: DragSession::new(gestures.swipe, gestures.scroll),
+            app_switching: false,
             frozen: false,
             observer,
             last_published: None,
@@ -298,10 +309,55 @@ impl<C: TapController> InputEngine<C> {
                 Outcome::HoldThrough { cg_button, down } => {
                     self.queue(Intent::HoldThrough { cg_button, down })
                 }
-                Outcome::ModifierReleased => {} // Task 7 ends an app switch here.
+                Outcome::ModifierReleased => self.end_app_switch(),
             }
         }
         decision.verdict
+    }
+
+    /// Hot path: decides and queues; the keys go out from `run_intents`.
+    fn scroll_binding(
+        &mut self,
+        effect: ScrollEffect,
+        fields: &ScrollFields,
+        now: Instant,
+    ) -> ScrollVerdict {
+        match effect {
+            ScrollEffect::Horizontal => self.scroll.on_wheel_horizontal(fields, now),
+            ScrollEffect::Zoom => self.zoom(fields),
+            ScrollEffect::AppSwitcher => {
+                let Some(tick) = Tick::from_fields(fields) else {
+                    return ScrollVerdict::Pass;
+                };
+                // Wheel down (negative delta) goes forward through the apps.
+                let backward = tick.sign > 0;
+                let step = if self.app_switching {
+                    AppSwitchStep::Next { backward }
+                } else {
+                    AppSwitchStep::Start { backward }
+                };
+                self.app_switching = true;
+                self.queue(Intent::AppSwitch(step));
+                ScrollVerdict::Swallow
+            }
+        }
+    }
+
+    fn zoom(&mut self, fields: &ScrollFields) -> ScrollVerdict {
+        let Some(tick) = Tick::from_fields(fields) else {
+            return ScrollVerdict::Pass;
+        };
+        self.queue(Intent::Magnify(f64::from(tick.sign)));
+        ScrollVerdict::Swallow
+    }
+
+    /// Lets go of ⌘ if an app switch is open. The `End` is critical, so the
+    /// ring always takes it.
+    fn end_app_switch(&mut self) {
+        if self.app_switching {
+            self.app_switching = false;
+            self.queue(Intent::AppSwitch(AppSwitchStep::End));
+        }
     }
 
     /// Hot path: a fixed ring push and a signal.
@@ -329,8 +385,50 @@ impl<C: TapController> InputEngine<C> {
                     self.set_frozen(false);
                 }
                 Intent::HoldThrough { cg_button, down } => self.poster.button(cg_button, down),
-                Intent::AppSwitch(_) | Intent::Magnify(_) => {} // Task 7.
+                Intent::AppSwitch(step) => self.app_switch(step),
+                Intent::Magnify(amount) => self.magnify.step(amount),
             }
+        }
+    }
+
+    fn app_switch(&mut self, step: AppSwitchStep) {
+        use crate::actions::keys::{KeyStroke, ModifierMask};
+        const COMMAND: u16 = 0x37;
+        const TAB: u16 = 0x30;
+        let tab = |backward: bool| {
+            let flags = if backward {
+                ModifierMask::COMMAND | ModifierMask::SHIFT
+            } else {
+                ModifierMask::COMMAND
+            };
+            [
+                KeyStroke {
+                    key_code: TAB,
+                    down: true,
+                    flags,
+                },
+                KeyStroke {
+                    key_code: TAB,
+                    down: false,
+                    flags,
+                },
+            ]
+        };
+        match step {
+            AppSwitchStep::Start { backward } => {
+                self.poster.keys(&[KeyStroke {
+                    key_code: COMMAND,
+                    down: true,
+                    flags: ModifierMask::COMMAND,
+                }]);
+                self.poster.keys(&tab(backward));
+            }
+            AppSwitchStep::Next { backward } => self.poster.keys(&tab(backward)),
+            AppSwitchStep::End => self.poster.keys(&[KeyStroke {
+                key_code: COMMAND,
+                down: false,
+                flags: ModifierMask(0),
+            }]),
         }
     }
 
@@ -353,6 +451,7 @@ impl<C: TapController> InputEngine<C> {
             }
             self.apply(d);
         }
+        self.end_app_switch();
         self.run_intents();
         self.session.cancel();
         self.set_frozen(false);
@@ -387,7 +486,21 @@ impl<C: TapController> TapHandler for InputEngine<C> {
         let class = classify_scroll(fields, &self.devices);
         self.counters.record(class);
         match class {
-            ScrollClass::MouseWheel => self.scroll.on_wheel(fields, self.clock.now()),
+            ScrollClass::MouseWheel => {
+                let now = self.clock.now();
+                if let Some(effect) = self.router.held_scroll_effect() {
+                    let verdict = self.scroll_binding(effect, fields, now);
+                    if verdict == ScrollVerdict::Swallow {
+                        let d = self.router.acted_as_modifier();
+                        self.apply(d);
+                    }
+                    verdict
+                } else if self.scroll.zoom_key_held(fields.flags) {
+                    self.zoom(fields)
+                } else {
+                    self.scroll.on_wheel(fields, now)
+                }
+            }
             ScrollClass::PassThrough(_) => ScrollVerdict::Pass,
         }
     }
@@ -510,8 +623,8 @@ mod tests {
             scroll::{ScrollEngine, ScrollVerdict},
         },
         test_support::{
-            FakeClock, FakeFrames, FakeFreeze, FakeInputPoster, FakeScrollPoster, FakeSignal,
-            FakeSink, FakeSwipe, FakeTapController, FakeTimers, apple_trackpad, mouse,
+            FakeClock, FakeFrames, FakeFreeze, FakeInputPoster, FakeMagnify, FakeScrollPoster,
+            FakeSignal, FakeSink, FakeSwipe, FakeTapController, FakeTimers, apple_trackpad, mouse,
             phase4_buttons,
         },
     };
@@ -558,6 +671,7 @@ mod tests {
         signal: FakeSignal,
         swipe: FakeSwipe,
         gesture_scroll: FakeScrollPoster,
+        magnify: FakeMagnify,
     }
 
     fn rig(trusted: bool) -> Rig {
@@ -575,6 +689,7 @@ mod tests {
         let signal = FakeSignal::default();
         let swipe = FakeSwipe::default();
         let gesture_scroll = FakeScrollPoster::default();
+        let magnify = FakeMagnify::default();
         let mut engine = InputEngine::new(
             taps.clone(),
             trusted,
@@ -601,6 +716,7 @@ mod tests {
                 signal: Box::new(signal.clone()),
                 swipe: Box::new(swipe.clone()),
                 scroll: Box::new(gesture_scroll.clone()),
+                magnify: Box::new(magnify.clone()),
             },
             Box::new(published.clone()),
         );
@@ -621,6 +737,7 @@ mod tests {
             signal,
             swipe,
             gesture_scroll,
+            magnify,
         }
     }
 
@@ -1590,6 +1707,119 @@ mod tests {
             smoothness: Smoothness::Low,
             ..Scroll::default()
         }
+    }
+
+    fn scroll_binding_rig(effect: crate::config::schema::ScrollEffect) -> Rig {
+        let mut r = rig(true);
+        r.engine.apply_device_event(DeviceEvent::Added(mouse(1)));
+        let mut c = Config {
+            buttons: crate::test_support::phase4_buttons(),
+            ..Config::default()
+        };
+        c.buttons.scroll_bindings =
+            vec![crate::config::schema::ScrollBinding { button: 4, effect }];
+        r.engine.set_remaps(compile(&c));
+        r
+    }
+
+    fn wheel(delta: i64) -> ScrollFields {
+        ScrollFields {
+            delta_axis1: delta,
+            sender_id: 10,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn app_switcher_holds_command_and_tabs_per_tick() {
+        let mut r = scroll_binding_rig(crate::config::schema::ScrollEffect::AppSwitcher);
+        button(&mut r, ButtonKind::Down, 3, 10);
+        assert_eq!(r.engine.on_scroll(&wheel(-1)), ScrollVerdict::Swallow);
+        r.engine.on_scroll(&wheel(-1));
+        r.engine.on_scroll(&wheel(1));
+        r.engine.on_intents();
+        button(&mut r, ButtonKind::Up, 3, 10);
+        r.engine.on_intents();
+        // ⌘ 0x37 (flag 0x100000), Tab 0x30, ⇧ adds 0x20000.
+        assert_eq!(
+            r.poster.log(),
+            [
+                "key 0x37 down 0x100000",
+                "key 0x30 down 0x100000",
+                "key 0x30 up 0x100000",
+                "key 0x30 down 0x100000",
+                "key 0x30 up 0x100000",
+                "key 0x30 down 0x120000",
+                "key 0x30 up 0x120000",
+                "key 0x37 up 0x0",
+            ]
+        );
+        assert!(
+            !jobs(&r).contains(&BACK),
+            "B4 acted as a modifier: no Back on release"
+        );
+    }
+
+    #[test]
+    fn a_refresh_mid_app_switch_lets_go_of_command() {
+        let mut r = scroll_binding_rig(crate::config::schema::ScrollEffect::AppSwitcher);
+        button(&mut r, ButtonKind::Down, 3, 10);
+        r.engine.on_scroll(&wheel(-1));
+        r.engine.on_intents();
+        r.engine.set_trusted(false);
+        assert_eq!(
+            r.poster.log().last().map(String::as_str),
+            Some("key 0x37 up 0x0")
+        );
+    }
+
+    #[test]
+    fn zoom_steps_in_on_wheel_up_and_out_on_wheel_down() {
+        let mut r = scroll_binding_rig(crate::config::schema::ScrollEffect::Zoom);
+        button(&mut r, ButtonKind::Down, 3, 10);
+        r.engine.on_scroll(&wheel(1));
+        r.engine.on_scroll(&wheel(-1));
+        r.engine.on_intents();
+        assert_eq!(r.magnify.log(), ["step 1.00", "step -1.00"]);
+    }
+
+    #[test]
+    fn horizontal_binding_smooths_the_tick_sideways() {
+        let mut r = scroll_binding_rig(crate::config::schema::ScrollEffect::Horizontal);
+        r.engine.set_scroll(low());
+        button(&mut r, ButtonKind::Down, 3, 10);
+        assert_eq!(r.engine.on_scroll(&wheel(1)), ScrollVerdict::Swallow);
+        r.engine.on_frame();
+        r.clock.advance(Duration::from_millis(90));
+        r.engine.on_frame();
+        assert_eq!(r.posted.log(), ["Began", "Changed dx 90", "Ended"]);
+    }
+
+    #[test]
+    fn a_bound_command_zooms_without_a_button() {
+        let mut r = rig(true);
+        r.engine.apply_device_event(DeviceEvent::Added(mouse(1)));
+        let mut s = Scroll::default();
+        s.keyboard_modifiers.zoom = Some(crate::config::schema::KeyModifier::Command);
+        r.engine.set_scroll(s);
+        let cmd = ScrollFields {
+            flags: 0x10_0000,
+            ..wheel(1)
+        };
+        assert_eq!(r.engine.on_scroll(&cmd), ScrollVerdict::Swallow);
+        r.engine.on_intents();
+        assert_eq!(r.magnify.log(), ["step 1.00"]);
+    }
+
+    #[test]
+    fn an_unbound_command_still_passes() {
+        let mut r = rig(true);
+        r.engine.apply_device_event(DeviceEvent::Added(mouse(1)));
+        let cmd = ScrollFields {
+            flags: 0x10_0000,
+            ..wheel(1)
+        };
+        assert_eq!(r.engine.on_scroll(&cmd), ScrollVerdict::Pass);
     }
 
     fn wheel_from(sender_id: u64) -> ScrollFields {

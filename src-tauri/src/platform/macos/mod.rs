@@ -5,6 +5,7 @@ pub mod event_tap;
 pub mod frontmost_app;
 pub mod hid;
 pub mod input_loop;
+pub mod magnify;
 pub mod os_version;
 pub mod permissions;
 pub mod pointer;

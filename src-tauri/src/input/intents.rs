@@ -17,11 +17,12 @@ pub trait PointerFreeze {
 /// Port: posts real-looking button and key events, tagged, at the session tap.
 pub trait InputPoster {
     fn button(&mut self, cg_button: u8, down: bool);
-    #[expect(
-        dead_code,
-        reason = "the engine posts app-switch keys from Phase 6 Task 7"
-    )]
     fn keys(&mut self, strokes: &[KeyStroke]);
+}
+
+/// Port: one zoom step per call: +1 in, −1 out.
+pub trait MagnifyOutput {
+    fn step(&mut self, amount: f64);
 }
 
 /// Port: asks for `TapHandler::on_intents` to run once the callout returns.
@@ -37,12 +38,9 @@ pub struct GestureSetup {
     pub swipe: Box<dyn SwipeOutput>,
     /// A second poster, for the two-finger swipe.
     pub scroll: Box<dyn ScrollPoster>,
+    pub magnify: Box<dyn MagnifyOutput>,
 }
 
-#[expect(
-    dead_code,
-    reason = "the router starts app switches from Phase 6 Task 7"
-)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum AppSwitchStep {
     /// ⌘ down, then Tab (or ⇧Tab when `backward`).
@@ -70,16 +68,8 @@ pub enum Intent {
         cg_button: u8,
         down: bool,
     },
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the engine queues it from Phase 6 Task 7")
-    )]
     AppSwitch(AppSwitchStep),
     /// One zoom step: +1 in, −1 out.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the engine queues it from Phase 6 Task 7")
-    )]
     Magnify(f64),
 }
 
