@@ -132,7 +132,7 @@ use std::{
     cell::RefCell,
     ffi::{CStr, c_char, c_int, c_void},
     rc::Rc,
-    sync::{Arc, atomic::AtomicBool},
+    sync::{Arc, OnceLock, atomic::AtomicBool},
 };
 
 use objc2::{
@@ -380,9 +380,21 @@ const SELECTORS: [&CStr; 5] = [
     c"appendEvent:",
 ];
 
+/// The private symbols, loaded on first use and cached for the process:
+/// `output_support` and `MacDockSwipe::new` both read this one answer.
+pub fn api() -> Option<&'static Api> {
+    static API: OnceLock<Option<Api>> = OnceLock::new();
+    API.get_or_init(|| {
+        Api::load()
+            .inspect_err(|why| tracing::warn!(%why, "dock-swipe symbols didn't load"))
+            .ok()
+    })
+    .as_ref()
+}
+
 /// Whether the private symbols dock swipes need resolve on this macOS.
 pub fn loads() -> bool {
-    Api::load().is_ok()
+    api().is_some()
 }
 
 /// One built, unposted dock-swipe step. The HID event is kept alive next
@@ -504,7 +516,7 @@ struct Resends {
 /// `mt-input`, never inside a tap callout; the re-send timers fire on the
 /// same run loop. Never panics: anything that fails to build is not posted.
 pub struct MacDockSwipe {
-    api: Api,
+    api: &'static Api,
     sequencer: Sequencer,
     /// The end built at begin: posted if nothing else closing will build.
     closer: Option<Rc<Built>>,
@@ -512,39 +524,30 @@ pub struct MacDockSwipe {
     /// in `Drop` after both timers are invalidated (as `input_loop` does
     /// with its `LoopState`). All other access is through `resends()`.
     resends: *mut Resends,
-    timers: [CFRetained<CFRunLoopTimer>; 2],
+    /// `None` if CoreFoundation couldn't create one: that re-send is lost.
+    timers: [Option<CFRetained<CFRunLoopTimer>>; 2],
 }
 
 impl MacDockSwipe {
-    /// `Err` when the private symbols don't resolve or a timer can't be
-    /// created; the caller then uses `NoSwipe`.
-    pub fn new(run_loop: &CFRunLoop, degraded: Arc<AtomicBool>) -> Result<Self, String> {
-        let api = Api::load()?;
+    /// `None` exactly when `loads()` is false, so wherever
+    /// `output_support().dock_swipe` is true this succeeds. A timer that
+    /// can't be created only loses its re-send.
+    pub fn new(run_loop: &CFRunLoop, degraded: Arc<AtomicBool>) -> Option<Self> {
+        let api = api()?;
         let resends = Box::into_raw(Box::new(Resends {
             ends: RefCell::new([None, None]),
             degraded,
         }));
-        let free = || {
-            // SAFETY: `resends` came from `Box::into_raw` just above, and on
-            // these early returns no timer holding it survives.
-            drop(unsafe { Box::from_raw(resends) })
-        };
         let info = resends.cast::<c_void>();
-        let Some(first) = parked_timer(info, run_loop, first_resend_fired) else {
-            free();
-            return Err("couldn't create a re-send timer".into());
-        };
-        let Some(second) = parked_timer(info, run_loop, second_resend_fired) else {
-            first.invalidate();
-            free();
-            return Err("couldn't create a re-send timer".into());
-        };
-        Ok(Self {
+        Some(Self {
             api,
             sequencer: Sequencer::default(),
             closer: None,
             resends,
-            timers: [first, second],
+            timers: [
+                parked_timer(info, run_loop, first_resend_fired),
+                parked_timer(info, run_loop, second_resend_fired),
+            ],
         })
     }
 
@@ -556,7 +559,7 @@ impl MacDockSwipe {
     }
 
     fn disarm(&mut self) {
-        for timer in &self.timers {
+        for timer in self.timers.iter().flatten() {
             timer.set_next_fire_date(CFAbsoluteTimeGetCurrent() + NEVER_SECS);
         }
         if let Ok(mut ends) = self.resends().ends.try_borrow_mut() {
@@ -581,7 +584,7 @@ impl MacDockSwipe {
         } else {
             None
         };
-        let api = &self.api;
+        let api = self.api;
         let Some(built) = pick(&plan, |f| api.build(f).map(Rc::new), closer) else {
             if plan.needs.is_some() {
                 self.sequencer.abandon();
@@ -597,8 +600,10 @@ impl MacDockSwipe {
             return;
         };
         for ((slot, timer), date) in ends.iter_mut().zip(&self.timers).zip(dates) {
-            *slot = Some(Rc::clone(&built));
-            timer.set_next_fire_date(date);
+            if let Some(timer) = timer {
+                *slot = Some(Rc::clone(&built));
+                timer.set_next_fire_date(date);
+            }
         }
     }
 }
@@ -629,7 +634,7 @@ impl Drop for MacDockSwipe {
     /// Invalidating removes the timers from every run loop, so no callback
     /// can reach `resends` after this; only then is it freed.
     fn drop(&mut self) {
-        for timer in &self.timers {
+        for timer in self.timers.iter().flatten() {
             timer.invalidate();
         }
         // SAFETY: `resends` came from `Box::into_raw` in `new`, is freed

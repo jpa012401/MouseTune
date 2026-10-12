@@ -326,20 +326,18 @@ fn run_input_thread(
     tracing::info!("input thread stopped");
 }
 
-/// The dock-swipe adapter where this macOS is verified for it, else
-/// `NoSwipe` (Phase 6 design §3). `output_support` already checked that the
-/// symbols load, so `remaps` compiled `SpacesAndMissionControl` to match;
-/// a failure here is only a timer that couldn't be created.
+/// The dock-swipe adapter where `output_support` turned dock swipes on,
+/// else `NoSwipe` (Phase 6 design §3). Both read the one cached load
+/// (`dock_swipe::api`), so `remaps` compiled `SpacesAndMissionControl` to
+/// match what this returns.
 fn swipe_output(run_loop: &CFRunLoop, degraded: &Arc<AtomicBool>) -> Box<dyn SwipeOutput> {
     if !super::output_support().dock_swipe {
         return Box::new(NoSwipe);
     }
     match MacDockSwipe::new(run_loop, Arc::clone(degraded)) {
-        Ok(swipe) => Box::new(swipe),
-        Err(why) => {
-            tracing::warn!(%why, "dock swipes are verified here but couldn't start");
-            Box::new(NoSwipe)
-        }
+        Some(swipe) => Box::new(swipe),
+        // Unreachable: `output_support` said the cached load succeeded.
+        None => Box::new(NoSwipe),
     }
 }
 

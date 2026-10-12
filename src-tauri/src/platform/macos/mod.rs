@@ -19,23 +19,27 @@ use crate::input::remaps::OutputSupport;
 /// to `true` only for the versions its spike verified; see
 /// `dock_swipe::VERIFIED_ON` and `magnify::VERIFIED_ON` (Tasks 9 and 11).
 /// A verified dock swipe whose private symbols don't resolve stays off, so
-/// `SpacesAndMissionControl` compiles to its Discrete fallback.
+/// `SpacesAndMissionControl` compiles to its Discrete fallback. The load is
+/// done once and cached (`dock_swipe::api`), so this answer and whether
+/// `input_loop` gets a `MacDockSwipe` can't disagree.
 pub fn output_support() -> OutputSupport {
-    let support = support_for(os_version::current().major);
-    OutputSupport {
-        dock_swipe: support.dock_swipe && dock_swipe::loads(),
-        ..support
-    }
+    support_for(os_version::current().major)
 }
 
-/// What this macOS major version is verified for.
+/// What this macOS major version is verified for, and can load.
 pub fn support_for(major: u32) -> OutputSupport {
-    support_for_with(dock_swipe::VERIFIED_ON, major)
+    support_for_with(dock_swipe::VERIFIED_ON, major, dock_swipe::loads)
 }
 
-fn support_for_with(dock_swipe_verified_on: &[u32], major: u32) -> OutputSupport {
+/// `loads` is asked only on a verified version, so an unverified macOS
+/// never touches the private frameworks.
+fn support_for_with(
+    dock_swipe_verified_on: &[u32],
+    major: u32,
+    loads: impl FnOnce() -> bool,
+) -> OutputSupport {
     OutputSupport {
-        dock_swipe: dock_swipe_verified_on.contains(&major),
+        dock_swipe: dock_swipe_verified_on.contains(&major) && loads(),
         ..OutputSupport::NONE
     }
 }
@@ -53,12 +57,23 @@ mod tests {
     #[test]
     fn output_support_turns_on_dock_swipe_only_on_verified_versions() {
         assert_eq!(
-            support_for_with(&[27], 27),
+            support_for_with(&[27], 27, || true),
             OutputSupport {
                 dock_swipe: true,
                 magnify: false
             }
         );
-        assert_eq!(support_for_with(&[27], 26), OutputSupport::NONE);
+        assert_eq!(support_for_with(&[27], 26, || true), OutputSupport::NONE);
+    }
+
+    #[test]
+    fn a_verified_version_whose_symbols_dont_load_keeps_dock_swipes_off() {
+        assert_eq!(support_for_with(&[27], 27, || false), OutputSupport::NONE);
+    }
+
+    #[test]
+    fn an_unverified_version_never_loads_the_private_symbols() {
+        let support = support_for_with(&[27], 26, || panic!("loaded on an unverified macOS"));
+        assert_eq!(support, OutputSupport::NONE);
     }
 }
