@@ -27,16 +27,17 @@
 //! | Setter for a CGEvent's HID event | `SLEventSetIOHIDEvent` is exported by SkyLight; **there is no `CGEventSetHIDEvent`/`CGEventSetIOHIDEvent` export** on the macOS 27 SDK | SDK `SkyLight.tbd`, `CoreGraphics.tbd` |
 //! | Posting | `kCGSessionEventTap`, stamped with `MOUSETUNE_EVENT_TAG` like every other MouseTune event | AGENTS.md footgun 3 |
 //!
-//! The probe also writes the same values into the legacy gesture fields of
-//! the type-30 `CGEvent` (table below) unless `MOUSETUNE_PROBE_ENCODING=hid`,
-//! and attaches the HID event last so it is the authoritative copy.
+//! By default the probe sends only that. With
+//! `MOUSETUNE_PROBE_ENCODING=legacy-mix` it also writes the same values into
+//! the legacy gesture fields of the type-30 `CGEvent` (table below), and
+//! attaches the HID event last so it is the authoritative copy.
 //!
 //! ## Unknown (no allowed source; the probe makes a documented guess)
 //!
 //! - **`SLEventSetIOHIDEvent`'s signature.** Assumed
 //!   `void (CGEventRef, IOHIDEventRef)`, mirroring the sourced getter. The
-//!   non-posting test `attached_dock_swipe_reads_back` checks the round trip
-//!   (set, then `CGEventCopyIOHIDEvent`); it passes on macOS 27.0.1. That
+//!   non-posting, ignored test `attached_dock_swipe_reads_back` checks the
+//!   round trip (set, then `CGEventCopyIOHIDEvent`); it passes on macOS 27.0.1. That
 //!   proves the event carries the HID event, not that the Dock acts on it.
 //! - **`IOHIDEventCreateDockSwipeEvent`'s signature.** It is exported by
 //!   IOKit (SDK `IOKit.tbd`), but no allowed source declares it, so the probe
@@ -100,7 +101,7 @@ mod ffi {
     use objc2::{
         msg_send,
         rc::{Allocated, Retained},
-        runtime::{AnyClass, AnyObject},
+        runtime::{AnyClass, AnyObject, Sel},
     };
     use objc2_core_foundation::CFRetained;
     use objc2_core_graphics::{CGEvent, CGEventField, CGEventTapLocation, CGEventType};
@@ -200,6 +201,30 @@ mod ffi {
         }
     }
 
+    /// Every selector the probe and the read-back test send to a `HIDEvent`
+    /// ([B]). `Api::load` refuses to start unless the class answers all of
+    /// them, so a missing method fails before anything is posted instead of
+    /// raising an Objective-C exception mid-gesture.
+    const SELECTORS: [&CStr; 9] = [
+        c"initWithType:timestamp:senderID:",
+        c"setIntegerValue:forField:",
+        c"setDoubleValue:forField:",
+        c"setOptions:",
+        c"appendEvent:",
+        c"integerValueForField:",
+        c"doubleValueForField:",
+        c"options",
+        c"children",
+    ];
+
+    /// One built, unposted dock-swipe step. The HID event is kept alive
+    /// next to the CGEvent until both drop, after posting, so the step
+    /// stays valid whether or not the setter retains it (unknown).
+    pub struct Step {
+        pub event: CFRetained<CGEvent>,
+        _hid: Retained<AnyObject>,
+    }
+
     /// The private functions and class the probe needs, resolved at runtime
     /// so a missing symbol is a readable error rather than a link failure.
     pub struct Api {
@@ -217,6 +242,11 @@ mod ffi {
                 unsafe { dlopen(path.as_ptr(), RTLD_LAZY) };
             }
             let hid_event = AnyClass::get(c"HIDEvent").ok_or("class HIDEvent not found")?;
+            for name in SELECTORS {
+                if !hid_event.responds_to(Sel::register(name)) {
+                    return Err(format!("HIDEvent doesn't respond to {name:?}"));
+                }
+            }
             Ok(Self {
                 hid_event,
                 // SAFETY: the alias is the assumed signature (module doc,
@@ -237,6 +267,7 @@ mod ffi {
             let alloc: Allocated<AnyObject> = unsafe { msg_send![self.hid_event, alloc] };
             // SAFETY: selector and argument types from Apple's HIDEvent.h
             // (module doc [B]): IOHIDEventType is uint32_t, the rest uint64_t.
+            // `load` checked the class responds to it.
             unsafe {
                 msg_send![alloc, initWithType: hid_type, timestamp: mach_absolute_time(), senderID: 0u64]
             }
@@ -250,7 +281,8 @@ mod ffi {
             progress: f64,
             velocity: Option<f64>,
             legacy_fields: bool,
-        ) -> Option<CFRetained<CGEvent>> {
+        ) -> Option<Step> {
+            // Every selector below was checked by `load`.
             let swipe = self.new_hid_event(HID_TYPE_DOCK_SWIPE)?;
             let set_int = |event: &AnyObject, value: isize, field: u32| {
                 // SAFETY: `-setIntegerValue:(NSInteger)forField:(IOHIDEventField)`, [B].
@@ -305,20 +337,23 @@ mod ffi {
             }
             let cg_ptr = CFRetained::as_ptr(&event).as_ptr().cast::<c_void>();
             let hid_ptr = Retained::as_ptr(&swipe).cast_mut().cast::<c_void>();
-            // SAFETY: both pointers are live objects we hold; the setter's
-            // signature is the assumed one (module doc), checked by the
-            // read-back test. It retains the HID event (CF set semantics);
-            // we keep our own reference until `swipe` drops.
+            // SAFETY: both pointers are live objects held by the returned
+            // `Step`, so they outlive the call and the post that follows.
+            // The signature `void (CGEventRef, IOHIDEventRef)` is an
+            // assumption (module doc, "Unknown"), checked by the read-back
+            // test. Whether the setter retains or copies the HID event is
+            // unknown; `Step` keeps our reference either way.
             unsafe { (self.set_hid_event)(cg_ptr, hid_ptr) };
-            Some(event)
+            Some(Step { event, _hid: swipe })
         }
 
-        pub fn post(event: &CGEvent) {
-            CGEvent::post(CGEventTapLocation::SessionEventTap, Some(event));
+        pub fn post(step: &Step) {
+            CGEvent::post(CGEventTapLocation::SessionEventTap, Some(&step.event));
         }
 
         /// What the CGEvent carries, read back through the HID event.
-        pub fn read_back(&self, event: &CGEvent) -> Option<ReadBack> {
+        pub fn read_back(&self, step: &Step) -> Option<ReadBack> {
+            let event: &CGEvent = &step.event;
             let cg_ptr = (event as *const CGEvent).cast_mut().cast::<c_void>();
             // SAFETY: `event` is a live CGEvent; the getter follows the CF
             // Copy rule, so we release the result below.
@@ -338,6 +373,26 @@ mod ffi {
                 unsafe { msg_send![object, doubleValueForField: DOCK_SWIPE_PROGRESS] };
             // SAFETY: `@property uint32_t options`, [B].
             let options: u32 = unsafe { msg_send![object, options] };
+            // SAFETY: `@property (readonly, nullable) NSArray<HIDEvent *> *children`, [B].
+            let children: Option<&AnyObject> = unsafe { msg_send![object, children] };
+            let velocity = children.and_then(|array| {
+                // SAFETY: `array` is an NSArray; `-count` returns NSUInteger.
+                let count: usize = unsafe { msg_send![array, count] };
+                if count != 1 {
+                    return None;
+                }
+                // SAFETY: index 0 exists (count is 1); NSArray returns a HIDEvent.
+                let child: &AnyObject = unsafe { msg_send![array, objectAtIndex: 0usize] };
+                // SAFETY: `child` is a live IOHIDEventRef; signature from [C].
+                let child_type = unsafe {
+                    (self.get_hid_type)((child as *const AnyObject).cast_mut().cast::<c_void>())
+                };
+                // SAFETY: `-doubleValueForField:(IOHIDEventField)`, [B].
+                let x: f64 = unsafe { msg_send![child, doubleValueForField: VELOCITY_X] };
+                // SAFETY: as above.
+                let y: f64 = unsafe { msg_send![child, doubleValueForField: VELOCITY_Y] };
+                Some(Velocity { child_type, x, y })
+            });
             let read = ReadBack {
                 // SAFETY: `hid` is a live IOHIDEventRef; signature from [C].
                 hid_type: unsafe { (self.get_hid_type)(hid) },
@@ -345,6 +400,7 @@ mod ffi {
                 flavor: int(DOCK_SWIPE_FLAVOR),
                 progress,
                 phase: options >> PHASE_SHIFT,
+                velocity,
                 cg_type: CGEvent::r#type(Some(event)).0,
                 tag: CGEvent::integer_value_field(Some(event), CGEventField::EventSourceUserData),
             };
@@ -355,12 +411,20 @@ mod ffi {
     }
 
     #[derive(Debug, PartialEq)]
+    pub struct Velocity {
+        pub child_type: u32,
+        pub x: f64,
+        pub y: f64,
+    }
+
+    #[derive(Debug, PartialEq)]
     pub struct ReadBack {
         pub hid_type: u32,
         pub motion: isize,
         pub flavor: isize,
         pub progress: f64,
         pub phase: u32,
+        pub velocity: Option<Velocity>,
         pub cg_type: u32,
         pub tag: i64,
     }
@@ -368,31 +432,56 @@ mod ffi {
 
 #[cfg(test)]
 mod tests {
-    use super::ffi::{Api, Direction, Phase, ReadBack};
+    use super::ffi::{Api, Direction, Phase, ReadBack, Velocity};
     use crate::input::filter::MOUSETUNE_EVENT_TAG;
 
-    /// Builds (never posts) a dock-swipe step and reads it back, which
-    /// checks the assumed `SLEventSetIOHIDEvent` signature and the field
-    /// numbers. Expected values are the module doc's literals.
+    /// Builds (never posts) dock-swipe steps and reads them back, which
+    /// checks the assumed `SLEventSetIOHIDEvent` signature, the field
+    /// numbers and the end path with its velocity child. Expected values are
+    /// the module doc's literals. Run it before the probe:
+    /// `cargo test attached_dock_swipe_reads_back -- --ignored --nocapture`.
     #[test]
+    #[ignore = "private SkyLight/HID APIs; verified on macOS 27 only"]
     fn attached_dock_swipe_reads_back() {
         let api = Api::load().expect("the private dock-swipe symbols resolve on this macOS");
         for legacy_fields in [false, true] {
-            let event = api
+            let change = api
                 .build(Direction::Right, Phase::Changed, 0.5, None, legacy_fields)
-                .expect("a dock-swipe event builds");
+                .expect("a change step builds");
             assert_eq!(
-                api.read_back(&event),
+                api.read_back(&change),
                 Some(ReadBack {
                     hid_type: 23,
                     motion: 1,
                     flavor: 3,
                     progress: 0.5,
                     phase: 2,
+                    velocity: None,
                     cg_type: 30,
                     tag: MOUSETUNE_EVENT_TAG,
                 }),
-                "legacy_fields = {legacy_fields}"
+                "change, legacy_fields = {legacy_fields}"
+            );
+            let end = api
+                .build(Direction::Up, Phase::Ended, -1.0, Some(-2.0), legacy_fields)
+                .expect("an end step with velocity builds");
+            assert_eq!(
+                api.read_back(&end),
+                Some(ReadBack {
+                    hid_type: 23,
+                    motion: 2,
+                    flavor: 3,
+                    progress: -1.0,
+                    phase: 4,
+                    velocity: Some(Velocity {
+                        child_type: 9,
+                        x: 0.0,
+                        y: -2.0,
+                    }),
+                    cg_type: 30,
+                    tag: MOUSETUNE_EVENT_TAG,
+                }),
+                "end, legacy_fields = {legacy_fields}"
             );
         }
     }
@@ -402,72 +491,86 @@ mod tests {
 mod probe {
     use std::{thread::sleep, time::Duration};
 
-    use super::ffi::{Api, Direction, Phase};
+    use super::ffi::{Api, Direction, Phase, Step};
 
     const STEPS: u32 = 30;
     const SWIPE_TIME: Duration = Duration::from_millis(500);
     /// 1.0 of progress over 0.5 s, in progress per second (units unknown).
     const END_SPEED: f64 = 2.0;
 
-    fn send(
-        api: &Api,
-        direction: Direction,
-        phase: Phase,
-        progress: f64,
-        velocity: Option<f64>,
-        legacy: bool,
-        note: &str,
-    ) {
-        match api.build(direction, phase, progress, velocity, legacy) {
-            Some(event) => {
-                Api::post(&event);
-                println!("{direction:?} {phase:?} progress {progress:+.3}{note}");
-            }
-            None => println!("{direction:?} {phase:?} progress {progress:+.3}: FAILED TO BUILD"),
+    /// A built step, the pause before posting it, and what to print.
+    struct Planned {
+        wait: Duration,
+        step: Step,
+        line: String,
+    }
+
+    /// Builds every event of one swipe before anything is posted, so a
+    /// failed build can't leave the Dock mid-gesture. `Err` says why.
+    fn plan(api: &Api, direction: Direction, legacy: bool) -> Result<Vec<Planned>, String> {
+        let sign = direction.sign();
+        let mut planned = Vec::new();
+        let mut add = |wait, phase, progress, velocity: Option<f64>, note: &str| {
+            let step = api
+                .build(direction, phase, progress, velocity, legacy)
+                .ok_or_else(|| format!("{direction:?} {phase:?} {progress:+.3} didn't build"))?;
+            let velocity = velocity.map_or(String::new(), |v| format!(", velocity {v:+.1}"));
+            planned.push(Planned {
+                wait,
+                step,
+                line: format!("{direction:?} {phase:?} progress {progress:+.3}{velocity}{note}"),
+            });
+            Ok::<(), String>(())
+        };
+        add(Duration::ZERO, Phase::Began, 0.0, None, "")?;
+        for i in 1..=STEPS {
+            let progress = sign * f64::from(i) / f64::from(STEPS);
+            add(SWIPE_TIME / STEPS, Phase::Changed, progress, None, "")?;
         }
+        // An end without velocity beats a swipe left open (fix round 1).
+        let mut velocity = Some(sign * END_SPEED);
+        if api
+            .build(direction, Phase::Ended, sign, velocity, legacy)
+            .is_none()
+        {
+            println!("{direction:?}: the end with velocity didn't build; ending without velocity.");
+            velocity = None;
+        }
+        add(Duration::ZERO, Phase::Ended, sign, velocity, " (end)")?;
+        let resend_200 = Duration::from_millis(200);
+        add(
+            resend_200,
+            Phase::Ended,
+            sign,
+            velocity,
+            " (end re-sent, +200 ms)",
+        )?;
+        let resend_500 = Duration::from_millis(300);
+        add(
+            resend_500,
+            Phase::Ended,
+            sign,
+            velocity,
+            " (end re-sent, +500 ms)",
+        )?;
+        Ok(planned)
     }
 
     fn swipe(api: &Api, direction: Direction, legacy: bool) {
-        let sign = direction.sign();
-        send(api, direction, Phase::Began, 0.0, None, legacy, "");
-        for step in 1..=STEPS {
-            sleep(SWIPE_TIME / STEPS);
-            let progress = sign * f64::from(step) / f64::from(STEPS);
-            send(api, direction, Phase::Changed, progress, None, legacy, "");
+        match plan(api, direction, legacy) {
+            Ok(planned) => {
+                for p in planned {
+                    sleep(p.wait);
+                    Api::post(&p.step);
+                    println!("{}", p.line);
+                }
+            }
+            Err(why) => println!("{direction:?}: posted nothing, because {why}."),
         }
-        let velocity = Some(sign * END_SPEED);
-        send(
-            api,
-            direction,
-            Phase::Ended,
-            sign,
-            velocity,
-            legacy,
-            " (end)",
-        );
-        sleep(Duration::from_millis(200));
-        send(
-            api,
-            direction,
-            Phase::Ended,
-            sign,
-            velocity,
-            legacy,
-            " (end re-sent, +200 ms)",
-        );
-        sleep(Duration::from_millis(300));
-        send(
-            api,
-            direction,
-            Phase::Ended,
-            sign,
-            velocity,
-            legacy,
-            " (end re-sent, +500 ms)",
-        );
     }
 
-    /// Run by the maintainer only: `cargo test dock_swipe_probe -- --ignored --nocapture`.
+    /// Run by the maintainer only, after `attached_dock_swipe_reads_back`
+    /// passes: `cargo test dock_swipe_probe -- --ignored --nocapture`.
     /// Posts real events. Watch the screen.
     #[test]
     #[ignore = "posts real dock-swipe events; the maintainer runs and watches it"]
@@ -478,13 +581,13 @@ mod probe {
                 "WARNING: this terminal isn't trusted for Accessibility; macOS will drop the events."
             );
         }
-        let legacy = std::env::var("MOUSETUNE_PROBE_ENCODING").as_deref() != Ok("hid");
+        let legacy = std::env::var("MOUSETUNE_PROBE_ENCODING").as_deref() == Ok("legacy-mix");
         println!(
-            "Encoding: HID dock swipe{}.",
+            "Encoding: {}.",
             if legacy {
-                " + legacy gesture fields"
+                "legacy-mix (HID dock swipe + legacy gesture fields)"
             } else {
-                " only"
+                "hid (HID dock swipe only)"
             }
         );
         println!(
