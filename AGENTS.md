@@ -176,8 +176,7 @@ If you can't name the requirement a pattern serves, don't add it. **DRY is about
 
 ## Current state
 
-- **Merged on `main`:** Phase 0 (scaffold), Phase 1 (Accessibility onboarding, permission monitor, tray status, settings shell), Phase 2 (input thread, event taps, HID mouse tracking, General page), Phase 3 (config store with two kill switches, typed config commands and event, tray switches, recovery notice) and Phase 4a (click cycle, router, `mt-exec` executor with `Navigate` and symbolic hotkeys, read-only Buttons page). Phases 2–4a are **pending manual hardware acceptance** (README). The scroll path still passes every event through unchanged; the button tap swallows routed events.
-- **Implemented on `phase-4b-buttons-editor`, not yet merged:** Phase 4b (capture mode, key recorder, editable Buttons screen, the full hotkey table, `KeyCombo`). **Pending manual hardware acceptance** (README).
+- **Merged on `main`:** Phase 0 (scaffold), Phase 1 (Accessibility onboarding, permission monitor, tray status, settings shell), Phase 2 (input thread, event taps, HID mouse tracking, General page), Phase 3 (config store with two kill switches, typed config commands and event, tray switches, recovery notice), Phase 4a (click cycle, router, `mt-exec` executor with `Navigate` and symbolic hotkeys) and Phase 4b (capture mode, key recorder, editable Buttons screen, the full hotkey table, `KeyCombo`). Phases 2–4b are **pending manual hardware acceptance** (README). The scroll path still passes every event through unchanged; the button tap swallows routed events.
 - **Next:** Phase 4c (mouse-click remaps, `SystemKey` media keys, `nav_overrides`, configurable timing).
 - **Known gaps:**
   - Config holds the two kill switches and `buttons.remaps` (editable in the UI since Phase 4b); later phases add their sections.
