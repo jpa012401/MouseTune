@@ -163,6 +163,13 @@ impl Decision {
     }
 }
 
+/// A held hold-through: the posted target and the sender holding it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Through {
+    target: u8,
+    sender_id: u64,
+}
+
 pub struct ButtonRouter {
     remaps: CompiledRemaps,
     cycle: ClickCycle,
@@ -173,8 +180,9 @@ pub struct ButtonRouter {
     track: DragTrack,
     /// The current press drove a drag or a scroll binding: its release clicks nothing.
     acted: bool,
-    /// The hold-through target posted for each held CG button.
-    through: [Option<u8>; MAX_BUTTONS],
+    /// The hold-through target posted for each held CG button, and the
+    /// sender whose down posted it: only that sender's up releases it.
+    through: [Option<Through>; MAX_BUTTONS],
 }
 
 impl ButtonRouter {
@@ -408,7 +416,10 @@ impl ButtonRouter {
             if released == MAX_THROUGH_UPS_PER_CALL {
                 break;
             }
-            if let Some(cg_button) = target.take() {
+            if let Some(Through {
+                target: cg_button, ..
+            }) = target.take()
+            {
                 released += 1;
                 self.swallowed &= !(1 << button);
                 d.outcomes.push(Outcome::HoldThrough {
@@ -443,14 +454,20 @@ impl ButtonRouter {
         let remaps = self.remaps.button(button);
         if let Some(target) = remaps.acts_as {
             self.swallowed |= 1 << button;
-            if let Some(slot) = self.through.get_mut(usize::from(button)) {
-                *slot = Some(target);
-            }
             let mut d = Decision::swallow();
-            d.outcomes.push(Outcome::HoldThrough {
-                cg_button: target,
-                down: true,
-            });
+            let Some(slot) = self.through.get_mut(usize::from(button)) else {
+                return d;
+            };
+            // Another mouse already holds this button's target: its down and
+            // up are swallowed (the bit) and post nothing, so its up can't
+            // release the first mouse's hold.
+            if slot.is_none() {
+                *slot = Some(Through { target, sender_id });
+                d.outcomes.push(Outcome::HoldThrough {
+                    cg_button: target,
+                    down: true,
+                });
+            }
             return d;
         }
         if !remaps.is_bound() {
@@ -490,10 +507,12 @@ impl ButtonRouter {
     }
 
     fn up(&mut self, button: u8, sender_id: u64) -> Decision {
-        if let Some(target) = self
+        // Only the holding sender's up releases a hold-through; any other up
+        // of this button (a tablet's, another mouse's) goes by its own bit.
+        if let Some(Through { target, .. }) = self
             .through
             .get_mut(usize::from(button))
-            .and_then(Option::take)
+            .and_then(|slot| slot.take_if(|t| t.sender_id == sender_id))
         {
             self.swallowed &= !(1 << button);
             let mut d = Decision::swallow();

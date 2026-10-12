@@ -1138,6 +1138,58 @@ mod tests {
         assert_eq!(r.poster.log(), ["down 2"]);
     }
 
+    /// B3 (CG 2) acts as Back (CG 3); no other bindings.
+    fn b3_acts_as_back_rig() -> Rig {
+        let mut r = rig(true);
+        r.engine.apply_device_event(DeviceEvent::Added(mouse(1)));
+        r.engine.apply_device_event(DeviceEvent::Added(mouse(2)));
+        let mut c = Config::default();
+        c.buttons.remaps.clear();
+        c.buttons.drags.clear();
+        c.buttons.hold_through = vec![crate::config::schema::HoldThrough {
+            button: 3,
+            acts_as: crate::config::schema::MouseButton::Back,
+        }];
+        r.engine.set_remaps(compile(&c));
+        r
+    }
+
+    #[test]
+    fn a_tablet_press_of_a_held_through_button_leaves_the_hold_alone() {
+        let mut r = b3_acts_as_back_rig();
+        assert_eq!(button(&mut r, ButtonKind::Down, 2, 10), Verdict::Swallow);
+        r.engine.on_intents();
+        let pen = |kind| ButtonEvent {
+            kind,
+            button: 2,
+            sender_id: 77,
+            user_data: 0,
+            mouse_subtype: 1,
+        };
+        assert_eq!(r.engine.on_button(&pen(ButtonKind::Down)), Verdict::Pass);
+        assert_eq!(r.engine.on_button(&pen(ButtonKind::Up)), Verdict::Pass);
+        r.engine.on_intents();
+        assert_eq!(r.poster.log(), ["down 3"], "the pen posted nothing");
+        assert_eq!(button(&mut r, ButtonKind::Up, 2, 10), Verdict::Swallow);
+        r.engine.on_intents();
+        assert_eq!(r.poster.log(), ["down 3", "up 3"]);
+    }
+
+    #[test]
+    fn another_mouse_cannot_release_a_held_through_button() {
+        let mut r = b3_acts_as_back_rig();
+        assert_eq!(button(&mut r, ButtonKind::Down, 2, 10), Verdict::Swallow);
+        r.engine.on_intents();
+        // Mouse 2 (sender 20) presses its own B3 while mouse 1 still holds.
+        assert_eq!(button(&mut r, ButtonKind::Down, 2, 20), Verdict::Swallow);
+        assert_eq!(button(&mut r, ButtonKind::Up, 2, 20), Verdict::Swallow);
+        r.engine.on_intents();
+        assert_eq!(r.poster.log(), ["down 3"], "mouse 1's hold stays");
+        assert_eq!(button(&mut r, ButtonKind::Up, 2, 10), Verdict::Swallow);
+        r.engine.on_intents();
+        assert_eq!(r.poster.log(), ["down 3", "up 3"]);
+    }
+
     #[test]
     fn unplugging_while_holding_through_posts_the_up() {
         let mut r = hold_through_rig();
