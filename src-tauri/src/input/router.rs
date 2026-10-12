@@ -30,6 +30,8 @@ pub struct ButtonEvent {
     pub button: u8,
     pub sender_id: u64,
     pub user_data: i64,
+    /// `kCGMouseEventSubtype`: tells tablet events from mouse events.
+    pub mouse_subtype: i64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -161,6 +163,16 @@ impl ButtonRouter {
             ButtonKind::Down => self.down(event.button, event.sender_id),
             ButtonKind::Up => self.up(event.button, event.sender_id),
         }
+    }
+
+    /// A down from a device MouseTune leaves alone (an excluded device or a
+    /// tablet). It passes untouched, and like an unbound down it proves any
+    /// earlier up of this button was missed, so that stale bit is dropped.
+    pub fn on_foreign_down(&mut self, button: u8) -> Decision {
+        if usize::from(button) < MAX_BUTTONS {
+            self.swallowed &= !(1 << button);
+        }
+        Decision::pass()
     }
 
     pub fn on_timer(&mut self, kind: TimerKind) -> Decision {
@@ -365,6 +377,7 @@ mod tests {
             button,
             sender_id,
             user_data: 0,
+            mouse_subtype: 0,
         }
     }
     fn down(r: &mut ButtonRouter, button: u8) -> (Verdict, Vec<Outcome>) {
@@ -609,6 +622,27 @@ mod tests {
         assert_eq!(down(&mut r, MIDDLE).0, Verdict::Swallow);
         r.forget_swallowed();
         assert_eq!(up(&mut r, MIDDLE).0, Verdict::Pass);
+    }
+
+    #[test]
+    fn a_foreign_down_passes_and_its_up_passes() {
+        let mut r = defaults();
+        assert_eq!(split(r.on_foreign_down(MIDDLE)), (Verdict::Pass, vec![]));
+        assert_eq!(up(&mut r, MIDDLE), (Verdict::Pass, vec![]));
+    }
+
+    #[test]
+    fn a_foreign_down_clears_a_stale_swallowed_bit() {
+        let mut r = defaults();
+        down(&mut r, MIDDLE); // swallowed; its up never reaches us
+        r.on_foreign_down(MIDDLE);
+        assert_eq!(up(&mut r, MIDDLE), (Verdict::Pass, vec![]));
+    }
+
+    #[test]
+    fn an_out_of_range_foreign_down_passes() {
+        let mut r = defaults();
+        assert_eq!(split(r.on_foreign_down(40)), (Verdict::Pass, vec![]));
     }
 
     #[test]

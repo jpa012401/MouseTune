@@ -14,7 +14,7 @@ use crate::{
     actions::{ActionCounters, ActionSink, Job},
     input::{
         devices::{DeviceEvent, DeviceInfo, DeviceRegistry},
-        filter::{ScrollClass, ScrollFields, classify_scroll},
+        filter::{ScrollClass, ScrollFields, classify_scroll, is_foreign_button_down},
         guard::{DisabledAction, DisabledReason, on_tap_disabled},
         remaps::CompiledRemaps,
         router::{ButtonEvent, ButtonRouter, ClickTimers, Decision, Outcome, TimerKind, Verdict},
@@ -221,7 +221,11 @@ impl<C: TapController> TapHandler for InputEngine<C> {
     }
 
     fn on_button(&mut self, event: &ButtonEvent) -> Verdict {
-        let decision = self.router.on_button(event);
+        let decision = if is_foreign_button_down(event, &self.devices) {
+            self.router.on_foreign_down(event.button)
+        } else {
+            self.router.on_button(event)
+        };
         self.apply(decision)
     }
 
@@ -333,6 +337,7 @@ mod tests {
             button,
             sender_id,
             user_data: 0,
+            mouse_subtype: 0,
         })
     }
     const MC: Job = Job::Perform(Action::SymbolicHotkey {
@@ -381,6 +386,34 @@ mod tests {
                 direction: NavDirection::Back
             })]
         );
+    }
+
+    #[test]
+    fn buttons_from_an_excluded_device_pass_untouched() {
+        let mut r = rig(true);
+        r.engine.apply_device_event(DeviceEvent::Added(mouse(1)));
+        r.engine
+            .apply_device_event(DeviceEvent::Added(apple_trackpad(2)));
+        assert_eq!(button(&mut r, ButtonKind::Down, 2, 20), Verdict::Pass);
+        assert_eq!(button(&mut r, ButtonKind::Up, 2, 20), Verdict::Pass);
+        assert!(r.sink.jobs.lock().unwrap().is_empty());
+        assert!(r.timers.calls().is_empty());
+    }
+
+    #[test]
+    fn a_tablet_button_down_passes_untouched() {
+        let mut r = rig(true);
+        r.engine.apply_device_event(DeviceEvent::Added(mouse(1)));
+        let tablet_down = ButtonEvent {
+            kind: ButtonKind::Down,
+            button: 2,
+            sender_id: 10,
+            user_data: 0,
+            mouse_subtype: 1,
+        };
+        assert_eq!(r.engine.on_button(&tablet_down), Verdict::Pass);
+        assert_eq!(button(&mut r, ButtonKind::Up, 2, 10), Verdict::Pass);
+        assert!(r.sink.jobs.lock().unwrap().is_empty());
     }
 
     #[test]

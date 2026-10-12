@@ -309,6 +309,7 @@ mod tests {
             button: 2,
             sender_id: 10,
             user_data: 0,
+            mouse_subtype: 0,
         };
         assert_eq!(engine.on_button(&middle_down), Verdict::Pass);
     }

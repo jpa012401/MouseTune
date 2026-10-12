@@ -71,6 +71,7 @@ pub fn button_event(event_type: CGEventType, event: &CGEvent) -> ButtonEvent {
         button: u8::try_from(get(CGEventField::MouseEventButtonNumber)).unwrap_or(u8::MAX),
         sender_id: get(SENDER_ID_FIELD) as u64,
         user_data: get(CGEventField::EventSourceUserData),
+        mouse_subtype: get(CGEventField::MouseEventSubtype),
     }
 }
 
@@ -305,7 +306,7 @@ mod tests {
     use std::{cell::Cell, sync::atomic::Ordering};
 
     use objc2_core_foundation::CGPoint;
-    use objc2_core_graphics::{CGMouseButton, CGScrollEventUnit};
+    use objc2_core_graphics::{CGEventMouseSubtype, CGMouseButton, CGScrollEventUnit};
 
     use crate::input::router::TimerKind;
 
@@ -523,13 +524,19 @@ mod tests {
         )
         .unwrap();
         CGEvent::set_integer_value_field(Some(&e), SENDER_ID_FIELD, 777);
+        CGEvent::set_integer_value_field(
+            Some(&e),
+            CGEventField::MouseEventSubtype,
+            CGEventMouseSubtype::TabletPoint.0.into(),
+        );
         assert_eq!(
             button_event(CGEventType::OtherMouseUp, &e),
             ButtonEvent {
                 kind: ButtonKind::Up,
                 button: 3,
                 sender_id: 777,
-                user_data: 0
+                user_data: 0,
+                mouse_subtype: 1,
             }
         );
     }
