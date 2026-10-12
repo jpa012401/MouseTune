@@ -224,7 +224,7 @@ Spec amendments go in the commit that proves the spec wrong.
 | Event taps, filtering, devices, threading | §4 | `input/`, Phase 2 plan |
 | Buttons and gestures | §5 | `input/{remaps,click_cycle,router,capture,key_recorder}.rs`, `config/validate.rs`, `actions/`, `actions/nav.rs` |
 | Drag, dock swipe | §6 | — (Phase 6) |
-| Actions, symbolic hotkeys | §7 | `actions/`, `platform/macos/{symbolic_hotkeys,event_poster,frontmost_app}.rs`, `platform/macos/event_poster.rs` (clicks, system keys) |
+| Actions, symbolic hotkeys | §7 | `actions/`, `platform/macos/{symbolic_hotkeys,frontmost_app}.rs`, `platform/macos/event_poster.rs` (clicks, system keys) |
 | Smooth scrolling | §8 | `input/scroll/` (incl. `modifiers.rs`, `preview.rs`), `platform/macos/{display_link,scroll_poster}.rs`, `src/routes/Scroll.tsx`, Phase 5a and 5b designs |
 | Config schema | §9 | `config/` |
 | IPC contract | §10 | `ipc.rs`, `events.rs`, `src/bindings.ts` |
