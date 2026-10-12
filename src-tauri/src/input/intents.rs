@@ -1,15 +1,45 @@
 //! What tap callouts ask for but must not do themselves (Phase 6 design §2):
 //! posting, pointer freeze, tap changes. Callouts push `Copy` intents into a
-//! fixed ring; `InputEngine::run_intents`, a run-loop source handler outside
-//! any callout, carries them out. Allocation-free.
+//! fixed ring; `InputEngine::run_intents`, run from `TapHandler::on_intents`
+//! by a run-loop source outside any callout, carries them out.
+//! Allocation-free.
 
-#![expect(
+use crate::{
+    actions::keys::KeyStroke,
+    input::{remaps::SwipeKind, router::DragAxis},
+};
+
+/// Port: stops the pointer moving during a drag. Must be idempotent.
+pub trait PointerFreeze {
+    fn set_frozen(&mut self, frozen: bool);
+}
+
+/// Port: posts real-looking button and key events, tagged, at the session tap.
+pub trait InputPoster {
+    fn button(&mut self, cg_button: u8, down: bool);
+    #[expect(
+        dead_code,
+        reason = "the engine posts app-switch keys from Phase 6 Task 7"
+    )]
+    fn keys(&mut self, strokes: &[KeyStroke]);
+}
+
+/// Port: asks for `TapHandler::on_intents` to run once the callout returns.
+/// Callout-safe: only signals.
+pub trait IntentSignal {
+    fn signal(&self);
+}
+
+pub struct GestureSetup {
+    pub freeze: Box<dyn PointerFreeze>,
+    pub poster: Box<dyn InputPoster>,
+    pub signal: Box<dyn IntentSignal>,
+}
+
+#[expect(
     dead_code,
-    reason = "the engine queues and runs intents from Phase 6 Task 5"
+    reason = "the router starts app switches from Phase 6 Task 7"
 )]
-
-use crate::input::{remaps::SwipeKind, router::DragAxis};
-
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum AppSwitchStep {
     /// ⌘ down, then Tab (or ⇧Tab when `backward`).
@@ -37,14 +67,24 @@ pub enum Intent {
         cg_button: u8,
         down: bool,
     },
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the engine queues it from Phase 6 Task 7")
+    )]
     AppSwitch(AppSwitchStep),
     /// One zoom step: +1 in, −1 out.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the engine queues it from Phase 6 Task 7")
+    )]
     Magnify(f64),
 }
 
 const CAPACITY: usize = 64;
-/// Moves may fill the ring only this far, so a drag end, a button or key
-/// release, or an unfreeze always fits (Phase 6 design §2).
+/// Only the critical intents (`Intent::is_critical`: a drag end, a
+/// hold-through down or up, the app switcher's ⌘ up, the Drag tap off) may
+/// fill the ring past this point. Everything else is refused and counted
+/// once this many are queued, so the releases always fit (Phase 6 design §2).
 const MOVE_LIMIT: usize = 48;
 
 #[derive(Debug)]
@@ -66,6 +106,21 @@ impl Default for IntentRing {
     }
 }
 
+impl Intent {
+    /// Ends or releases something: dropping it could leave the pointer
+    /// frozen, a button or ⌘ held, or a swipe open. Hold-through downs are
+    /// kept with their ups, so the target button sees whole presses.
+    fn is_critical(&self) -> bool {
+        matches!(
+            self,
+            Intent::DragEnd
+                | Intent::HoldThrough { .. }
+                | Intent::AppSwitch(AppSwitchStep::End)
+                | Intent::DragTap(false)
+        )
+    }
+}
+
 impl IntentRing {
     /// False when the intent was dropped (counted in `dropped`).
     pub fn push(&mut self, intent: Intent) -> bool {
@@ -78,10 +133,10 @@ impl IntentRing {
                     return true;
                 }
             }
-            if self.len >= MOVE_LIMIT {
-                self.dropped = self.dropped.saturating_add(1);
-                return false;
-            }
+        }
+        if self.len >= MOVE_LIMIT && !intent.is_critical() {
+            self.dropped = self.dropped.saturating_add(1);
+            return false;
         }
         if self.len == CAPACITY {
             self.dropped = self.dropped.saturating_add(1);
@@ -102,6 +157,10 @@ impl IntentRing {
         item
     }
 
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "no counter reads it yet; tests pin the drops")
+    )]
     pub fn dropped(&self) -> u32 {
         self.dropped
     }
@@ -185,5 +244,39 @@ mod tests {
         }
         assert!(!r.push(Intent::DragEnd));
         assert_eq!(r.dropped(), 1);
+    }
+
+    #[test]
+    fn non_critical_intents_cannot_use_the_reserve() {
+        let mut r = IntentRing::default();
+        for _ in 0..48 {
+            assert!(r.push(Intent::DragEnd));
+        }
+        assert!(!r.push(Intent::Magnify(1.0)));
+        assert!(!r.push(Intent::DragBegin {
+            axis: DragAxis::Horizontal,
+            swipe: None,
+        }));
+        assert!(!r.push(Intent::DragTap(true)));
+        assert!(!r.push(Intent::AppSwitch(AppSwitchStep::Start { backward: false })));
+        assert_eq!(r.dropped(), 4);
+        assert!(r.push(Intent::HoldThrough {
+            cg_button: 2,
+            down: true
+        }));
+        assert!(r.push(Intent::DragTap(false)));
+    }
+
+    #[test]
+    fn the_ring_wraps_around() {
+        let mut r = IntentRing::default();
+        for _ in 0..60 {
+            assert!(r.push(Intent::DragEnd));
+            assert_eq!(r.pop(), Some(Intent::DragEnd));
+        }
+        assert!(r.push(Intent::DragMove { dx: 1, dy: 0 }));
+        assert!(r.push(Intent::DragMove { dx: 2, dy: 3 }));
+        assert_eq!(r.pop(), Some(Intent::DragMove { dx: 3, dy: 3 }));
+        assert_eq!(r.pop(), None);
     }
 }

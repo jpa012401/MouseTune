@@ -20,6 +20,7 @@ use crate::{
             MOUSETUNE_EVENT_TAG, ScrollClass, ScrollFields, classify_scroll, is_foreign_button_down,
         },
         guard::{DisabledAction, DisabledReason, on_tap_disabled},
+        intents::{GestureSetup, Intent, IntentRing},
         key_recorder::{KeyEvent, KeyRecorder},
         remaps::CompiledRemaps,
         router::{
@@ -89,7 +90,6 @@ pub trait TapHandler {
     /// Pointer movement from the Drag tap (listen-only).
     fn on_motion(&mut self, event: &MotionEvent);
     /// Carries out queued intents, outside any callout.
-    #[expect(dead_code, reason = "the run-loop source calls it from Phase 6 Task 5")]
     fn on_intents(&mut self);
 }
 
@@ -118,11 +118,19 @@ pub struct InputEngine<C: TapController> {
     recorder: KeyRecorder,
     clock: Box<dyn Clock>,
     scroll: ScrollEngine,
+    intents: IntentRing,
+    gestures: GestureSetup,
+    /// What the engine last told `PointerFreeze`.
+    frozen: bool,
     observer: Box<dyn EngineObserver>,
     last_published: Option<EngineSnapshot>,
 }
 
 impl<C: TapController> InputEngine<C> {
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "each argument is a separate port or setting the composition root injects"
+    )]
     pub fn new(
         controller: C,
         trusted: bool,
@@ -130,6 +138,7 @@ impl<C: TapController> InputEngine<C> {
         counters: Arc<ScrollCounters>,
         buttons: ButtonSetup,
         scroll: ScrollEngine,
+        gestures: GestureSetup,
         observer: Box<dyn EngineObserver>,
     ) -> Self {
         Self {
@@ -146,6 +155,9 @@ impl<C: TapController> InputEngine<C> {
             recorder: KeyRecorder::default(),
             clock: buttons.clock,
             scroll,
+            intents: IntentRing::default(),
+            gestures,
+            frozen: false,
             observer,
             last_published: None,
         }
@@ -171,9 +183,13 @@ impl<C: TapController> InputEngine<C> {
         self.scroll.set_settings(settings);
     }
 
+    /// Not a callout, so the drag end the router queues when bindings change
+    /// mid-drag is carried out here: no refresh follows to run it. A
+    /// hold-through stays held; its real up still releases it.
     pub fn set_remaps(&mut self, remaps: CompiledRemaps) {
         let decision = self.router.set_remaps(remaps);
         self.apply(decision);
+        self.run_intents();
     }
 
     /// The next press of mouse button 3 or higher is reported as a
@@ -225,6 +241,8 @@ impl<C: TapController> InputEngine<C> {
     /// in flight still has its up eaten. Once it is off, ups go to the OS
     /// unseen, so the bits are dropped (design §2, the up/down invariant).
     fn refresh(&mut self) {
+        // No pointer may stay frozen and no button held (Phase 6 design §2).
+        self.release_everything();
         // No app may be left mid-gesture once trust, demand or devices change (design §5).
         self.scroll.cancel();
         let reset = self.router.reset();
@@ -266,15 +284,64 @@ impl<C: TapController> InputEngine<C> {
                 Outcome::Disarm(kind) => self.timers.disarm(kind),
                 Outcome::Fire(action) => self.submit(Job::Perform(action)),
                 Outcome::Click { button } => self.submit(Job::Click { button }),
-                Outcome::DragBegin { .. }
-                | Outcome::DragMove { .. }
-                | Outcome::DragEnd
-                | Outcome::HoldThrough { .. }
-                | Outcome::WantsMotion(_)
-                | Outcome::ModifierReleased => {} // Task 5 routes these.
+                Outcome::WantsMotion(on) => self.queue(Intent::DragTap(on)),
+                Outcome::DragBegin { axis, swipe } => self.queue(Intent::DragBegin { axis, swipe }),
+                Outcome::DragMove { dx, dy } => self.queue(Intent::DragMove { dx, dy }),
+                Outcome::DragEnd => self.queue(Intent::DragEnd),
+                Outcome::HoldThrough { cg_button, down } => {
+                    self.queue(Intent::HoldThrough { cg_button, down })
+                }
+                Outcome::ModifierReleased => {} // Task 7 ends an app switch here.
             }
         }
         decision.verdict
+    }
+
+    /// Hot path: a fixed ring push and a signal.
+    fn queue(&mut self, intent: Intent) {
+        self.intents.push(intent);
+        self.gestures.signal.signal();
+    }
+
+    /// Carries out queued intents. Never runs inside a tap callout.
+    fn run_intents(&mut self) {
+        while let Some(intent) = self.intents.pop() {
+            match intent {
+                Intent::DragTap(_) => self.update_taps(),
+                Intent::DragBegin { .. } => {
+                    if self.router.freeze_pointer() {
+                        self.set_frozen(true);
+                    }
+                }
+                Intent::DragMove { .. } => {}
+                Intent::DragEnd => self.set_frozen(false),
+                Intent::HoldThrough { cg_button, down } => {
+                    self.gestures.poster.button(cg_button, down)
+                }
+                Intent::AppSwitch(_) | Intent::Magnify(_) => {} // Task 7.
+            }
+        }
+    }
+
+    fn set_frozen(&mut self, frozen: bool) {
+        if self.frozen != frozen {
+            self.frozen = frozen;
+            self.gestures.freeze.set_frozen(frozen);
+        }
+    }
+
+    /// Ends drags, modifiers and hold-throughs, then carries the releases out
+    /// at once. Not for callouts.
+    fn release_everything(&mut self) {
+        loop {
+            let d = self.router.release_all();
+            if d.outcomes.iter().next().is_none() {
+                break;
+            }
+            self.apply(d);
+        }
+        self.run_intents();
+        self.set_frozen(false);
     }
 
     fn submit(&self, job: Job) {
@@ -343,7 +410,9 @@ impl<C: TapController> TapHandler for InputEngine<C> {
         self.apply(decision);
     }
 
-    fn on_intents(&mut self) {}
+    fn on_intents(&mut self) {
+        self.run_intents();
+    }
 
     fn on_click_timer(&mut self, kind: TimerKind) {
         let decision = self.router.on_timer(kind);
@@ -371,12 +440,25 @@ impl<C: TapController> TapHandler for InputEngine<C> {
     /// stale and any swallowed bit may belong to an up that already reached
     /// the OS, whatever the reason. Other taps miss no button events. A
     /// disabled keys tap may likewise have let a swallowed key's up through.
+    ///
+    /// Runs inside a callout, so it only queues: a drag in flight ends and
+    /// held hold-through buttons get their ups once `on_intents` runs.
     fn on_tap_disabled(&mut self, kind: TapKind, reason: DisabledReason) {
         match kind {
-            TapKind::Buttons => {
-                let reset = self.router.reset();
-                self.apply(reset);
-                self.router.forget_swallowed();
+            TapKind::Buttons | TapKind::Drag => {
+                loop {
+                    let d = self.router.release_all();
+                    if d.outcomes.iter().next().is_none() {
+                        break;
+                    }
+                    self.apply(d);
+                }
+                // A drag that was in flight ends via the queued DragEnd.
+                if kind == TapKind::Buttons {
+                    let reset = self.router.reset();
+                    self.apply(reset);
+                    self.router.forget_swallowed();
+                }
             }
             TapKind::Keys => {
                 self.recorder.forget_swallowed();
@@ -387,7 +469,7 @@ impl<C: TapController> TapHandler for InputEngine<C> {
                     return;
                 }
             }
-            TapKind::Scroll | TapKind::Flags | TapKind::Drag => {}
+            TapKind::Scroll | TapKind::Flags => {}
         }
         if on_tap_disabled(reason) == DisabledAction::Reenable {
             self.taps.reenable(kind);
@@ -410,8 +492,8 @@ mod tests {
             scroll::{ScrollEngine, ScrollVerdict},
         },
         test_support::{
-            FakeClock, FakeFrames, FakeScrollPoster, FakeSink, FakeTapController, FakeTimers,
-            apple_trackpad, mouse, phase4_buttons,
+            FakeClock, FakeFrames, FakeFreeze, FakeInputPoster, FakeScrollPoster, FakeSignal,
+            FakeSink, FakeTapController, FakeTimers, apple_trackpad, mouse, phase4_buttons,
         },
     };
 
@@ -452,6 +534,9 @@ mod tests {
         clock: FakeClock,
         frames: FakeFrames,
         posted: FakeScrollPoster,
+        freeze: FakeFreeze,
+        poster: FakeInputPoster,
+        signal: FakeSignal,
     }
 
     fn rig(trusted: bool) -> Rig {
@@ -464,6 +549,9 @@ mod tests {
         let clock = FakeClock::new();
         let frames = FakeFrames::default();
         let posted = FakeScrollPoster::default();
+        let freeze = FakeFreeze::default();
+        let poster = FakeInputPoster::default();
+        let signal = FakeSignal::default();
         let mut engine = InputEngine::new(
             taps.clone(),
             trusted,
@@ -484,6 +572,11 @@ mod tests {
                 Box::new(frames.clone()),
                 Box::new(posted.clone()),
             ),
+            GestureSetup {
+                freeze: Box::new(freeze.clone()),
+                poster: Box::new(poster.clone()),
+                signal: Box::new(signal.clone()),
+            },
             Box::new(published.clone()),
         );
         engine.start();
@@ -498,6 +591,9 @@ mod tests {
             clock,
             frames,
             posted,
+            freeze,
+            poster,
+            signal,
         }
     }
 
@@ -593,6 +689,226 @@ mod tests {
     fn the_drag_tap_is_not_wanted_until_a_drag_button_is_down() {
         let r = drag_rig();
         assert!(!r.engine.snapshot().taps.drag);
+    }
+
+    #[test]
+    fn motion_we_posted_ourselves_is_ignored() {
+        let mut r = rig(true);
+        r.engine.apply_device_event(DeviceEvent::Added(mouse(1)));
+        let mut c = Config {
+            buttons: phase4_buttons(),
+            ..Config::default()
+        };
+        c.buttons.drags = vec![crate::config::schema::DragBinding {
+            button: 3,
+            effect: crate::config::schema::DragEffect::Discrete {
+                left: None,
+                right: Some(crate::config::schema::Action::Navigate {
+                    direction: NavDirection::Back,
+                }),
+                up: None,
+                down: None,
+            },
+        }];
+        r.engine.set_remaps(compile(&c));
+        button(&mut r, ButtonKind::Down, 2, 10);
+        r.engine.on_motion(&MotionEvent {
+            dx: 45,
+            dy: 0,
+            user_data: MOUSETUNE_EVENT_TAG,
+        });
+        assert!(!jobs(&r).contains(&BACK), "{:?}", jobs(&r));
+    }
+
+    fn press_and_drag(r: &mut Rig) {
+        button(r, ButtonKind::Down, 2, 10);
+        r.engine.on_intents();
+        r.engine.on_motion(&MotionEvent {
+            dx: 0,
+            dy: 12,
+            user_data: 0,
+        });
+        r.engine.on_intents();
+    }
+
+    #[test]
+    fn a_drag_freezes_the_pointer_and_its_release_unfreezes_it() {
+        let mut r = drag_rig();
+        press_and_drag(&mut r);
+        assert!(
+            r.engine.snapshot().taps.drag,
+            "the press turned the Drag tap on"
+        );
+        assert_eq!(r.freeze.calls(), ["freeze"]);
+        button(&mut r, ButtonKind::Up, 2, 10);
+        r.engine.on_intents();
+        assert_eq!(r.freeze.calls(), ["freeze", "unfreeze"]);
+        assert!(!r.engine.snapshot().taps.drag);
+    }
+
+    #[test]
+    fn nothing_happens_inside_the_callout_until_the_intents_run() {
+        let mut r = drag_rig();
+        button(&mut r, ButtonKind::Down, 2, 10);
+        r.engine.on_motion(&MotionEvent {
+            dx: 0,
+            dy: 12,
+            user_data: 0,
+        });
+        assert!(r.freeze.calls().is_empty());
+        assert!(!r.engine.snapshot().taps.drag, "no tap change in a callout");
+        assert!(r.signal.count() >= 1);
+    }
+
+    #[test]
+    fn with_freezing_off_a_drag_leaves_the_pointer_alone() {
+        let mut r = drag_rig();
+        let mut c = Config {
+            buttons: phase4_buttons(),
+            ..Config::default()
+        };
+        c.buttons.drags = vec![crate::config::schema::DragBinding {
+            button: 3,
+            effect: crate::config::schema::DragEffect::ScrollSwipe,
+        }];
+        c.general.freeze_pointer_during_drag = false;
+        r.engine.set_remaps(compile(&c));
+        press_and_drag(&mut r);
+        assert!(r.freeze.calls().is_empty());
+    }
+
+    #[test]
+    fn refresh_mid_drag_unfreezes_and_ends_the_swipe() {
+        let mut r = drag_rig();
+        press_and_drag(&mut r);
+        r.engine.set_demand(TapDemand {
+            buttons: false,
+            ..TapDemand::ALL
+        });
+        assert_eq!(r.freeze.calls(), ["freeze", "unfreeze"]);
+        assert!(!r.engine.snapshot().taps.drag);
+    }
+
+    #[test]
+    fn losing_accessibility_mid_drag_unfreezes() {
+        let mut r = drag_rig();
+        press_and_drag(&mut r);
+        r.engine.set_trusted(false);
+        assert_eq!(r.freeze.calls(), ["freeze", "unfreeze"]);
+    }
+
+    #[test]
+    fn unplugging_the_mouse_mid_drag_unfreezes() {
+        let mut r = drag_rig();
+        press_and_drag(&mut r);
+        r.engine.apply_device_event(DeviceEvent::Removed { id: 1 });
+        assert_eq!(r.freeze.calls(), ["freeze", "unfreeze"]);
+        assert!(!r.engine.snapshot().taps.drag);
+    }
+
+    #[test]
+    fn changing_the_bindings_mid_drag_unfreezes() {
+        let mut r = drag_rig();
+        press_and_drag(&mut r);
+        let mut c = Config {
+            buttons: phase4_buttons(),
+            ..Config::default()
+        };
+        c.buttons.drags = vec![crate::config::schema::DragBinding {
+            button: 3,
+            effect: crate::config::schema::DragEffect::ScrollSwipe,
+        }];
+        r.engine.set_remaps(compile(&c));
+        assert_eq!(r.freeze.calls(), ["freeze", "unfreeze"]);
+        assert!(!r.engine.snapshot().taps.drag);
+    }
+
+    #[test]
+    fn a_drag_tap_timeout_mid_drag_unfreezes_once_the_intents_run() {
+        let mut r = drag_rig();
+        press_and_drag(&mut r);
+        r.engine
+            .on_tap_disabled(TapKind::Drag, DisabledReason::Timeout);
+        assert_eq!(r.freeze.calls(), ["freeze"], "nothing done in the callout");
+        r.engine.on_intents();
+        assert_eq!(r.freeze.calls(), ["freeze", "unfreeze"]);
+    }
+
+    #[test]
+    fn a_buttons_tap_timeout_mid_drag_unfreezes_once_the_intents_run() {
+        let mut r = drag_rig();
+        press_and_drag(&mut r);
+        r.engine
+            .on_tap_disabled(TapKind::Buttons, DisabledReason::Timeout);
+        r.engine.on_intents();
+        assert_eq!(r.freeze.calls(), ["freeze", "unfreeze"]);
+        assert!(!r.engine.snapshot().taps.drag);
+    }
+
+    fn hold_through_rig() -> Rig {
+        let mut r = rig(true);
+        r.engine.apply_device_event(DeviceEvent::Added(mouse(1)));
+        let mut c = Config {
+            buttons: phase4_buttons(),
+            ..Config::default()
+        };
+        c.buttons.hold_through = vec![crate::config::schema::HoldThrough {
+            button: 6,
+            acts_as: crate::config::schema::MouseButton::Middle,
+        }];
+        r.engine.set_remaps(compile(&c));
+        r
+    }
+
+    #[test]
+    fn hold_through_posts_the_target_down_and_up_outside_the_callout() {
+        let mut r = hold_through_rig();
+        assert_eq!(button(&mut r, ButtonKind::Down, 5, 10), Verdict::Swallow);
+        assert!(r.poster.log().is_empty());
+        r.engine.on_intents();
+        assert_eq!(button(&mut r, ButtonKind::Up, 5, 10), Verdict::Swallow);
+        r.engine.on_intents();
+        assert_eq!(r.poster.log(), ["down 2", "up 2"]);
+    }
+
+    #[test]
+    fn buttons_tap_disabled_while_holding_through_posts_the_up() {
+        let mut r = hold_through_rig();
+        button(&mut r, ButtonKind::Down, 5, 10);
+        r.engine.on_intents();
+        r.engine
+            .on_tap_disabled(TapKind::Buttons, DisabledReason::Timeout);
+        r.engine.on_intents();
+        assert_eq!(r.poster.log(), ["down 2", "up 2"]);
+    }
+
+    #[test]
+    fn a_config_save_while_holding_through_keeps_the_hold_until_the_release() {
+        let mut r = hold_through_rig();
+        button(&mut r, ButtonKind::Down, 5, 10);
+        r.engine.on_intents();
+        let mut c = Config {
+            buttons: phase4_buttons(),
+            ..Config::default()
+        };
+        c.buttons.hold_through = vec![crate::config::schema::HoldThrough {
+            button: 6,
+            acts_as: crate::config::schema::MouseButton::Middle,
+        }];
+        r.engine.set_remaps(compile(&c));
+        assert_eq!(r.poster.log(), ["down 2"], "still held");
+        assert_eq!(button(&mut r, ButtonKind::Up, 5, 10), Verdict::Swallow);
+        r.engine.on_intents();
+        assert_eq!(r.poster.log(), ["down 2", "up 2"]);
+    }
+
+    #[test]
+    fn unplugging_while_holding_through_posts_the_up() {
+        let mut r = hold_through_rig();
+        button(&mut r, ButtonKind::Down, 5, 10);
+        r.engine.on_intents();
+        r.engine.apply_device_event(DeviceEvent::Removed { id: 1 });
+        assert_eq!(r.poster.log(), ["down 2", "up 2"]);
     }
 
     #[test]

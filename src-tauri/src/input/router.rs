@@ -357,7 +357,7 @@ impl ButtonRouter {
 
     #[cfg_attr(
         not(test),
-        expect(dead_code, reason = "the engine uses it from Phase 6 Task 5")
+        expect(dead_code, reason = "the engine uses it from Phase 6 Task 7")
     )]
     /// A scroll tick was consumed by the held button's binding: it's a
     /// modifier now, so its release clicks nothing.
@@ -383,18 +383,10 @@ impl ButtonRouter {
             .is_some_and(|c| c.down && self.remaps.button(c.press.button).drag.is_some())
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the engine uses it from Phase 6 Task 5")
-    )]
     pub fn freeze_pointer(&self) -> bool {
         self.remaps.freeze_pointer
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the engine uses it from Phase 6 Task 5")
-    )]
     /// Lets go of everything this router is holding open, for `refresh`:
     /// ends a drag, releases a modifier, posts hold-through ups. Posts at
     /// most `MAX_THROUGH_UPS_PER_CALL` ups so the outcomes fit; the caller

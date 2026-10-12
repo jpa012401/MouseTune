@@ -161,6 +161,22 @@ pub fn key_event(event_type: CGEventType, event: &CGEvent) -> KeyEvent {
 pub struct TapContext {
     pub handler: OnceCell<Rc<RefCell<dyn TapHandler>>>,
     pub degraded: Arc<AtomicBool>,
+    /// Runs after a caught panic in any callout: the engine may be mid-drag
+    /// and can't be trusted to unfreeze (`platform::pointer::release`).
+    pub on_panic: fn(),
+}
+
+/// Calls its function if dropped while a panic unwinds, so a callout that
+/// panics releases the pointer before `guarded` catches the panic, on every
+/// panic, not only the first. Create it inside the `guarded` closure.
+pub(crate) struct OnUnwind(pub(crate) fn());
+
+impl Drop for OnUnwind {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            (self.0)();
+        }
+    }
 }
 
 pub struct MacTapController {
@@ -328,6 +344,7 @@ fn dispatch(
     // `CGEventTapCreate`, valid for the input thread's lifetime.
     let context = unsafe { &*(user_info as *const TapContext) };
     let verdict = guarded(&context.degraded, Verdict::Pass, || {
+        let _release = OnUnwind(context.on_panic);
         let Some(handler) = context.handler.get() else {
             return Verdict::Pass;
         };
@@ -436,7 +453,10 @@ unsafe extern "C-unwind" fn key_callback(
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::Cell, sync::atomic::Ordering};
+    use std::{
+        cell::Cell,
+        sync::atomic::{AtomicUsize, Ordering},
+    };
 
     use objc2_core_foundation::CGPoint;
     use objc2_core_graphics::{
@@ -489,6 +509,7 @@ mod tests {
         let context = TapContext {
             handler: OnceCell::new(),
             degraded: Arc::new(AtomicBool::new(false)),
+            on_panic: || {},
         };
         if let Some(handler) = handler {
             let handler: Rc<RefCell<dyn TapHandler>> = handler;
@@ -665,6 +686,46 @@ mod tests {
         assert!(context.degraded.load(Ordering::SeqCst));
     }
 
+    static RELEASED: AtomicBool = AtomicBool::new(false);
+    static RELEASES: AtomicUsize = AtomicUsize::new(0);
+
+    #[test]
+    fn a_panic_in_a_callout_releases_the_pointer() {
+        let (handler, _) = handler(true);
+        let mut context = context(Some(handler));
+        context.on_panic = || RELEASED.store(true, Ordering::SeqCst);
+
+        let (sent, returned) = scroll_through(&context);
+
+        assert_eq!(returned, sent);
+        assert!(RELEASED.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn every_caught_panic_releases_the_pointer_not_just_the_first() {
+        let mut context = context(Some(button_handler(Verdict::Swallow, true)));
+        context.on_panic = || {
+            RELEASES.fetch_add(1, Ordering::SeqCst);
+        };
+
+        button_through(&context, CGEventType::OtherMouseDown);
+        button_through(&context, CGEventType::OtherMouseDown);
+
+        assert_eq!(RELEASES.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn a_healthy_callout_leaves_the_pointer_alone() {
+        static UNTOUCHED: AtomicBool = AtomicBool::new(true);
+        let (handler, _) = handler(false);
+        let mut context = context(Some(handler));
+        context.on_panic = || UNTOUCHED.store(false, Ordering::SeqCst);
+
+        scroll_through(&context);
+
+        assert!(UNTOUCHED.load(Ordering::SeqCst));
+    }
+
     #[test]
     fn a_re_entrant_call_passes_through_without_calling_the_handler() {
         let (handler, scrolls) = handler(false);
@@ -797,8 +858,9 @@ mod tests {
         .unwrap();
         CGEvent::set_integer_value_field(Some(&e), CGEventField::MouseEventDeltaX, 12);
         CGEvent::set_integer_value_field(Some(&e), CGEventField::MouseEventDeltaY, -5);
+        CGEvent::set_integer_value_field(Some(&e), CGEventField::EventSourceUserData, 0x4D54);
         let m = motion_event(&e);
-        assert_eq!((m.dx, m.dy), (12, -5));
+        assert_eq!((m.dx, m.dy, m.user_data), (12, -5, 0x4D54));
     }
 
     #[test]

@@ -15,11 +15,11 @@ use objc2_core_graphics::{
 use crate::{
     actions::{OutputError, keys::KeyStroke, perform::EventPoster},
     config::schema::SystemKey,
-    input::filter::MOUSETUNE_EVENT_TAG,
+    input::{filter::MOUSETUNE_EVENT_TAG, intents::InputPoster},
 };
 
 /// Builds one button event, untagged and unposted, so tests can read it back.
-fn mouse_event(
+pub(crate) fn mouse_event(
     source: Option<&CGEventSource>,
     cg_button: u8,
     down: bool,
@@ -169,6 +169,29 @@ impl EventPoster for MacEventPoster {
         let up = make(false)?;
         Self::post_all(&[&down, &up]);
         Ok(())
+    }
+}
+
+/// Runs on `mt-input` (from `InputEngine::run_intents`, never in a callout),
+/// so failures are silent: nothing is logged there. Posting can't fail once
+/// an event is built, and a failed build drops that event.
+impl InputPoster for MacEventPoster {
+    /// One down or up at the cursor, as hold-through's target button.
+    fn button(&mut self, cg_button: u8, down: bool) {
+        let Ok(source) = Self::source() else {
+            return;
+        };
+        let Some(here) = CGEvent::new(None) else {
+            return;
+        };
+        let location = CGEvent::location(Some(&here));
+        if let Ok(event) = mouse_event(Some(&source), cg_button, down, 1, location) {
+            Self::post_all(&[&event]);
+        }
+    }
+
+    fn keys(&mut self, strokes: &[KeyStroke]) {
+        let _ = self.post_keys(strokes);
     }
 }
 

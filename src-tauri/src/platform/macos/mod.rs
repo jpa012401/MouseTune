@@ -7,6 +7,7 @@ pub mod hid;
 pub mod input_loop;
 pub mod os_version;
 pub mod permissions;
+pub mod pointer;
 pub mod scroll_poster;
 pub mod symbolic_hotkeys;
 

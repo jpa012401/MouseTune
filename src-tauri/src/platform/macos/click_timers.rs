@@ -186,6 +186,7 @@ mod tests {
         let context = TapContext {
             handler: OnceCell::new(),
             degraded: Arc::new(AtomicBool::new(false)),
+            on_panic: || {},
         };
         let handler: Rc<RefCell<dyn TapHandler>> =
             Rc::new(RefCell::new(Recorder(Rc::clone(&fired))));

@@ -510,3 +510,74 @@ impl ScrollPoster for FakeScrollPoster {
         self.0.lock().unwrap().push(describe_scroll(event));
     }
 }
+
+use crate::input::intents::{InputPoster, IntentSignal, PointerFreeze};
+
+/// Records "freeze" and "unfreeze" in order. Clones share the log.
+#[derive(Clone, Default)]
+pub struct FakeFreeze(Arc<Mutex<Vec<&'static str>>>);
+impl FakeFreeze {
+    pub fn calls(&self) -> Vec<&'static str> {
+        self.0.lock().unwrap().clone()
+    }
+}
+impl PointerFreeze for FakeFreeze {
+    fn set_frozen(&mut self, frozen: bool) {
+        self.0
+            .lock()
+            .unwrap()
+            .push(if frozen { "freeze" } else { "unfreeze" });
+    }
+}
+
+/// Records "down 2", "up 2" and "key 0x30 down 0x100000". Clones share the log.
+#[derive(Clone, Default)]
+pub struct FakeInputPoster(Arc<Mutex<Vec<String>>>);
+impl FakeInputPoster {
+    pub fn log(&self) -> Vec<String> {
+        self.0.lock().unwrap().clone()
+    }
+}
+impl InputPoster for FakeInputPoster {
+    fn button(&mut self, cg_button: u8, down: bool) {
+        self.0.lock().unwrap().push(if down {
+            format!("down {cg_button}")
+        } else {
+            format!("up {cg_button}")
+        });
+    }
+    fn keys(&mut self, strokes: &[KeyStroke]) {
+        let mut log = self.0.lock().unwrap();
+        for s in strokes {
+            log.push(format!(
+                "key {:#x} {} {:#x}",
+                s.key_code,
+                if s.down { "down" } else { "up" },
+                s.flags.0
+            ));
+        }
+    }
+}
+
+/// Counts signals. Clones share the count.
+#[derive(Clone, Default)]
+pub struct FakeSignal(Arc<std::sync::atomic::AtomicUsize>);
+impl FakeSignal {
+    pub fn count(&self) -> usize {
+        self.0.load(Ordering::SeqCst)
+    }
+}
+impl IntentSignal for FakeSignal {
+    fn signal(&self) {
+        self.0.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+/// Fake gesture ports for tests that don't look at them.
+pub fn fake_gestures() -> crate::input::intents::GestureSetup {
+    crate::input::intents::GestureSetup {
+        freeze: Box::new(FakeFreeze::default()),
+        poster: Box::new(FakeInputPoster::default()),
+        signal: Box::new(FakeSignal::default()),
+    }
+}

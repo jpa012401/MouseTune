@@ -243,7 +243,8 @@ mod tests {
             taps::{TapDemand, TapSet},
         },
         test_support::{
-            FakeClock, FakeFrames, FakeScrollPoster, FakeSink, FakeTapController, FakeTimers, mouse,
+            FakeClock, FakeFrames, FakeScrollPoster, FakeSink, FakeTapController, FakeTimers,
+            fake_gestures, mouse,
         },
     };
 
@@ -286,6 +287,7 @@ mod tests {
                 Box::new(FakeFrames::default()),
                 Box::new(FakeScrollPoster::default()),
             ),
+            fake_gestures(),
             Box::new(Ignore),
         );
         engine.start();

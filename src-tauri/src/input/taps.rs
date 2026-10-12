@@ -66,8 +66,9 @@ impl TapSet {
     }
 }
 
-/// What the configuration needs (`config::schema::tap_demand`), plus
-/// whether a shortcut is being recorded (`keys`, set by the engine).
+/// What the configuration needs (`config::schema::tap_demand`). The engine
+/// sets `keys` (a shortcut is being recorded) and `drag` (a drag-bound
+/// button is down) itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TapDemand {
     pub buttons: bool,
