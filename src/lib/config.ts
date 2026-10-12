@@ -1,4 +1,4 @@
-import type { ConfigError, Remap, RemapProblem } from "../bindings";
+import type { BindingProblem, ConfigError, Remap, RemapProblem } from "../bindings";
 import { remapLabel } from "./remaps";
 import { modifierKeyLabel } from "./scroll";
 
@@ -9,7 +9,8 @@ function isConfigError(error: unknown): error is ConfigError {
     error.kind === "UnsupportedVersion" ||
     error.kind === "InvalidRemap" ||
     error.kind === "DuplicateScrollModifier" ||
-    error.kind === "TimingOutOfRange"
+    error.kind === "TimingOutOfRange" ||
+    error.kind === "InvalidBinding"
   );
 }
 
@@ -30,6 +31,24 @@ function remapProblemMessage(reason: RemapProblem, row: Remap | undefined): stri
   }
 }
 
+/** The error carries the list index, not the button, so the copy says "that button". */
+function bindingProblemMessage(reason: BindingProblem): string {
+  switch (reason) {
+    case "Duplicate":
+      return "that button already has that kind of binding.";
+    case "ButtonNotRemappable":
+      return "left and right buttons can’t be remapped.";
+    case "ButtonOutOfRange":
+      return "MouseTune supports buttons up to 32.";
+    case "HoldThroughConflict":
+      return "a button that acts as another button can’t have other bindings.";
+    case "EmptyDiscrete":
+      return "choose at least one direction for separate actions.";
+    case "InvalidAction":
+      return "one of the drag’s actions can’t be used.";
+  }
+}
+
 /** `error` is usually a `ConfigError`, but a broken bridge can reject with anything. */
 export function configErrorMessage(error: unknown, remaps: Remap[] = []): string {
   if (!isConfigError(error)) return `Couldn’t save your settings: ${String(error)}`;
@@ -42,6 +61,8 @@ export function configErrorMessage(error: unknown, remaps: Remap[] = []): string
           ? `${modifierKeyLabel(error.key)} is already used for another scroll modifier.`
           : error.kind === "TimingOutOfRange"
             ? `${error.field === "Hold" ? "Hold delay" : "Double-click speed"} must be between 150 and 600 ms.`
-            : remapProblemMessage(error.reason, remaps[error.index]);
+            : error.kind === "InvalidBinding"
+              ? bindingProblemMessage(error.reason)
+              : remapProblemMessage(error.reason, remaps[error.index]);
   return `Couldn’t save your settings: ${reason}`;
 }

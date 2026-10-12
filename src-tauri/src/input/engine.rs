@@ -388,7 +388,7 @@ mod tests {
         },
         test_support::{
             FakeClock, FakeFrames, FakeScrollPoster, FakeSink, FakeTapController, FakeTimers,
-            apple_trackpad, mouse,
+            apple_trackpad, mouse, phase4_buttons,
         },
     };
 
@@ -446,7 +446,10 @@ mod tests {
             TapDemand::ALL,
             Arc::clone(&counters),
             ButtonSetup {
-                remaps: compile(&Config::default()),
+                remaps: compile(&Config {
+                    buttons: phase4_buttons(),
+                    ..Config::default()
+                }),
                 timers: Box::new(timers.clone()),
                 sink: Box::new(sink.clone()),
                 counters: Arc::clone(&actions),

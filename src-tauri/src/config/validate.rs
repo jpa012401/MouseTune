@@ -8,14 +8,15 @@ use specta::Type;
 use crate::{
     actions::keys::is_modifier_key,
     config::schema::{
-        Action, KeyModifier, Remap, ScrollModifiers, TIMING_MS, Timing, TriggerDuration,
+        Action, Buttons, DragEffect, KeyModifier, Remap, ScrollModifiers, TIMING_MS, Timing,
+        TriggerDuration,
     },
     input::remaps::{MAX_BUTTONS, MAX_LEVEL},
 };
 
 /// The first key bound to two scroll effects, if any (Phase 5b design §1).
 pub fn duplicate_scroll_modifier(m: &ScrollModifiers) -> Option<KeyModifier> {
-    let keys = [m.horizontal, m.precise, m.swift];
+    let keys = [m.horizontal, m.precise, m.swift, m.zoom];
     keys.iter()
         .enumerate()
         .find_map(|(i, key)| key.filter(|k| keys[i + 1..].contains(&Some(*k))))
@@ -46,17 +47,122 @@ pub fn check_remap(remap: &Remap) -> Result<(), RemapProblem> {
     if !(1..=MAX_LEVEL).contains(&t.level) {
         return Err(RemapProblem::LevelOutOfRange);
     }
-    if let Action::KeyCombo { key_code, .. } = remap.effect.action
-        && (is_modifier_key(key_code) || key_code >= 128)
+    check_action(&remap.effect.action)
+}
+
+/// The rules for an action wherever it appears (remaps, separate drag actions).
+pub fn check_action(action: &Action) -> Result<(), RemapProblem> {
+    if let Action::KeyCombo { key_code, .. } = action
+        && (is_modifier_key(*key_code) || *key_code >= 128)
     {
         return Err(RemapProblem::EmptyKeyCombo);
     }
-    if let Action::MouseClick { clicks, .. } = remap.effect.action
-        && !(1..=2).contains(&clicks)
+    if let Action::MouseClick { clicks, .. } = action
+        && !(1..=2).contains(clicks)
     {
         return Err(RemapProblem::ClicksOutOfRange);
     }
     Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub enum BindingList {
+    Drags,
+    ScrollBindings,
+    HoldThrough,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub enum BindingProblem {
+    ButtonNotRemappable,
+    ButtonOutOfRange,
+    Duplicate,
+    HoldThroughConflict,
+    EmptyDiscrete,
+    InvalidAction,
+}
+
+fn check_button(button: u8) -> Result<(), BindingProblem> {
+    if button < FIRST_REMAPPABLE_BUTTON {
+        Err(BindingProblem::ButtonNotRemappable)
+    } else if usize::from(button) > MAX_BUTTONS {
+        Err(BindingProblem::ButtonOutOfRange)
+    } else {
+        Ok(())
+    }
+}
+
+fn check_drag(effect: &DragEffect) -> Result<(), BindingProblem> {
+    if let DragEffect::Discrete {
+        left,
+        right,
+        up,
+        down,
+    } = effect
+    {
+        let actions = [left, right, up, down];
+        if actions.iter().all(|a| a.is_none()) {
+            return Err(BindingProblem::EmptyDiscrete);
+        }
+        if actions
+            .iter()
+            .flat_map(|a| a.as_ref())
+            .any(|a| check_action(a).is_err())
+        {
+            return Err(BindingProblem::InvalidAction);
+        }
+    }
+    Ok(())
+}
+
+/// The first problem in the drag, scroll and hold-through lists (Phase 6
+/// design §1). `compile` skips the same entries instead.
+pub fn validate_bindings(b: &Buttons) -> Result<(), (BindingList, usize, BindingProblem)> {
+    fn each<T>(
+        list: BindingList,
+        items: &[T],
+        button: impl Fn(&T) -> u8,
+        extra: impl Fn(&T) -> Result<(), BindingProblem>,
+    ) -> Result<(), (BindingList, usize, BindingProblem)> {
+        let mut seen = HashSet::new();
+        for (i, item) in items.iter().enumerate() {
+            let b = button(item);
+            check_button(b)
+                .and_then(|()| extra(item))
+                .map_err(|p| (list, i, p))?;
+            if !seen.insert(b) {
+                return Err((list, i, BindingProblem::Duplicate));
+            }
+        }
+        Ok(())
+    }
+    each(
+        BindingList::Drags,
+        &b.drags,
+        |d| d.button,
+        |d| check_drag(&d.effect),
+    )?;
+    each(
+        BindingList::ScrollBindings,
+        &b.scroll_bindings,
+        |s| s.button,
+        |_| Ok(()),
+    )?;
+    each(
+        BindingList::HoldThrough,
+        &b.hold_through,
+        |h| h.button,
+        |h| {
+            let taken = b.remaps.iter().any(|r| r.trigger.button == h.button)
+                || b.drags.iter().any(|d| d.button == h.button)
+                || b.scroll_bindings.iter().any(|s| s.button == h.button);
+            if taken {
+                Err(BindingProblem::HoldThroughConflict)
+            } else {
+                Ok(())
+            }
+        },
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -108,6 +214,7 @@ mod tests {
             horizontal,
             precise,
             swift,
+            zoom: None,
         };
         assert_eq!(
             duplicate_scroll_modifier(&m(Some(Shift), Some(Option), None)),
@@ -127,7 +234,27 @@ mod tests {
             Some(Command)
         );
     }
-    use crate::config::schema::{Buttons, ClickTrigger, Effect, SymbolicHotkeyId};
+    #[test]
+    fn the_zoom_key_counts_as_a_scroll_effect_binding() {
+        use crate::config::schema::KeyModifier::{Command, Shift};
+        let m = ScrollModifiers {
+            horizontal: Some(Shift),
+            precise: None,
+            swift: None,
+            zoom: Some(Shift),
+        };
+        assert_eq!(duplicate_scroll_modifier(&m), Some(Shift));
+        let free = ScrollModifiers {
+            zoom: Some(Command),
+            ..m
+        };
+        assert_eq!(duplicate_scroll_modifier(&free), None);
+    }
+
+    use crate::config::schema::{
+        Buttons, ClickTrigger, DragBinding, DragEffect, Effect, HoldThrough, MouseButton,
+        ScrollBinding, ScrollEffect, SymbolicHotkeyId,
+    };
 
     fn remap(button: u8, level: u8, duration: TriggerDuration) -> Remap {
         Remap {
@@ -155,6 +282,131 @@ mod tests {
                 },
             },
         }
+    }
+
+    fn buttons(f: impl FnOnce(&mut Buttons)) -> Buttons {
+        let mut b = Buttons {
+            remaps: vec![],
+            drags: vec![],
+            scroll_bindings: vec![],
+            hold_through: vec![],
+        };
+        f(&mut b);
+        b
+    }
+
+    fn drag(button: u8) -> DragBinding {
+        DragBinding {
+            button,
+            effect: DragEffect::SpacesAndMissionControl,
+        }
+    }
+
+    #[test]
+    fn binding_buttons_must_be_3_to_32() {
+        assert_eq!(
+            validate_bindings(&buttons(|b| b.drags = vec![drag(2)])),
+            Err((BindingList::Drags, 0, BindingProblem::ButtonNotRemappable))
+        );
+        assert_eq!(
+            validate_bindings(&buttons(|b| b.drags = vec![drag(33)])),
+            Err((BindingList::Drags, 0, BindingProblem::ButtonOutOfRange))
+        );
+        assert_eq!(
+            validate_bindings(&buttons(|b| b.drags = vec![drag(3), drag(32)])),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn one_binding_per_button_per_list() {
+        let twice = buttons(|b| {
+            b.scroll_bindings = vec![
+                ScrollBinding {
+                    button: 4,
+                    effect: ScrollEffect::Zoom,
+                },
+                ScrollBinding {
+                    button: 4,
+                    effect: ScrollEffect::Horizontal,
+                },
+            ]
+        });
+        assert_eq!(
+            validate_bindings(&twice),
+            Err((BindingList::ScrollBindings, 1, BindingProblem::Duplicate))
+        );
+    }
+
+    #[test]
+    fn a_hold_through_button_can_have_no_other_binding() {
+        let clash = buttons(|b| {
+            b.drags = vec![drag(6)];
+            b.hold_through = vec![HoldThrough {
+                button: 6,
+                acts_as: MouseButton::Middle,
+            }];
+        });
+        assert_eq!(
+            validate_bindings(&clash),
+            Err((
+                BindingList::HoldThrough,
+                0,
+                BindingProblem::HoldThroughConflict
+            ))
+        );
+        let with_remap = buttons(|b| {
+            b.remaps = vec![remap(6, 1, TriggerDuration::Click)];
+            b.hold_through = vec![HoldThrough {
+                button: 6,
+                acts_as: MouseButton::Left,
+            }];
+        });
+        assert_eq!(
+            validate_bindings(&with_remap),
+            Err((
+                BindingList::HoldThrough,
+                0,
+                BindingProblem::HoldThroughConflict
+            ))
+        );
+    }
+
+    #[test]
+    fn separate_actions_need_at_least_one_valid_direction() {
+        let empty = buttons(|b| {
+            b.drags = vec![DragBinding {
+                button: 5,
+                effect: DragEffect::Discrete {
+                    left: None,
+                    right: None,
+                    up: None,
+                    down: None,
+                },
+            }]
+        });
+        assert_eq!(
+            validate_bindings(&empty),
+            Err((BindingList::Drags, 0, BindingProblem::EmptyDiscrete))
+        );
+        let bad = buttons(|b| {
+            b.drags = vec![DragBinding {
+                button: 5,
+                effect: DragEffect::Discrete {
+                    left: Some(Action::MouseClick {
+                        button: MouseButton::Left,
+                        clicks: 3,
+                    }),
+                    right: None,
+                    up: None,
+                    down: None,
+                },
+            }]
+        });
+        assert_eq!(
+            validate_bindings(&bad),
+            Err((BindingList::Drags, 0, BindingProblem::InvalidAction))
+        );
     }
 
     #[test]

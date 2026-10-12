@@ -67,6 +67,7 @@ mod tests {
             horizontal: None,
             precise: None,
             swift: None,
+            zoom: None,
         };
         assert_eq!(ModifierKeys::compile(&none), ModifierKeys::default());
     }
@@ -77,6 +78,7 @@ mod tests {
             horizontal: Some(Option),
             precise: Some(Option),
             swift: Some(Control),
+            zoom: None,
         };
         assert_eq!(
             ModifierKeys::compile(&clash),
@@ -91,6 +93,7 @@ mod tests {
             horizontal: None,
             precise: Some(Shift),
             swift: Some(Shift),
+            zoom: None,
         };
         assert_eq!(ModifierKeys::compile(&late).swift, 0);
     }

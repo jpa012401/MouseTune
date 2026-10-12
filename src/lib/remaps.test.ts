@@ -7,7 +7,6 @@ describe("remapLabel", () => {
   it("names the default remaps in plain words", () => {
     expect(defaultRemaps.map(remapLabel)).toEqual([
       { trigger: "Middle button · Click", action: "Mission Control" },
-      { trigger: "Middle button · Hold", action: "Show Desktop" },
       { trigger: "Button 4 · Click", action: "Back" },
       { trigger: "Button 5 · Click", action: "Forward" },
     ]);

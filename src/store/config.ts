@@ -62,7 +62,7 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
   setRemaps: async (remaps) => {
     const { view } = get();
     if (!view) return false;
-    return save(set, { ...view.config, buttons: { remaps } });
+    return save(set, { ...view.config, buttons: { ...view.config.buttons, remaps } });
   },
   setTiming: async (timing) => {
     const { view } = get();

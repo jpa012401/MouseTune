@@ -28,7 +28,6 @@ export function status(overrides: Partial<Status> = {}): Status {
 
 export const defaultRemaps: Remap[] = [
   { trigger: { button: 3, level: 1, duration: "click" }, effect: { action: { type: "SymbolicHotkey", id: "MissionControl" } } },
-  { trigger: { button: 3, level: 1, duration: "hold" }, effect: { action: { type: "SymbolicHotkey", id: "ShowDesktop" } } },
   { trigger: { button: 4, level: 1, duration: "click" }, effect: { action: { type: "Navigate", direction: "Back" } } },
   { trigger: { button: 5, level: 1, duration: "click" }, effect: { action: { type: "Navigate", direction: "Forward" } } },
 ];
@@ -36,8 +35,13 @@ export const defaultRemaps: Remap[] = [
 export function config(overrides: Partial<GeneralSettings> = {}): Config {
   return {
     version: 1,
-    general: { buttons_enabled: true, scroll_enabled: true, ...overrides },
-    buttons: { remaps: defaultRemaps },
+    general: { buttons_enabled: true, scroll_enabled: true, freeze_pointer_during_drag: true, ...overrides },
+    buttons: {
+      remaps: defaultRemaps,
+      drags: [{ button: 3, effect: { type: "SpacesAndMissionControl" } }],
+      scroll_bindings: [],
+      hold_through: [],
+    },
     scroll: {
       smooth: true,
       smoothness: "regular",
@@ -46,7 +50,7 @@ export function config(overrides: Partial<GeneralSettings> = {}): Config {
       invert_vertical: false,
       invert_horizontal: false,
       precise: false,
-      keyboard_modifiers: { horizontal: "Shift", precise: "Option", swift: null },
+      keyboard_modifiers: { horizontal: "Shift", precise: "Option", swift: null, zoom: null },
     },
     timing: { hold_ms: 250, double_click_ms: 260 },
     nav_overrides: {

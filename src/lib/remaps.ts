@@ -42,7 +42,6 @@ const remap = (button: number, duration: TriggerDuration, action: Action): Remap
  */
 export const defaultButtonRemaps: Remap[] = [
   remap(3, "click", { type: "SymbolicHotkey", id: "MissionControl" }),
-  remap(3, "hold", { type: "SymbolicHotkey", id: "ShowDesktop" }),
   remap(4, "click", { type: "Navigate", direction: "Back" }),
   remap(5, "click", { type: "Navigate", direction: "Forward" }),
 ];

@@ -43,6 +43,8 @@ pub struct General {
     pub buttons_enabled: bool,
     /// Kill switch for scroll features.
     pub scroll_enabled: bool,
+    /// Keep the pointer still during drag gestures.
+    pub freeze_pointer_during_drag: bool,
 }
 
 impl Default for General {
@@ -50,6 +52,7 @@ impl Default for General {
         Self {
             buttons_enabled: true,
             scroll_enabled: true,
+            freeze_pointer_during_drag: true,
         }
     }
 }
@@ -60,12 +63,16 @@ impl Default for General {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub struct Buttons {
     pub remaps: Vec<Remap>,
+    pub drags: Vec<DragBinding>,
+    pub scroll_bindings: Vec<ScrollBinding>,
+    pub hold_through: Vec<HoldThrough>,
 }
 
 impl Default for Buttons {
+    /// B3 hold is not a default: with B3 drag bound, a slow-starting drag would fire it (Phase 6 design, Decisions).
     fn default() -> Self {
         use NavDirection::{Back, Forward};
-        use SymbolicHotkeyId::{MissionControl, ShowDesktop};
+        use SymbolicHotkeyId::MissionControl;
         let remap = |button, duration, action| Remap {
             trigger: ClickTrigger {
                 button,
@@ -82,11 +89,6 @@ impl Default for Buttons {
                     Action::SymbolicHotkey { id: MissionControl },
                 ),
                 remap(
-                    3,
-                    TriggerDuration::Hold,
-                    Action::SymbolicHotkey { id: ShowDesktop },
-                ),
-                remap(
                     4,
                     TriggerDuration::Click,
                     Action::Navigate { direction: Back },
@@ -97,8 +99,64 @@ impl Default for Buttons {
                     Action::Navigate { direction: Forward },
                 ),
             ],
+            drags: vec![DragBinding {
+                button: 3,
+                effect: DragEffect::SpacesAndMissionControl,
+            }],
+            scroll_bindings: vec![],
+            hold_through: vec![],
         }
     }
+}
+
+/// A drag of a held button (Phase 6 design §1).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct DragBinding {
+    /// 1-based, 3 = middle.
+    pub button: u8,
+    pub effect: DragEffect,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(tag = "type")]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "settings data, a few entries at most, never on the hot path; boxing would only complicate the wire type"
+)]
+pub enum DragEffect {
+    /// Interactive dock swipe: left/right switches Space, up Mission
+    /// Control, down App Exposé.
+    SpacesAndMissionControl,
+    /// Two-finger-style scroll swipe.
+    ScrollSwipe,
+    /// One action per direction once the drag passes 40 px.
+    Discrete {
+        left: Option<Action>,
+        right: Option<Action>,
+        up: Option<Action>,
+        down: Option<Action>,
+    },
+}
+
+/// Scrolling while a button is held (spec §8.5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct ScrollBinding {
+    pub button: u8,
+    pub effect: ScrollEffect,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub enum ScrollEffect {
+    Zoom,
+    Horizontal,
+    AppSwitcher,
+}
+
+/// A button that behaves exactly like another while held.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct HoldThrough {
+    pub button: u8,
+    pub acts_as: MouseButton,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -309,6 +367,7 @@ pub struct ScrollModifiers {
     pub horizontal: Option<KeyModifier>,
     pub precise: Option<KeyModifier>,
     pub swift: Option<KeyModifier>,
+    pub zoom: Option<KeyModifier>,
 }
 
 impl Default for ScrollModifiers {
@@ -318,6 +377,7 @@ impl Default for ScrollModifiers {
             horizontal: Some(KeyModifier::Shift),
             precise: Some(KeyModifier::Option),
             swift: None,
+            zoom: None,
         }
     }
 }
@@ -389,6 +449,7 @@ mod tests {
             general: General {
                 buttons_enabled: buttons,
                 scroll_enabled: scroll,
+                freeze_pointer_during_drag: true,
             },
             buttons: Buttons::default(),
             scroll: Scroll::default(),
@@ -461,7 +522,7 @@ mod tests {
             json,
             serde_json::json!({
                 "version": 1,
-                "general": { "buttons_enabled": true, "scroll_enabled": false },
+                "general": { "buttons_enabled": true, "scroll_enabled": false, "freeze_pointer_during_drag": true },
                 "buttons": serde_json::to_value(Buttons::default()).unwrap(),
                 "scroll": serde_json::to_value(Scroll::default()).unwrap(),
                 "timing": { "hold_ms": 250, "double_click_ms": 260 },
@@ -471,20 +532,77 @@ mod tests {
     }
 
     #[test]
-    fn default_buttons_are_the_four_documented_remaps() {
+    fn default_buttons_are_the_documented_remaps_and_b3_drag() {
         assert_eq!(
             serde_json::to_value(Buttons::default()).unwrap(),
             serde_json::json!({ "remaps": [
                 { "trigger": { "button": 3, "level": 1, "duration": "click" },
                   "effect": { "action": { "type": "SymbolicHotkey", "id": "MissionControl" } } },
-                { "trigger": { "button": 3, "level": 1, "duration": "hold" },
-                  "effect": { "action": { "type": "SymbolicHotkey", "id": "ShowDesktop" } } },
                 { "trigger": { "button": 4, "level": 1, "duration": "click" },
                   "effect": { "action": { "type": "Navigate", "direction": "Back" } } },
                 { "trigger": { "button": 5, "level": 1, "duration": "click" },
                   "effect": { "action": { "type": "Navigate", "direction": "Forward" } } }
-            ] })
+            ],
+            "drags": [ { "button": 3, "effect": { "type": "SpacesAndMissionControl" } } ],
+            "scroll_bindings": [],
+            "hold_through": [] })
         );
+    }
+
+    #[test]
+    fn default_buttons_drag_b3_through_spaces_and_drop_the_b3_hold() {
+        let b = Buttons::default();
+        assert_eq!(
+            serde_json::to_value(&b.drags).unwrap(),
+            serde_json::json!([{ "button": 3, "effect": { "type": "SpacesAndMissionControl" } }])
+        );
+        assert!(
+            !b.remaps
+                .iter()
+                .any(|r| r.trigger.button == 3 && r.trigger.duration == TriggerDuration::Hold),
+            "B3 hold is no longer a default"
+        );
+        assert_eq!(b.remaps.len(), 3);
+        assert!(b.scroll_bindings.is_empty() && b.hold_through.is_empty());
+    }
+
+    #[test]
+    fn binding_wire_shapes_match_the_design() {
+        let discrete = DragEffect::Discrete {
+            left: Some(Action::Navigate {
+                direction: NavDirection::Back,
+            }),
+            right: None,
+            up: None,
+            down: None,
+        };
+        assert_eq!(
+            serde_json::to_value(&discrete).unwrap(),
+            serde_json::json!({ "type": "Discrete", "left": { "type": "Navigate", "direction": "Back" }, "right": null, "up": null, "down": null })
+        );
+        assert_eq!(
+            serde_json::to_value(ScrollBinding {
+                button: 4,
+                effect: ScrollEffect::Zoom
+            })
+            .unwrap(),
+            serde_json::json!({ "button": 4, "effect": "Zoom" })
+        );
+        assert_eq!(
+            serde_json::to_value(HoldThrough {
+                button: 6,
+                acts_as: MouseButton::Middle
+            })
+            .unwrap(),
+            serde_json::json!({ "button": 6, "acts_as": "Middle" })
+        );
+    }
+
+    #[test]
+    fn freeze_and_zoom_slot_defaults() {
+        let c = Config::default();
+        assert!(c.general.freeze_pointer_during_drag);
+        assert_eq!(c.scroll.keyboard_modifiers.zoom, None);
     }
 
     #[test]
@@ -570,7 +688,7 @@ mod tests {
                 "invert_vertical": false,
                 "invert_horizontal": false,
                 "precise": false,
-                "keyboard_modifiers": { "horizontal": "Shift", "precise": "Option", "swift": null }
+                "keyboard_modifiers": { "horizontal": "Shift", "precise": "Option", "swift": null, "zoom": null }
             })
         );
     }

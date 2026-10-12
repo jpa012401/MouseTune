@@ -16,12 +16,64 @@ use crate::{
         keys::{KeyBinding, KeyStroke},
         perform::{EventPoster, FrontmostApp, HotkeyState, SymbolicHotkeys},
     },
-    config::schema::{Action, MouseButton, SystemKey},
+    config::schema::{Action, Buttons, MouseButton, SystemKey},
     input::{
         capture::Clock,
         router::{ClickTimers, TimerKind},
     },
 };
+
+/// The Phase 4 default buttons: B3 click → Mission Control, B3 hold → Show
+/// Desktop, B4/B5 → Back/Forward, and no drags. For tests written against
+/// those defaults, which Phase 6 changed.
+pub fn phase4_buttons() -> Buttons {
+    use crate::config::schema::{
+        ClickTrigger, Effect, NavDirection, Remap, SymbolicHotkeyId, TriggerDuration,
+    };
+    let remap = |button, duration, action| Remap {
+        trigger: ClickTrigger {
+            button,
+            level: 1,
+            duration,
+        },
+        effect: Effect { action },
+    };
+    Buttons {
+        remaps: vec![
+            remap(
+                3,
+                TriggerDuration::Click,
+                Action::SymbolicHotkey {
+                    id: SymbolicHotkeyId::MissionControl,
+                },
+            ),
+            remap(
+                3,
+                TriggerDuration::Hold,
+                Action::SymbolicHotkey {
+                    id: SymbolicHotkeyId::ShowDesktop,
+                },
+            ),
+            remap(
+                4,
+                TriggerDuration::Click,
+                Action::Navigate {
+                    direction: NavDirection::Back,
+                },
+            ),
+            remap(
+                5,
+                TriggerDuration::Click,
+                Action::Navigate {
+                    direction: NavDirection::Forward,
+                },
+            ),
+        ],
+        drags: vec![],
+        scroll_bindings: vec![],
+        hold_through: vec![],
+    }
+}
 
 /// The config form of a compiled action, for building `Remap`s in tests.
 pub fn config_action(action: CompiledAction) -> Action {

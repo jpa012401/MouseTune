@@ -343,7 +343,7 @@ mod tests {
             Buttons, ClickTrigger, Config, Effect, NavDirection, Remap, SymbolicHotkeyId,
         },
         input::remaps::compile,
-        test_support::config_action,
+        test_support::{config_action, phase4_buttons},
     };
 
     const MC: CompiledAction = CompiledAction::SymbolicHotkey(SymbolicHotkeyId::MissionControl);
@@ -356,7 +356,12 @@ mod tests {
 
     fn router(remaps: Vec<Remap>) -> ButtonRouter {
         ButtonRouter::new(compile(&Config {
-            buttons: Buttons { remaps },
+            buttons: Buttons {
+                remaps,
+                drags: vec![],
+                scroll_bindings: vec![],
+                hold_through: vec![],
+            },
             ..Config::default()
         }))
     }
@@ -367,6 +372,7 @@ mod tests {
                 hold_ms: 400,
                 double_click_ms: 300,
             },
+            buttons: phase4_buttons(),
             ..Config::default()
         }));
         assert_eq!(
@@ -382,7 +388,10 @@ mod tests {
     }
 
     fn defaults() -> ButtonRouter {
-        ButtonRouter::new(compile(&Config::default()))
+        ButtonRouter::new(compile(&Config {
+            buttons: phase4_buttons(),
+            ..Config::default()
+        }))
     }
     fn remap(button: u8, level: u8, duration: TriggerDuration, action: CompiledAction) -> Remap {
         Remap {
@@ -637,7 +646,12 @@ mod tests {
         let mut r = defaults();
         down(&mut r, MIDDLE); // swallowed; its up never reaches us
         r.set_remaps(compile(&Config {
-            buttons: Buttons { remaps: vec![] },
+            buttons: Buttons {
+                remaps: vec![],
+                drags: vec![],
+                scroll_bindings: vec![],
+                hold_through: vec![],
+            },
             ..Config::default()
         }));
         assert_eq!(down(&mut r, MIDDLE), (Verdict::Pass, vec![]));

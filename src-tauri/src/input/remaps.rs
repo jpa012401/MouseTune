@@ -128,7 +128,7 @@ mod tests {
     use crate::config::schema::{
         Buttons, ClickTrigger, Effect, NavDirection, Remap, SymbolicHotkeyId,
     };
-    use crate::test_support::config_action;
+    use crate::test_support::{config_action, phase4_buttons};
 
     const MC: CompiledAction = CompiledAction::SymbolicHotkey(SymbolicHotkeyId::MissionControl);
     const DESKTOP: CompiledAction = CompiledAction::SymbolicHotkey(SymbolicHotkeyId::ShowDesktop);
@@ -149,14 +149,22 @@ mod tests {
 
     fn with(remaps: Vec<Remap>) -> Config {
         Config {
-            buttons: Buttons { remaps },
+            buttons: Buttons {
+                remaps,
+                drags: vec![],
+                scroll_bindings: vec![],
+                hold_through: vec![],
+            },
             ..Config::default()
         }
     }
 
     #[test]
     fn defaults_map_the_middle_button_to_cg_button_2() {
-        let compiled = compile(&Config::default());
+        let compiled = compile(&Config {
+            buttons: phase4_buttons(),
+            ..Config::default()
+        });
         let middle = compiled.button(2);
         assert_eq!(middle.action(1, TriggerDuration::Click), Some(MC));
         assert_eq!(middle.action(1, TriggerDuration::Hold), Some(DESKTOP));

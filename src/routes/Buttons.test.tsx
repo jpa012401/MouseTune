@@ -28,7 +28,6 @@ describe("Buttons page", () => {
     const rows = within(list).getAllByRole("listitem").map((li) => li.textContent);
     expect(rows).toEqual([
       expect.stringContaining("Mission Control"),
-      expect.stringContaining("Show Desktop"),
       expect.stringContaining("Back"),
       expect.stringContaining("Forward"),
     ]);
@@ -36,7 +35,7 @@ describe("Buttons page", () => {
   });
 
   it("says so when there are no remaps", async () => {
-    mockBackend({ get_status: tapsOn, get_config: () => configView({ config: { ...config(), buttons: { remaps: [] } } }) });
+    mockBackend({ get_status: tapsOn, get_config: () => configView({ config: { ...config(), buttons: { ...config().buttons, remaps: [] } } }) });
     renderButtons();
     expect(await screen.findByText("No buttons are remapped.")).toBeTruthy();
   });
@@ -52,7 +51,7 @@ describe("Buttons page", () => {
     expect(await screen.findByText("Turn on mouse buttons in General to add a remap.")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "+ Add remap" })).toBeNull();
     expect(screen.getByRole("button", { name: "Restore defaults" })).toBeTruthy();
-    expect(screen.getAllByRole("button", { name: "Change" })).toHaveLength(4);
+    expect(screen.getAllByRole("button", { name: "Change" })).toHaveLength(3);
   });
 
   it("offers to add a remap once the buttons tap is on", async () => {
@@ -164,6 +163,7 @@ describe("Buttons page", () => {
           config: {
             ...config(),
             buttons: {
+              ...config().buttons,
               remaps: [
                 { trigger: { button: 4, level: 1, duration: "click" }, effect: { action: { type: "SystemKey", key: "PlayPause" } } },
                 { trigger: { button: 5, level: 1, duration: "click" }, effect: { action: { type: "MouseClick", button: "Left", clicks: 2 } } },
@@ -181,14 +181,14 @@ describe("Buttons page", () => {
     let saved: Config | undefined;
     mockBackend({ get_status: tapsOn, set_config: (a) => (saved = (a as { config: Config }).config) });
     renderButtons();
-    fireEvent.click(within((await screen.findAllByRole("listitem"))[2]!).getByRole("button", { name: "Delete" }));
-    await waitFor(() => expect(saved!.buttons.remaps).toEqual([defaultRemaps[0], defaultRemaps[1], defaultRemaps[3]]));
+    fireEvent.click(within((await screen.findAllByRole("listitem"))[1]!).getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(saved!.buttons.remaps).toEqual([defaultRemaps[0], defaultRemaps[2]]));
   });
 
   it("restore_defaults_keeps_the_kill_switches", async () => {
     let saved: Config | undefined;
     vi.spyOn(window, "confirm").mockReturnValue(true);
-    mockBackend({ get_status: tapsOn, get_config: () => configView({ config: { ...config({ buttons_enabled: false }), buttons: { remaps: [] } } }), set_config: (a) => (saved = (a as { config: Config }).config) });
+    mockBackend({ get_status: tapsOn, get_config: () => configView({ config: { ...config({ buttons_enabled: false }), buttons: { ...config().buttons, remaps: [] } } }), set_config: (a) => (saved = (a as { config: Config }).config) });
     renderButtons();
     fireEvent.click(await screen.findByRole("button", { name: "Restore defaults" }));
     expect(window.confirm).toHaveBeenCalledWith("Replace your button remaps with the defaults?");
@@ -209,7 +209,7 @@ describe("Buttons page", () => {
     renderButtons();
     fireEvent.click(within((await screen.findAllByRole("listitem"))[0]!).getByRole("button", { name: "Delete" }));
     expect(await screen.findByText("Couldn’t save your settings: disk full")).toBeTruthy();
-    expect(screen.getAllByRole("listitem")).toHaveLength(4);
+    expect(screen.getAllByRole("listitem")).toHaveLength(3);
   });
 
   it("leaving the page stops a capture", async () => {
@@ -221,8 +221,8 @@ describe("Buttons page", () => {
   });
 
   it("warns when single clicks will wait for a double click", async () => {
-    mockBackend({ get_status: tapsOn, get_config: () => configView({ config: { ...config(), buttons: { remaps: [
-      defaultRemaps[2]!, { trigger: { button: 4, level: 2, duration: "click" }, effect: { action: { type: "SymbolicHotkey", id: "Spotlight" } } },
+    mockBackend({ get_status: tapsOn, get_config: () => configView({ config: { ...config(), buttons: { ...config().buttons, remaps: [
+      defaultRemaps[1]!, { trigger: { button: 4, level: 2, duration: "click" }, effect: { action: { type: "SymbolicHotkey", id: "Spotlight" } } },
     ] } } }) });
     renderButtons();
     expect(await screen.findByText("Single clicks on this button will wait up to 260 ms.")).toBeTruthy();
@@ -365,8 +365,8 @@ describe("Buttons page", () => {
   });
 
   it("the double-click hint uses the configured window", async () => {
-    mockBackend({ get_status: tapsOn, get_config: () => configView({ config: { ...timingConfig({ hold_ms: 250, double_click_ms: 400 }), buttons: { remaps: [
-      defaultRemaps[2]!, { trigger: { button: 4, level: 2, duration: "click" }, effect: { action: { type: "SymbolicHotkey", id: "Spotlight" } } },
+    mockBackend({ get_status: tapsOn, get_config: () => configView({ config: { ...timingConfig({ hold_ms: 250, double_click_ms: 400 }), buttons: { ...config().buttons, remaps: [
+      defaultRemaps[1]!, { trigger: { button: 4, level: 2, duration: "click" }, effect: { action: { type: "SymbolicHotkey", id: "Spotlight" } } },
     ] } } }) });
     renderButtons();
     expect(await screen.findByText("Single clicks on this button will wait up to 400 ms.")).toBeTruthy();

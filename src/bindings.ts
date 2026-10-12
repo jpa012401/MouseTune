@@ -55,6 +55,10 @@ export type ActionStats = {
 	failed: number,
 };
 
+export type BindingList = "Drags" | "ScrollBindings" | "HoldThrough";
+
+export type BindingProblem = "ButtonNotRemappable" | "ButtonOutOfRange" | "Duplicate" | "HoldThroughConflict" | "EmptyDiscrete" | "InvalidAction";
+
 export type ButtonCaptured = {
 	button: number,
 };
@@ -66,6 +70,9 @@ export type ButtonCaptured = {
  */
 export type Buttons = {
 	remaps: Remap[],
+	drags: DragBinding[],
+	scroll_bindings: ScrollBinding[],
+	hold_through: HoldThrough[],
 };
 
 export type ClickTrigger = {
@@ -88,7 +95,7 @@ export type Config = {
 
 export type ConfigChanged = Config;
 
-export type ConfigError = { kind: "Io"; message: string } | { kind: "UnsupportedVersion"; found: number; expected: number } | { kind: "InvalidRemap"; index: number; reason: RemapProblem } | { kind: "DuplicateScrollModifier"; key: KeyModifier } | { kind: "TimingOutOfRange"; field: TimingField; ms: number };
+export type ConfigError = { kind: "Io"; message: string } | { kind: "UnsupportedVersion"; found: number; expected: number } | { kind: "InvalidRemap"; index: number; reason: RemapProblem } | { kind: "DuplicateScrollModifier"; key: KeyModifier } | { kind: "TimingOutOfRange"; field: TimingField; ms: number } | { kind: "InvalidBinding"; list: BindingList; index: number; reason: BindingProblem };
 
 /**  Settings plus any startup recovery the UI should mention. */
 export type ConfigView = {
@@ -115,6 +122,24 @@ export type Device = {
 	has_wheel: boolean,
 };
 
+/**  A drag of a held button (Phase 6 design §1). */
+export type DragBinding = {
+	/**  1-based, 3 = middle. */
+	button: number,
+	effect: DragEffect,
+};
+
+export type DragEffect = 
+/**
+ *  Interactive dock swipe: left/right switches Space, up Mission
+ *  Control, down App Exposé.
+ */
+{ type: "SpacesAndMissionControl" } | 
+/**  Two-finger-style scroll swipe. */
+{ type: "ScrollSwipe" } | 
+/**  One action per direction once the drag passes 40 px. */
+{ type: "Discrete"; left: Action | null; right: Action | null; up: Action | null; down: Action | null };
+
 export type Effect = {
 	action: Action,
 };
@@ -124,6 +149,14 @@ export type General = {
 	buttons_enabled: boolean,
 	/**  Kill switch for scroll features. */
 	scroll_enabled: boolean,
+	/**  Keep the pointer still during drag gestures. */
+	freeze_pointer_during_drag: boolean,
+};
+
+/**  A button that behaves exactly like another while held. */
+export type HoldThrough = {
+	button: number,
+	acts_as: MouseButton,
 };
 
 export type InputStatus = {
@@ -214,6 +247,14 @@ export type Scroll = {
 	keyboard_modifiers: ScrollModifiers,
 };
 
+/**  Scrolling while a button is held (spec §8.5). */
+export type ScrollBinding = {
+	button: number,
+	effect: ScrollEffect,
+};
+
+export type ScrollEffect = "Zoom" | "Horizontal" | "AppSwitcher";
+
 /**
  *  Which held key applies each scroll effect (Phase 5b design §1): one key
  *  per effect, each key at most once (`validate::duplicate_scroll_modifier`).
@@ -223,6 +264,7 @@ export type ScrollModifiers = {
 	horizontal: KeyModifier | null,
 	precise: KeyModifier | null,
 	swift: KeyModifier | null,
+	zoom: KeyModifier | null,
 };
 
 export type ScrollSpeed = 

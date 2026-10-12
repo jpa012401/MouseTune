@@ -64,7 +64,7 @@ describe("Scroll page", () => {
     fireEvent.change(await screen.findByRole("combobox", { name: "Scroll faster" }), { target: { value: "Control" } });
     await waitFor(() =>
       expect(saved).toEqual([
-        scrollConfig({ keyboard_modifiers: { horizontal: "Shift", precise: "Option", swift: "Control" } }),
+        scrollConfig({ keyboard_modifiers: { horizontal: "Shift", precise: "Option", swift: "Control", zoom: null } }),
       ]),
     );
   });

@@ -56,6 +56,19 @@ describe("setRemaps", () => {
     expect(saved!.general.buttons_enabled).toBe(false);
   });
 
+  it("saving remaps keeps the drag, scroll and hold-through bindings", async () => {
+    let saved: Config | undefined;
+    mockBackend({ set_config: (args) => (saved = (args as { config: Config }).config) });
+    await useConfigStore.getState().load();
+    expect(await useConfigStore.getState().setRemaps([])).toBe(true);
+    expect(saved!.buttons).toEqual({
+      remaps: [],
+      drags: [{ button: 3, effect: { type: "SpacesAndMissionControl" } }],
+      scroll_bindings: [],
+      hold_through: [],
+    });
+  });
+
   it("a rejected remap save keeps the old list and explains why", async () => {
     mockBackend({
       set_config: () => {
@@ -63,7 +76,7 @@ describe("setRemaps", () => {
       },
     });
     await useConfigStore.getState().load();
-    expect(await useConfigStore.getState().setRemaps([defaultRemaps[2]!, defaultRemaps[2]!])).toBe(false);
+    expect(await useConfigStore.getState().setRemaps([defaultRemaps[1]!, defaultRemaps[1]!])).toBe(false);
     expect(useConfigStore.getState().view!.config.buttons.remaps).toEqual(defaultRemaps);
     expect(useConfigStore.getState().error).toBe("Couldn’t save your settings: Button 4 · Click is set twice.");
   });

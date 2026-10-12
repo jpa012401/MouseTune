@@ -322,6 +322,7 @@ mod tests {
             general: General {
                 buttons_enabled: true,
                 scroll_enabled: false,
+                freeze_pointer_during_drag: true,
             },
             ..Config::default()
         };
