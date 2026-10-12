@@ -70,6 +70,32 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn a_phase_5a_file_gets_the_modifier_defaults() {
+        let outcome = parse_config(Some(
+            r#"{ "version": 1, "scroll": { "smooth": true, "smoothness": "high", "speed": "low", "trackpad_simulation": false, "invert_vertical": true, "invert_horizontal": false } }"#,
+        ));
+        assert!(!outcome.recover);
+        let s = outcome.config.scroll;
+        assert!(!s.precise);
+        assert_eq!(
+            s.keyboard_modifiers,
+            crate::config::schema::ScrollModifiers::default()
+        );
+        assert!(s.invert_vertical, "the file's own values stay");
+    }
+
+    #[test]
+    fn a_null_binding_in_the_file_stays_unbound() {
+        let outcome = parse_config(Some(
+            r#"{ "version": 1, "scroll": { "keyboard_modifiers": { "horizontal": null } } }"#,
+        ));
+        assert!(!outcome.recover);
+        let m = outcome.config.scroll.keyboard_modifiers;
+        assert_eq!(m.horizontal, None);
+        assert_eq!(m.precise, Some(crate::config::schema::KeyModifier::Option));
+    }
+
+    #[test]
     fn merge_fills_missing_keys_at_every_depth_and_keeps_file_values() {
         let defaults =
             json!({ "a": 1, "outer": { "x": true, "inner": { "y": 2, "z": 3 } }, "list": [1] });

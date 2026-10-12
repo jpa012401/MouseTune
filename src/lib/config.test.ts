@@ -26,4 +26,9 @@ describe("configErrorMessage", () => {
       "Couldn’t save your settings: that shortcut has no key.",
     );
   });
+  it("names the key bound twice to scroll modifiers", () => {
+    expect(configErrorMessage({ kind: "DuplicateScrollModifier", key: "Option" })).toBe(
+      "Couldn’t save your settings: ⌥ Option is already used for another scroll modifier.",
+    );
+  });
 });

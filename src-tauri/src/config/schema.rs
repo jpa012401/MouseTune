@@ -196,6 +196,30 @@ pub struct Scroll {
     /// includes the Natural Scrolling setting).
     pub invert_vertical: bool,
     pub invert_horizontal: bool,
+    /// A slow wheel scrolls in fine steps (Phase 5b design §3).
+    pub precise: bool,
+    pub keyboard_modifiers: ScrollModifiers,
+}
+
+/// Which held key applies each scroll effect (Phase 5b design §1): one key
+/// per effect, each key at most once (`validate::duplicate_scroll_modifier`).
+/// A key that isn't bound passes the tick through.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct ScrollModifiers {
+    pub horizontal: Option<KeyModifier>,
+    pub precise: Option<KeyModifier>,
+    pub swift: Option<KeyModifier>,
+}
+
+impl Default for ScrollModifiers {
+    /// Ctrl stays free for Accessibility Zoom; Cmd for apps (and Phase 6 zoom).
+    fn default() -> Self {
+        Self {
+            horizontal: Some(KeyModifier::Shift),
+            precise: Some(KeyModifier::Option),
+            swift: None,
+        }
+    }
 }
 
 impl Default for Scroll {
@@ -207,6 +231,8 @@ impl Default for Scroll {
             trackpad_simulation: true,
             invert_vertical: false,
             invert_horizontal: false,
+            precise: false,
+            keyboard_modifiers: ScrollModifiers::default(),
         }
     }
 }
@@ -390,7 +416,9 @@ mod tests {
                 "speed": "medium",
                 "trackpad_simulation": true,
                 "invert_vertical": false,
-                "invert_horizontal": false
+                "invert_horizontal": false,
+                "precise": false,
+                "keyboard_modifiers": { "horizontal": "Shift", "precise": "Option", "swift": null }
             })
         );
     }

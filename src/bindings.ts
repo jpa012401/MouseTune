@@ -24,6 +24,11 @@ export const commands = {
 	/**  Record the next key-down as a `key-captured` event. */
 	startKeyCapture: () => __TAURI_INVOKE<void>("start_key_capture"),
 	stopKeyCapture: () => __TAURI_INVOKE<void>("stop_key_capture"),
+	/**
+	 *  The Scroll screen's curve plot: the engine's own curve for the given
+	 *  settings (spec §10). Pure; no engine state.
+	 */
+	scrollCurvePreview: (scroll: Scroll) => __TAURI_INVOKE<CurvePreview>("scroll_curve_preview", { scroll }),
 };
 
 /** Events */
@@ -78,12 +83,21 @@ export type Config = {
 
 export type ConfigChanged = Config;
 
-export type ConfigError = { kind: "Io"; message: string } | { kind: "UnsupportedVersion"; found: number; expected: number } | { kind: "InvalidRemap"; index: number; reason: RemapProblem };
+export type ConfigError = { kind: "Io"; message: string } | { kind: "UnsupportedVersion"; found: number; expected: number } | { kind: "InvalidRemap"; index: number; reason: RemapProblem } | { kind: "DuplicateScrollModifier"; key: KeyModifier };
 
 /**  Settings plus any startup recovery the UI should mention. */
 export type ConfigView = {
 	config: Config,
 	recovery: RecoveryNotice | null,
+};
+
+/**
+ *  `[milliseconds, pixels]` points for a tick at the slowest and the
+ *  fastest wheel rate.
+ */
+export type CurvePreview = {
+	slow: ([(number | null), (number | null)])[],
+	fast: ([(number | null), (number | null)])[],
 };
 
 /**  A tracked mouse as the UI sees it. */
@@ -173,6 +187,20 @@ export type Scroll = {
 	 */
 	invert_vertical: boolean,
 	invert_horizontal: boolean,
+	/**  A slow wheel scrolls in fine steps (Phase 5b design §3). */
+	precise: boolean,
+	keyboard_modifiers: ScrollModifiers,
+};
+
+/**
+ *  Which held key applies each scroll effect (Phase 5b design §1): one key
+ *  per effect, each key at most once (`validate::duplicate_scroll_modifier`).
+ *  A key that isn't bound passes the tick through.
+ */
+export type ScrollModifiers = {
+	horizontal: KeyModifier | null,
+	precise: KeyModifier | null,
+	swift: KeyModifier | null,
 };
 
 export type ScrollSpeed = 

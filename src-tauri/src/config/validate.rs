@@ -7,9 +7,17 @@ use specta::Type;
 
 use crate::{
     actions::keys::is_modifier_key,
-    config::schema::{Action, Remap, TriggerDuration},
+    config::schema::{Action, KeyModifier, Remap, ScrollModifiers, TriggerDuration},
     input::remaps::{MAX_BUTTONS, MAX_LEVEL},
 };
+
+/// The first key bound to two scroll effects, if any (Phase 5b design §1).
+pub fn duplicate_scroll_modifier(m: &ScrollModifiers) -> Option<KeyModifier> {
+    let keys = [m.horizontal, m.precise, m.swift];
+    keys.iter()
+        .enumerate()
+        .find_map(|(i, key)| key.filter(|k| keys[i + 1..].contains(&Some(*k))))
+}
 
 /// 1-based: left (1) and right (2) stay with macOS.
 pub const FIRST_REMAPPABLE_BUTTON: u8 = 3;
@@ -59,6 +67,33 @@ pub fn validate_remaps(remaps: &[Remap]) -> Result<(), (usize, RemapProblem)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_key_bound_to_two_scroll_effects_is_found() {
+        use crate::config::schema::{KeyModifier::*, ScrollModifiers};
+        let m = |horizontal, precise, swift| ScrollModifiers {
+            horizontal,
+            precise,
+            swift,
+        };
+        assert_eq!(
+            duplicate_scroll_modifier(&m(Some(Shift), Some(Option), None)),
+            None
+        );
+        assert_eq!(duplicate_scroll_modifier(&m(None, None, None)), None);
+        assert_eq!(
+            duplicate_scroll_modifier(&m(Some(Option), Some(Option), None)),
+            Some(Option)
+        );
+        assert_eq!(
+            duplicate_scroll_modifier(&m(Some(Control), None, Some(Control))),
+            Some(Control)
+        );
+        assert_eq!(
+            duplicate_scroll_modifier(&m(None, Some(Command), Some(Command))),
+            Some(Command)
+        );
+    }
     use crate::config::schema::{Buttons, ClickTrigger, Effect, SymbolicHotkeyId};
 
     fn remap(button: u8, level: u8, duration: TriggerDuration) -> Remap {

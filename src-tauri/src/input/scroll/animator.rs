@@ -6,7 +6,7 @@
 use std::time::Instant;
 
 use super::{
-    acceleration::{Axis, PX_PER_LINE, Tick, TickRate, tick_px},
+    acceleration::{Axis, PX_PER_LINE, SwipeTracker, Tick, TickRate, swift_factor, tick_px},
     curves::{Curve, params},
 };
 use crate::config::schema::Scroll;
@@ -99,6 +99,7 @@ struct Gesture {
 pub struct Animator {
     settings: Scroll,
     rate: TickRate,
+    swipes: SwipeTracker,
     gesture: Option<Gesture>,
     /// The replaced or ended gesture's closing event, sent on the next frame.
     closing: Option<ScrollOut>,
@@ -109,6 +110,7 @@ impl Animator {
         Self {
             settings,
             rate: TickRate::default(),
+            swipes: SwipeTracker::default(),
             gesture: None,
             closing: None,
         }
@@ -128,7 +130,16 @@ impl Animator {
     /// it and begins a new one (design §3).
     pub fn tick(&mut self, tick: Tick, now: Instant) {
         let x = self.rate.observe(&tick, now);
-        let px = tick_px(self.settings.speed, x, &tick);
+        // A precise tick ends any streak and starts none, so letting go of
+        // the key after quick precise flicks doesn't jump to a swipe factor.
+        let swipes = if tick.precise {
+            self.swipes.reset();
+            0
+        } else {
+            self.swipes.observe(&tick, now)
+        };
+        let px = tick_px(self.settings.speed, self.settings.precise, x, &tick)
+            * swift_factor(swipes, &tick);
         let params = params(self.settings.smoothness, x);
         if let Some(g) = self.gesture.as_mut()
             && g.axis == tick.axis
@@ -179,6 +190,7 @@ impl Animator {
             out.push(closing);
         }
         self.rate.reset();
+        self.swipes.reset();
         out
     }
 
@@ -337,7 +349,10 @@ mod tests {
 
     use super::*;
     use crate::{
-        config::schema::Smoothness::{self, High, Low, Regular},
+        config::schema::{
+            ScrollSpeed,
+            Smoothness::{self, High, Low, Regular},
+        },
         test_support::describe_scroll,
     };
 
@@ -357,12 +372,87 @@ mod tests {
         Animator::new(settings(Regular, trackpad_simulation))
     }
 
+    fn system_tick() -> Tick {
+        Tick {
+            axis: Axis::Vertical,
+            sign: 1,
+            lines: 1,
+            points: 10,
+            precise: false,
+            swift: false,
+        }
+    }
+
+    fn system_low() -> Animator {
+        Animator::new(Scroll {
+            speed: ScrollSpeed::System,
+            ..settings(Low, true)
+        })
+    }
+
+    #[test]
+    fn a_second_flick_goes_a_third_further() {
+        // speed = system: every tick is its own 10 px point delta, so only the
+        // swipe factor changes the distance. Flick 1 (0, 20, 40 ms) is one
+        // gesture of 3 × 10 = 30 px. Flick 2 starts 300 ms after it: 10 × 1.33 = 13.3 → 13.
+        let at = Clock(Instant::now());
+        let mut a = system_low();
+        for ms in [0, 20, 40] {
+            a.tick(system_tick(), at.ms(ms));
+            if ms == 0 {
+                a.frame(at.ms(0));
+            }
+        }
+        assert_eq!(frame(&mut a, at.ms(130)), ["Changed dy 30", "Ended"]);
+        a.tick(system_tick(), at.ms(340));
+        assert_eq!(frame(&mut a, at.ms(340)), ["Began"]);
+        assert_eq!(frame(&mut a, at.ms(430)), ["Changed dy 13", "Ended"]);
+    }
+
+    #[test]
+    fn cancel_also_ends_the_flick_streak() {
+        let at = Clock(Instant::now());
+        let mut a = system_low();
+        for ms in [0, 20, 40] {
+            a.tick(system_tick(), at.ms(ms));
+        }
+        a.cancel();
+        a.tick(system_tick(), at.ms(340));
+        a.frame(at.ms(340));
+        assert_eq!(frame(&mut a, at.ms(430)), ["Changed dy 10", "Ended"]);
+    }
+
+    #[test]
+    fn precise_ticks_build_no_flick_streak() {
+        // Three quick precise ticks (0, 20, 40 ms) would be a swipe if they
+        // counted. A plain tick 300 ms later must scroll as a first tick:
+        // speed = system → its own 10 px, × 1.0, not × 1.33 = 13.
+        let at = Clock(Instant::now());
+        let mut a = system_low();
+        let precise = Tick {
+            precise: true,
+            ..system_tick()
+        };
+        for ms in [0, 20, 40] {
+            a.tick(precise, at.ms(ms));
+            if ms == 0 {
+                a.frame(at.ms(0));
+            }
+        }
+        a.frame(at.ms(130));
+        a.tick(system_tick(), at.ms(340));
+        assert_eq!(frame(&mut a, at.ms(340)), ["Began"]);
+        assert_eq!(frame(&mut a, at.ms(430)), ["Changed dy 10", "Ended"]);
+    }
+
     fn down() -> Tick {
         Tick {
             axis: Axis::Vertical,
             sign: 1,
             lines: 1,
             points: 0,
+            precise: false,
+            swift: false,
         }
     }
 

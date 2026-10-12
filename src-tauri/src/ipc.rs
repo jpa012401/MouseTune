@@ -13,11 +13,12 @@ use crate::{
     accessibility::{self, Accessibility},
     actions::ActionStats,
     config::{
-        schema::Config,
+        schema::{Config, Scroll},
         store::{ConfigError, ConfigStore, Recovery},
     },
     input::{
         engine::{EngineSnapshot, ScrollStats},
+        scroll::preview::{CurvePreview, curve_preview},
         taps::TapSet,
         thread::{Control, InputHandle},
     },
@@ -312,4 +313,12 @@ pub fn start_key_capture(input: State<'_, Arc<InputHandle>>) {
 #[specta::specta]
 pub fn stop_key_capture(input: State<'_, Arc<InputHandle>>) {
     input.send(Control::StopKeyCapture);
+}
+
+/// The Scroll screen's curve plot: the engine's own curve for the given
+/// settings (spec §10). Pure; no engine state.
+#[tauri::command]
+#[specta::specta]
+pub fn scroll_curve_preview(scroll: Scroll) -> CurvePreview {
+    curve_preview(&scroll)
 }

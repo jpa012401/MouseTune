@@ -1,9 +1,15 @@
 import type { ConfigError, Remap, RemapProblem } from "../bindings";
 import { remapLabel } from "./remaps";
+import { modifierKeyLabel } from "./scroll";
 
 function isConfigError(error: unknown): error is ConfigError {
   if (typeof error !== "object" || error === null || !("kind" in error)) return false;
-  return error.kind === "Io" || error.kind === "UnsupportedVersion" || error.kind === "InvalidRemap";
+  return (
+    error.kind === "Io" ||
+    error.kind === "UnsupportedVersion" ||
+    error.kind === "InvalidRemap" ||
+    error.kind === "DuplicateScrollModifier"
+  );
 }
 
 function remapProblemMessage(reason: RemapProblem, row: Remap | undefined): string {
@@ -29,6 +35,8 @@ export function configErrorMessage(error: unknown, remaps: Remap[] = []): string
       ? error.message
       : error.kind === "UnsupportedVersion"
         ? `settings version ${error.found} isn’t supported (expected ${error.expected})`
-        : remapProblemMessage(error.reason, remaps[error.index]);
+        : error.kind === "DuplicateScrollModifier"
+          ? `${modifierKeyLabel(error.key)} is already used for another scroll modifier.`
+          : remapProblemMessage(error.reason, remaps[error.index]);
   return `Couldn’t save your settings: ${reason}`;
 }

@@ -6,8 +6,8 @@ use specta::Type;
 use crate::config::{
     file::ConfigFile,
     load::parse_config,
-    schema::{CURRENT_VERSION, Config},
-    validate::{RemapProblem, validate_remaps},
+    schema::{CURRENT_VERSION, Config, KeyModifier},
+    validate::{RemapProblem, duplicate_scroll_modifier, validate_remaps},
 };
 
 /// Called after a change has been saved. Runs while the store is locked:
@@ -25,6 +25,8 @@ pub enum ConfigError {
     UnsupportedVersion { found: u32, expected: u32 },
     #[error("remap {index} is invalid: {reason:?}")]
     InvalidRemap { index: u32, reason: RemapProblem },
+    #[error("{key:?} is bound to two scroll effects")]
+    DuplicateScrollModifier { key: KeyModifier },
 }
 
 /// The settings file couldn't be used at startup.
@@ -87,6 +89,13 @@ impl ConfigStore {
                     reason,
                 }
             })?;
+        }
+        // Only a changed binding is checked, like remaps: a bad hand-edited
+        // file still loads, and its other settings must still save.
+        if new.scroll.keyboard_modifiers != self.current.scroll.keyboard_modifiers
+            && let Some(key) = duplicate_scroll_modifier(&new.scroll.keyboard_modifiers)
+        {
+            return Err(ConfigError::DuplicateScrollModifier { key });
         }
         if new == self.current {
             return Ok(new);
@@ -293,6 +302,40 @@ mod tests {
         assert!(file.writes().is_empty());
         assert!(seen.log().is_empty());
         assert_eq!(store.current(), &Config::default());
+    }
+
+    #[test]
+    fn a_key_bound_twice_is_rejected_without_writing() {
+        let file = FakeConfigFile::missing();
+        let mut store = ConfigStore::load(Box::new(file.clone()));
+        let mut next = store.current().clone();
+        next.scroll.keyboard_modifiers.swift = Some(KeyModifier::Shift);
+        assert_eq!(
+            store.update(next),
+            Err(ConfigError::DuplicateScrollModifier {
+                key: KeyModifier::Shift
+            })
+        );
+        assert!(file.writes().is_empty());
+    }
+
+    #[test]
+    fn a_bad_hand_edited_scroll_binding_still_loads_and_other_settings_save() {
+        let file = FakeConfigFile::with(
+            r#"{ "version": 1, "scroll": { "keyboard_modifiers": { "horizontal": "Option", "precise": "Option", "swift": null } } }"#,
+        );
+        let mut store = ConfigStore::load(Box::new(file.clone()));
+        assert_eq!(
+            store.current().scroll.keyboard_modifiers.precise,
+            Some(KeyModifier::Option)
+        );
+        let mut next = store.current().clone();
+        next.general.buttons_enabled = false;
+        assert!(
+            store.update(next).is_ok(),
+            "an unchanged binding isn't re-checked"
+        );
+        assert_eq!(file.writes().len(), 1);
     }
 
     #[test]
