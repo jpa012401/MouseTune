@@ -1,7 +1,10 @@
 //! Which scroll events MouseTune may take over (spec §4.2). Only discrete
 //! wheel ticks from real mice; everything else passes through untouched.
 
-use crate::input::devices::DeviceRegistry;
+use crate::input::{
+    devices::DeviceRegistry,
+    router::{ButtonEvent, ButtonKind},
+};
 
 /// Stamped into `kCGEventSourceUserData` on every event MouseTune posts.
 pub const MOUSETUNE_EVENT_TAG: i64 = 0x004D_5455_4E45; // "MTUNE"
@@ -55,6 +58,25 @@ pub fn classify_scroll(fields: &ScrollFields, devices: &DeviceRegistry) -> Scrol
         None
     };
     reason.map_or(ScrollClass::MouseWheel, ScrollClass::PassThrough)
+}
+
+/// `kCGEventMouseSubtypeTabletPoint`.
+pub const MOUSE_SUBTYPE_TABLET_POINT: i64 = 1;
+/// `kCGEventMouseSubtypeTabletProximity`.
+pub const MOUSE_SUBTYPE_TABLET_PROXIMITY: i64 = 2;
+
+/// A button down from a device MouseTune leaves alone: an excluded device
+/// (Apple, trackpads) or a tablet (AGENTS.md invariant 2). Unknown senders
+/// are not foreign; they are processed (spec §4.2). Ups are never foreign:
+/// they follow their down's verdict. Called from the button tap; must not
+/// allocate.
+pub fn is_foreign_button_down(event: &ButtonEvent, devices: &DeviceRegistry) -> bool {
+    event.kind == ButtonKind::Down
+        && (event.mouse_subtype == MOUSE_SUBTYPE_TABLET_POINT
+            || event.mouse_subtype == MOUSE_SUBTYPE_TABLET_PROXIMITY
+            || devices
+                .by_sender(event.sender_id)
+                .is_some_and(|d| d.is_excluded()))
 }
 
 #[cfg(test)]
@@ -193,5 +215,65 @@ mod tests {
             ..wheel_tick()
         };
         assert_eq!(classify(f), ScrollClass::MouseWheel);
+    }
+}
+
+#[cfg(test)]
+mod button_tests {
+    use super::*;
+    use crate::test_support::{apple_trackpad, mouse};
+
+    fn registry() -> DeviceRegistry {
+        let mut r = DeviceRegistry::default();
+        r.insert(mouse(1)); // senders 10, 11
+        r.insert(apple_trackpad(2)); // sender 20
+        r
+    }
+
+    fn middle_down(sender_id: u64) -> ButtonEvent {
+        ButtonEvent {
+            kind: ButtonKind::Down,
+            button: 2,
+            sender_id,
+            user_data: 0,
+            mouse_subtype: 0,
+        }
+    }
+
+    #[test]
+    fn a_down_from_a_tracked_mouse_is_not_foreign() {
+        assert!(!is_foreign_button_down(&middle_down(10), &registry()));
+    }
+
+    #[test]
+    fn a_down_from_an_unknown_sender_is_not_foreign() {
+        assert!(!is_foreign_button_down(&middle_down(999), &registry()));
+        assert!(!is_foreign_button_down(&middle_down(0), &registry()));
+    }
+
+    #[test]
+    fn a_down_from_an_excluded_device_is_foreign() {
+        assert!(is_foreign_button_down(&middle_down(20), &registry()));
+    }
+
+    #[test]
+    fn tablet_downs_are_foreign() {
+        for subtype in [1, 2] {
+            let tablet = ButtonEvent {
+                mouse_subtype: subtype,
+                ..middle_down(10)
+            };
+            assert!(is_foreign_button_down(&tablet, &registry()), "{subtype}");
+        }
+    }
+
+    #[test]
+    fn ups_are_never_foreign() {
+        let up = ButtonEvent {
+            kind: ButtonKind::Up,
+            mouse_subtype: 1,
+            ..middle_down(20)
+        };
+        assert!(!is_foreign_button_down(&up, &registry()));
     }
 }

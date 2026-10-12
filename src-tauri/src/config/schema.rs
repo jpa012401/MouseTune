@@ -15,6 +15,7 @@ pub const CURRENT_VERSION: u32 = 1;
 pub struct Config {
     pub version: u32,
     pub general: General,
+    pub buttons: Buttons,
 }
 
 impl Default for Config {
@@ -22,6 +23,7 @@ impl Default for Config {
         Self {
             version: CURRENT_VERSION,
             general: General::default(),
+            buttons: Buttons::default(),
         }
     }
 }
@@ -41,6 +43,100 @@ impl Default for General {
             scroll_enabled: true,
         }
     }
+}
+
+/// Button remaps (design §1). Button numbers are 1-based as users count
+/// them: 3 is the middle button. `input::remaps::compile` turns this into
+/// the engine's lookup tables.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct Buttons {
+    pub remaps: Vec<Remap>,
+}
+
+impl Default for Buttons {
+    fn default() -> Self {
+        use NavDirection::{Back, Forward};
+        use SymbolicHotkeyId::{MissionControl, ShowDesktop};
+        let remap = |button, duration, action| Remap {
+            trigger: ClickTrigger {
+                button,
+                level: 1,
+                duration,
+            },
+            effect: Effect { action },
+        };
+        Self {
+            remaps: vec![
+                remap(
+                    3,
+                    TriggerDuration::Click,
+                    Action::SymbolicHotkey { id: MissionControl },
+                ),
+                remap(
+                    3,
+                    TriggerDuration::Hold,
+                    Action::SymbolicHotkey { id: ShowDesktop },
+                ),
+                remap(
+                    4,
+                    TriggerDuration::Click,
+                    Action::Navigate { direction: Back },
+                ),
+                remap(
+                    5,
+                    TriggerDuration::Click,
+                    Action::Navigate { direction: Forward },
+                ),
+            ],
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct Remap {
+    pub trigger: ClickTrigger,
+    pub effect: Effect,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct ClickTrigger {
+    /// 1-based: 3 = middle button.
+    pub button: u8,
+    /// 1 = single click, 2 = double, 3 = triple.
+    pub level: u8,
+    pub duration: TriggerDuration,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
+#[serde(rename_all = "lowercase")]
+pub enum TriggerDuration {
+    Click,
+    Hold,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct Effect {
+    pub action: Action,
+}
+
+/// What a remap does. Phase 4b adds the rest of spec §7.1.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(tag = "type")]
+pub enum Action {
+    SymbolicHotkey { id: SymbolicHotkeyId },
+    Navigate { direction: NavDirection },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub enum SymbolicHotkeyId {
+    MissionControl,
+    ShowDesktop,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub enum NavDirection {
+    Back,
+    Forward,
 }
 
 /// Which event taps the settings ask for.
@@ -75,6 +171,7 @@ mod tests {
                 buttons_enabled: buttons,
                 scroll_enabled: scroll,
             },
+            buttons: Buttons::default(),
         }
     }
 
@@ -136,7 +233,38 @@ mod tests {
         let json = serde_json::to_value(config(true, false)).unwrap();
         assert_eq!(
             json,
-            serde_json::json!({ "version": 1, "general": { "buttons_enabled": true, "scroll_enabled": false } })
+            serde_json::json!({
+                "version": 1,
+                "general": { "buttons_enabled": true, "scroll_enabled": false },
+                "buttons": serde_json::to_value(Buttons::default()).unwrap()
+            })
         );
+    }
+
+    #[test]
+    fn default_buttons_are_the_four_documented_remaps() {
+        assert_eq!(
+            serde_json::to_value(Buttons::default()).unwrap(),
+            serde_json::json!({ "remaps": [
+                { "trigger": { "button": 3, "level": 1, "duration": "click" },
+                  "effect": { "action": { "type": "SymbolicHotkey", "id": "MissionControl" } } },
+                { "trigger": { "button": 3, "level": 1, "duration": "hold" },
+                  "effect": { "action": { "type": "SymbolicHotkey", "id": "ShowDesktop" } } },
+                { "trigger": { "button": 4, "level": 1, "duration": "click" },
+                  "effect": { "action": { "type": "Navigate", "direction": "Back" } } },
+                { "trigger": { "button": 5, "level": 1, "duration": "click" },
+                  "effect": { "action": { "type": "Navigate", "direction": "Forward" } } }
+            ] })
+        );
+    }
+
+    #[test]
+    fn a_remap_from_the_ui_must_be_complete() {
+        let missing_effect = serde_json::json!({
+            "version": 1,
+            "general": { "buttons_enabled": true, "scroll_enabled": true },
+            "buttons": { "remaps": [ { "trigger": { "button": 3, "level": 1, "duration": "click" } } ] }
+        });
+        assert!(serde_json::from_value::<Config>(missing_effect).is_err());
     }
 }

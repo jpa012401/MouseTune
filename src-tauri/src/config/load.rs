@@ -121,6 +121,7 @@ mod tests {
                 buttons_enabled: false,
                 scroll_enabled: true,
             },
+            ..Config::default()
         };
         assert_eq!(parse_config(Some(text)), ok(want));
     }
@@ -134,6 +135,7 @@ mod tests {
                 buttons_enabled: true,
                 scroll_enabled: false,
             },
+            ..Config::default()
         };
         assert_eq!(parse_config(Some(text)), ok(want));
     }
@@ -155,6 +157,7 @@ mod tests {
                 buttons_enabled: true,
                 scroll_enabled: false,
             },
+            ..Config::default()
         };
         assert_eq!(parse_config(Some(text)), ok(want));
     }
@@ -196,5 +199,37 @@ mod tests {
             parse_config(Some(r#"{ "version": 2, "general": {} }"#)),
             recovered()
         );
+    }
+
+    #[test]
+    fn a_phase_3_file_without_buttons_gets_the_default_remaps() {
+        let outcome = parse_config(Some(
+            r#"{ "version": 1, "general": { "buttons_enabled": false, "scroll_enabled": true } }"#,
+        ));
+        assert!(!outcome.recover);
+        assert!(!outcome.config.general.buttons_enabled);
+        assert_eq!(
+            outcome.config.buttons,
+            crate::config::schema::Buttons::default()
+        );
+    }
+
+    #[test]
+    fn an_empty_remap_list_stays_empty() {
+        let outcome = parse_config(Some(
+            r#"{ "version": 1, "general": { "buttons_enabled": true, "scroll_enabled": true }, "buttons": { "remaps": [] } }"#,
+        ));
+        assert!(!outcome.recover);
+        assert!(outcome.config.buttons.remaps.is_empty());
+    }
+
+    #[test]
+    fn an_unknown_action_type_recovers_to_defaults() {
+        let outcome = parse_config(Some(
+            r#"{ "version": 1, "general": { "buttons_enabled": true, "scroll_enabled": true },
+                 "buttons": { "remaps": [ { "trigger": { "button": 3, "level": 1, "duration": "click" },
+                                            "effect": { "action": { "type": "Teleport" } } } ] } }"#,
+        ));
+        assert!(outcome.recover);
     }
 }

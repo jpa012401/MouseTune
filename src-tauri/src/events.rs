@@ -6,6 +6,7 @@ use tauri::AppHandle;
 use tauri_specta::Event;
 
 use crate::{
+    actions::ActionStats,
     config::{schema::Config, store::ConfigObserver},
     input::{
         engine::{EngineObserver, EngineSnapshot, ScrollStats},
@@ -45,7 +46,12 @@ pub struct EmitInputStatus(pub AppHandle);
 
 impl EngineObserver for EmitInputStatus {
     fn snapshot_changed(&self, snapshot: &EngineSnapshot) {
-        let status = input_status(snapshot, ScrollStats::default(), false);
+        let status = input_status(
+            snapshot,
+            ScrollStats::default(),
+            ActionStats::default(),
+            false,
+        );
         let event = InputStatusChanged {
             taps: status.taps,
             devices: status.devices,

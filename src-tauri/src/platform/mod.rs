@@ -2,4 +2,7 @@
 
 mod macos;
 
-pub use macos::{event_tap, hid, input_loop, os_version, permissions};
+pub use macos::{
+    click_timers, event_poster, event_tap, frontmost_app, hid, input_loop, os_version, permissions,
+    symbolic_hotkeys,
+};

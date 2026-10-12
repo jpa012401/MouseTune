@@ -154,6 +154,17 @@ export function General() {
         Mouse wheel ticks are what MouseTune will smooth. Trackpad and Magic Mouse scrolling should
         only ever count as passed through.
       </p>
+
+      <h2 className="mb-2 mt-6 text-sm font-semibold">Button actions</h2>
+      <ul aria-label="Button actions" className="divide-y divide-black/10 text-sm dark:divide-white/10">
+        <StatRow label="Performed" value={input?.actions.performed ?? 0} />
+        <StatRow label="Dropped" value={input?.actions.dropped ?? 0} />
+        <StatRow label="Failed" value={input?.actions.failed ?? 0} />
+      </ul>
+      <p className={`mt-2 max-w-prose text-xs ${muted}`}>
+        Dropped means MouseTune was too busy and skipped an action. Failed means macOS refused it;
+        check the logs.
+      </p>
     </>
   );
 }

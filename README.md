@@ -43,7 +43,7 @@ MouseTune needs Accessibility access to intercept mouse input.
 
 ### Verifying the input engine (Phase 2)
 
-Taps pass every event through unchanged in this phase. To check the scroll filter:
+Taps pass every event through unchanged in this phase (since Phase 4a the button tap swallows events for bound buttons; see the Phase 4a section below). To check the scroll filter:
 
 1. Grant Accessibility (see above) and connect a mouse.
 2. Open Settings → General. "Connected mice" lists the mouse; Input engine shows Buttons, Scroll and Modifier keys as **On**.
@@ -51,6 +51,17 @@ Taps pass every event through unchanged in this phase. To check the scroll filte
 4. Scroll with the trackpad or a Magic Mouse: only **Passed through** rises, and scrolling feels exactly as before.
 5. Unplug the mouse: the list empties and the taps switch **Off**.
 6. Turn off Settings → General → Scrolling (or the tray's Enable scrolling): Input engine → Scroll shows **Off**. Turn it back on.
+
+### Verifying the button engine (Phase 4a acceptance, 5-button mouse)
+
+1. Click the middle button (B3): Mission Control opens.
+2. Hold B3 for 250 ms or more: the desktop is shown.
+3. B4 and B5 go Back and Forward in Safari (`Cmd+[`) and in Chrome.
+4. B4 in Xcode and Notes does not change the text.
+5. Left and right clicks are unaffected.
+6. Trackpad clicks and scrolling are unaffected.
+7. Turn off Settings → General → Mouse buttons (or the tray's Enable buttons): B3 does a plain middle click again.
+8. Disable Mission Control's keyboard shortcut in System Settings, then click B3: Mission Control still opens (unreachable binding). This changes WindowServer hotkey state; restore your shortcut in System Settings afterwards if you changed it. Afterwards System Settings shows that shortcut as enabled with an unusual key: that is the unreachable binding MouseTune installed. Run it only with the maintainer's go-ahead.
 
 ## Building
 

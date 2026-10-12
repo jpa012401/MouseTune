@@ -12,12 +12,14 @@ use arc_swap::ArcSwap;
 use crossbeam_channel::Sender;
 
 use crate::{
+    actions::{ActionCounters, ActionSink},
     config::{
         schema::{Config, tap_demand},
         store::ConfigObserver,
     },
     input::{
         engine::{EngineObserver, EngineSnapshot, InputEngine, ScrollCounters},
+        remaps::{CompiledRemaps, compile},
         taps::{TapController, TapDemand},
     },
     permission_monitor::PermissionObserver,
@@ -29,6 +31,9 @@ use crate::{
 pub enum Control {
     SetTrusted(bool),
     SetDemand(TapDemand),
+    /// Boxed: the compiled tables are large, and every message pays for the
+    /// biggest variant.
+    SetRemaps(Box<CompiledRemaps>),
     Shutdown,
 }
 
@@ -50,6 +55,8 @@ pub struct InputShared {
     pub snapshot: ArcSwap<EngineSnapshot>,
     pub counters: Arc<ScrollCounters>,
     pub degraded: Arc<AtomicBool>,
+    /// Bumped by the engine (dropped jobs) and by `mt-exec` (performed, failed).
+    pub actions: Arc<ActionCounters>,
 }
 
 pub struct InputHandle {
@@ -115,6 +122,7 @@ pub struct InputConfigBridge(pub Arc<InputHandle>);
 impl ConfigObserver for InputConfigBridge {
     fn config_changed(&self, config: &Config) {
         self.0.send(Control::SetDemand(tap_demand(config)));
+        self.0.send(Control::SetRemaps(Box::new(compile(config))));
     }
 }
 
@@ -126,6 +134,10 @@ pub fn handle_control<C: TapController>(engine: &mut InputEngine<C>, msg: Contro
         }
         Control::SetDemand(demand) => {
             engine.set_demand(demand);
+            Flow::Continue
+        }
+        Control::SetRemaps(remaps) => {
+            engine.set_remaps(*remaps);
             Flow::Continue
         }
         Control::Shutdown => Flow::Stop,
@@ -147,9 +159,13 @@ impl EngineObserver for StoreSnapshot {
 }
 
 /// Starts `mt-input` and returns once its run loop is ready for messages.
+/// `remaps` are the saved bindings at startup; `sink` is where fired
+/// actions go (the only sender of `mt-exec`'s queue).
 pub fn spawn(
     trusted: bool,
     demand: TapDemand,
+    remaps: CompiledRemaps,
+    sink: Box<dyn ActionSink + Send>,
     ui: Box<dyn EngineObserver + Send>,
 ) -> Arc<InputHandle> {
     let (tx, rx) = crossbeam_channel::unbounded();
@@ -158,7 +174,15 @@ pub fn spawn(
         shared: Arc::clone(&shared),
         ui,
     });
-    let (join, waker) = input_loop::start(trusted, demand, observer, rx, Arc::clone(&shared));
+    let (join, waker) = input_loop::start(
+        trusted,
+        demand,
+        remaps,
+        sink,
+        observer,
+        rx,
+        Arc::clone(&shared),
+    );
     Arc::new(InputHandle::new(tx, waker, shared, Some(join)))
 }
 
@@ -174,10 +198,11 @@ mod tests {
         config::schema::General,
         input::{
             devices::DeviceEvent,
-            engine::{EngineObserver, InputEngine},
+            engine::{ButtonSetup, EngineObserver, InputEngine, TapHandler},
+            router::{ButtonEvent, ButtonKind, Verdict},
             taps::{TapDemand, TapSet},
         },
-        test_support::{FakeTapController, mouse},
+        test_support::{FakeSink, FakeTapController, FakeTimers, mouse},
     };
 
     #[derive(Default)]
@@ -200,6 +225,12 @@ mod tests {
             trusted,
             TapDemand::ALL,
             Arc::default(),
+            ButtonSetup {
+                remaps: compile(&Config::default()),
+                timers: Box::new(FakeTimers::default()),
+                sink: Box::new(FakeSink::default()),
+                counters: Arc::default(),
+            },
             Box::new(Ignore),
         );
         engine.start();
@@ -243,6 +274,7 @@ mod tests {
                 buttons_enabled: true,
                 scroll_enabled: false,
             },
+            ..Config::default()
         };
 
         InputConfigBridge(handle).config_changed(&config);
@@ -255,7 +287,31 @@ mod tests {
                 flags: true
             }))
         );
-        assert_eq!(waker.0.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            rx.try_recv(),
+            Ok(Control::SetRemaps(Box::new(compile(&config))))
+        );
+        assert_eq!(waker.0.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn set_remaps_reaches_the_engine_and_continues() {
+        let (mut engine, _) = engine(true);
+        assert_eq!(
+            handle_control(
+                &mut engine,
+                Control::SetRemaps(Box::new(CompiledRemaps::empty()))
+            ),
+            Flow::Continue
+        );
+        let middle_down = ButtonEvent {
+            kind: ButtonKind::Down,
+            button: 2,
+            sender_id: 10,
+            user_data: 0,
+            mouse_subtype: 0,
+        };
+        assert_eq!(engine.on_button(&middle_down), Verdict::Pass);
     }
 
     #[test]
@@ -311,7 +367,13 @@ mod tests {
         impl EngineObserver for Ignore2 {
             fn snapshot_changed(&self, _: &EngineSnapshot) {}
         }
-        let handle = spawn(false, TapDemand::ALL, Box::new(Ignore2));
+        let handle = spawn(
+            false,
+            TapDemand::ALL,
+            CompiledRemaps::empty(),
+            Box::new(crate::actions::queue::queue().0),
+            Box::new(Ignore2),
+        );
         assert!(!handle.shared().snapshot.load().trusted);
         let started = std::time::Instant::now();
         handle.shutdown();

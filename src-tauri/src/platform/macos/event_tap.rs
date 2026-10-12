@@ -1,5 +1,7 @@
 //! CGEventTap adapter (spec §4.1, §4.5). Humble object: creates taps,
 //! copies fields out of events, forwards to a `TapHandler`. No decisions.
+//! Phase 4a: the button tap may swallow; only after the router says the
+//! event is ours (AGENTS.md footgun 2).
 
 use std::{
     cell::{OnceCell, RefCell},
@@ -19,6 +21,7 @@ use crate::input::{
     engine::TapHandler,
     filter::ScrollFields,
     guard::{DisabledReason, guarded},
+    router::{ButtonEvent, ButtonKind, Verdict},
     taps::{TapController, TapKind},
 };
 
@@ -52,6 +55,23 @@ pub fn scroll_fields(event: &CGEvent) -> ScrollFields {
         delta_axis2: get(CGEventField::ScrollWheelEventDeltaAxis2),
         sender_id: get(SENDER_ID_FIELD) as u64,
         user_data: get(CGEventField::EventSourceUserData),
+    }
+}
+
+/// Copies a button tap event's fields. A button number that doesn't fit a
+/// `u8` saturates to 255, which the router passes as out of range.
+pub fn button_event(event_type: CGEventType, event: &CGEvent) -> ButtonEvent {
+    let get = |field| CGEvent::integer_value_field(Some(event), field);
+    ButtonEvent {
+        kind: if event_type == CGEventType::OtherMouseDown {
+            ButtonKind::Down
+        } else {
+            ButtonKind::Up
+        },
+        button: u8::try_from(get(CGEventField::MouseEventButtonNumber)).unwrap_or(u8::MAX),
+        sender_id: get(SENDER_ID_FIELD) as u64,
+        user_data: get(CGEventField::EventSourceUserData),
+        mouse_subtype: get(CGEventField::MouseEventSubtype),
     }
 }
 
@@ -208,35 +228,41 @@ impl TapController for MacTapController {
     }
 }
 
-/// Common callback body: always returns the original event (Phase 2 passes
-/// everything through). Panics and re-entrant calls degrade to pass-through.
+/// Common callback body: returns NULL (swallow) only when `on_event` says
+/// `Swallow`; otherwise the original event. Panics, re-entrant calls, a
+/// missing handler and tap-disabled notices all pass through.
 fn dispatch(
     kind: TapKind,
     event_type: CGEventType,
     event: NonNull<CGEvent>,
     user_info: *mut c_void,
-    on_event: impl FnOnce(&mut dyn TapHandler, &CGEvent),
+    on_event: impl FnOnce(&mut dyn TapHandler, &CGEvent) -> Verdict,
 ) -> *mut CGEvent {
     // SAFETY: `user_info` is the `TapContext` pointer given to
     // `CGEventTapCreate`, valid for the input thread's lifetime.
     let context = unsafe { &*(user_info as *const TapContext) };
-    guarded(&context.degraded, (), || {
+    let verdict = guarded(&context.degraded, Verdict::Pass, || {
         let Some(handler) = context.handler.get() else {
-            return;
+            return Verdict::Pass;
         };
         let Ok(mut handler) = handler.try_borrow_mut() else {
-            return;
+            return Verdict::Pass;
         };
         if event_type == CGEventType::TapDisabledByTimeout {
             handler.on_tap_disabled(kind, DisabledReason::Timeout);
+            Verdict::Pass
         } else if event_type == CGEventType::TapDisabledByUserInput {
             handler.on_tap_disabled(kind, DisabledReason::UserInput);
+            Verdict::Pass
         } else {
             // SAFETY: CoreGraphics passes a valid event for the call's duration.
-            on_event(&mut *handler, unsafe { event.as_ref() });
+            on_event(&mut *handler, unsafe { event.as_ref() })
         }
     });
-    event.as_ptr()
+    match verdict {
+        Verdict::Swallow => std::ptr::null_mut(),
+        Verdict::Pass => event.as_ptr(),
+    }
 }
 
 unsafe extern "C-unwind" fn scroll_callback(
@@ -245,8 +271,10 @@ unsafe extern "C-unwind" fn scroll_callback(
     event: NonNull<CGEvent>,
     user_info: *mut c_void,
 ) -> *mut CGEvent {
+    // Scroll events are only observed until Phase 5; they always pass.
     dispatch(TapKind::Scroll, event_type, event, user_info, |h, e| {
-        h.on_scroll(&scroll_fields(e))
+        h.on_scroll(&scroll_fields(e));
+        Verdict::Pass
     })
 }
 
@@ -257,7 +285,7 @@ unsafe extern "C-unwind" fn button_callback(
     user_info: *mut c_void,
 ) -> *mut CGEvent {
     dispatch(TapKind::Buttons, event_type, event, user_info, |h, e| {
-        h.on_button(CGEvent::integer_value_field(Some(e), SENDER_ID_FIELD) as u64)
+        h.on_button(&button_event(event_type, e))
     })
 }
 
@@ -268,21 +296,28 @@ unsafe extern "C-unwind" fn flags_callback(
     user_info: *mut c_void,
 ) -> *mut CGEvent {
     // Modifier state is consumed in Phase 5; Phase 2 only keeps the tap healthy.
-    dispatch(TapKind::Flags, event_type, event, user_info, |_, _| {})
+    dispatch(TapKind::Flags, event_type, event, user_info, |_, _| {
+        Verdict::Pass
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use std::{cell::Cell, sync::atomic::Ordering};
 
-    use objc2_core_graphics::CGScrollEventUnit;
+    use objc2_core_foundation::CGPoint;
+    use objc2_core_graphics::{CGEventMouseSubtype, CGMouseButton, CGScrollEventUnit};
+
+    use crate::input::router::TimerKind;
 
     use super::*;
 
-    /// Counts scrolls and can panic on them.
+    /// Counts scrolls and can panic on them; answers buttons with `verdict`.
     struct Handler {
         scrolls: Rc<Cell<u32>>,
         panics: bool,
+        verdict: Verdict,
+        button_panics: bool,
     }
 
     impl TapHandler for Handler {
@@ -292,7 +327,13 @@ mod tests {
                 panic!("handler bug");
             }
         }
-        fn on_button(&mut self, _: u64) {}
+        fn on_button(&mut self, _: &ButtonEvent) -> Verdict {
+            if self.button_panics {
+                panic!("handler bug");
+            }
+            self.verdict
+        }
+        fn on_click_timer(&mut self, _: TimerKind) {}
         fn on_tap_disabled(&mut self, _: TapKind, _: DisabledReason) {}
     }
 
@@ -313,8 +354,40 @@ mod tests {
         let handler = Rc::new(RefCell::new(Handler {
             scrolls: Rc::clone(&scrolls),
             panics,
+            verdict: Verdict::Pass,
+            button_panics: false,
         }));
         (handler, scrolls)
+    }
+
+    fn button_handler(verdict: Verdict, button_panics: bool) -> Rc<RefCell<Handler>> {
+        Rc::new(RefCell::new(Handler {
+            scrolls: Rc::new(Cell::new(0)),
+            panics: false,
+            verdict,
+            button_panics,
+        }))
+    }
+
+    /// Feeds a real middle-button event to the button tap callback.
+    fn button_through(
+        context: &TapContext,
+        event_type: CGEventType,
+    ) -> (*mut CGEvent, *mut CGEvent) {
+        let event =
+            CGEvent::new_mouse_event(None, event_type, CGPoint::ZERO, CGMouseButton(2)).unwrap();
+        let sent = NonNull::from(&*event);
+        // SAFETY: a real event (kept alive by `event` until we return) and a
+        // live `TapContext`, as CoreGraphics would pass them; the proxy is unused.
+        let returned = unsafe {
+            button_callback(
+                std::ptr::null_mut(),
+                event_type,
+                sent,
+                (context as *const TapContext).cast_mut().cast(),
+            )
+        };
+        (sent.as_ptr(), returned)
     }
 
     /// Feeds a real scroll event to the scroll tap callback.
@@ -382,6 +455,28 @@ mod tests {
     }
 
     #[test]
+    fn a_swallowing_handler_makes_the_button_callback_return_null() {
+        let context = context(Some(button_handler(Verdict::Swallow, false)));
+        let (_, returned) = button_through(&context, CGEventType::OtherMouseDown);
+        assert!(returned.is_null());
+    }
+
+    #[test]
+    fn a_passing_handler_returns_the_button_event() {
+        let context = context(Some(button_handler(Verdict::Pass, false)));
+        let (sent, returned) = button_through(&context, CGEventType::OtherMouseDown);
+        assert_eq!(returned, sent);
+    }
+
+    #[test]
+    fn a_panicking_button_handler_passes_the_event_through() {
+        let context = context(Some(button_handler(Verdict::Swallow, true)));
+        let (sent, returned) = button_through(&context, CGEventType::OtherMouseDown);
+        assert_eq!(returned, sent);
+        assert!(context.degraded.load(Ordering::SeqCst));
+    }
+
+    #[test]
     fn button_tap_listens_to_other_mouse_down_and_up_only() {
         assert_eq!(event_mask(TapKind::Buttons), (1 << 25) | (1 << 26));
     }
@@ -417,6 +512,68 @@ mod tests {
         assert_eq!(fields.user_data, 42);
         assert_eq!(fields.sender_id, 12345);
         assert_eq!(fields.is_continuous, 0, "line events are discrete");
+    }
+
+    #[test]
+    fn button_event_fields_are_copied_from_a_real_event() {
+        let e = CGEvent::new_mouse_event(
+            None,
+            CGEventType::OtherMouseUp,
+            CGPoint::ZERO,
+            CGMouseButton(3),
+        )
+        .unwrap();
+        CGEvent::set_integer_value_field(Some(&e), SENDER_ID_FIELD, 777);
+        CGEvent::set_integer_value_field(
+            Some(&e),
+            CGEventField::MouseEventSubtype,
+            CGEventMouseSubtype::TabletPoint.0.into(),
+        );
+        assert_eq!(
+            button_event(CGEventType::OtherMouseUp, &e),
+            ButtonEvent {
+                kind: ButtonKind::Up,
+                button: 3,
+                sender_id: 777,
+                user_data: 0,
+                mouse_subtype: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn a_down_with_user_data_is_copied_as_a_down() {
+        let e = CGEvent::new_mouse_event(
+            None,
+            CGEventType::OtherMouseDown,
+            CGPoint::ZERO,
+            CGMouseButton(2),
+        )
+        .unwrap();
+        CGEvent::set_integer_value_field(Some(&e), CGEventField::EventSourceUserData, 42);
+        let fields = button_event(CGEventType::OtherMouseDown, &e);
+        assert_eq!(
+            (fields.kind, fields.button, fields.user_data),
+            (ButtonKind::Down, 2, 42)
+        );
+    }
+
+    /// CoreGraphics stores the button number as a signed byte: setting 258
+    /// reads back 2, and 255 reads back -1. So the out-of-range values a real
+    /// event can carry are negative, and they must not wrap into a valid CG
+    /// button number.
+    #[test]
+    fn a_button_number_that_doesnt_fit_u8_saturates_instead_of_wrapping() {
+        let e = CGEvent::new_mouse_event(
+            None,
+            CGEventType::OtherMouseDown,
+            CGPoint::ZERO,
+            CGMouseButton(3),
+        )
+        .unwrap();
+        CGEvent::set_integer_value_field(Some(&e), CGEventField::MouseEventButtonNumber, -126);
+        // `as u8` would give 130.
+        assert_eq!(button_event(CGEventType::OtherMouseDown, &e).button, 255);
     }
 
     /// Our synthetic smooth-scroll events (Phase 5) are pixel-based; the

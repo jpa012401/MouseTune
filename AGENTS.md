@@ -45,6 +45,8 @@ This is a mouse utility for my own Macs, not a platform. No accounts, no telemet
 - **Pass through**: return the original event unmodified. This is the default answer to any doubt.
 - **Degraded**: a tap callback panicked and was caught. The engine keeps running, and the UI says so.
 - **Trusted**: the app has Accessibility permission (`AXIsProcessTrusted`). Never say "has permissions" loosely; this is the only permission that matters.
+- **Job**: an action or plain click the input engine hands to `mt-exec`.
+- **`mt-exec`**: the executor thread that performs actions off the hot path, over a bounded 64-slot queue. A full queue drops the job and counts it.
 - **Port / adapter / humble object**: a port is a trait the core depends on (`Accessibility`, `TapController`). An adapter implements it with real OS calls and contains no decisions.
 - **System Settings / System Preferences**: macOS 13+ / macOS 12 naming. User-facing copy must pick the right one (`src/lib/os.ts`).
 - **MouseTune**: the product. Never "MouseFix" or "Mac Mouse Fix" in code, UI or bundle IDs. **Upstream** means Mac Mouse Fix.
@@ -173,14 +175,15 @@ If you can't name the requirement a pattern serves, don't add it. **DRY is about
 
 ## Current state
 
-- **Merged on `main`:** Phase 0 (scaffold), Phase 1 (Accessibility onboarding, permission monitor, tray status, settings shell), Phase 2 (input thread, event taps, HID mouse tracking, General page) and Phase 3 (config store with two kill switches, typed config commands and event, tray switches, recovery notice). Phases 2–3 are **pending manual hardware acceptance** (README); events are still passed through unchanged.
-- **Next:** Phase 4 (click cycle, router, basic actions).
+- **Merged on `main`:** Phase 0 (scaffold), Phase 1 (Accessibility onboarding, permission monitor, tray status, settings shell), Phase 2 (input thread, event taps, HID mouse tracking, General page) and Phase 3 (config store with two kill switches, typed config commands and event, tray switches, recovery notice). Phases 2–3 are **pending manual hardware acceptance** (README); the scroll path still passes every event through unchanged.
+- **Implemented on `phase-4a-button-engine`, not yet merged:** Phase 4a (click cycle, router, `mt-exec` executor with `Navigate` and symbolic hotkeys, read-only Buttons page). **Pending manual hardware acceptance** (README); the button tap now swallows routed events.
+- **Next:** Phase 4b (capture mode, Buttons editor).
 - **Known gaps:**
-  - Config holds only the two kill switches; later phases add their sections.
+  - Config holds the two kill switches and `buttons.remaps` (read-only in the UI until Phase 4b); later phases add their sections.
   - The Accessibility commands still return `Result<(), String>`; config commands use the typed `ConfigError`.
   - Parked UI edge cases (bridge-failure-only): a failed Dismiss or config load is only reported on the General page; brief stale switch if a tray change races the initial load.
-  - Deferred: a shutdown join timeout, a tap-timeout counter, a degraded indicator in the tray, and moving `spawn` out of `input/`.
-- **Never exercised for real:** the Accessibility prompt and settings-pane flow; the tray icon rendering; a bundled or signed build; CI on GitHub (no remote yet); macOS 12–26; Intel; an external mouse through the HID adapter; tap teardown on quit with real taps; tray switch checkmarks; a kill switch turning a real tap off; the watchdog's tap rebuild (`revive`).
+  - Deferred: a shutdown join timeout (also for `mt-exec` on quit; the 7 px drag cancel waits for Phase 6), a tap-timeout counter, a degraded indicator in the tray, and moving `spawn` out of `input/`.
+- **Never exercised for real:** the Accessibility prompt and settings-pane flow; the tray icon rendering; a bundled or signed build; CI on GitHub (no remote yet); macOS 12–26; Intel; an external mouse through the HID adapter; tap teardown on quit with real taps; tray switch checkmarks; a kill switch turning a real tap off; the watchdog's tap rebuild (`revive`); the CGS install path (unreachable binding); posting key combos and clicks; the click timers on real input; the B3/B4/B5 defaults on a real mouse; button-tap swallowing with real taps. *Exercised:* reading hotkey 32 (enabled, Ctrl+Up) and the frontmost bundle ID on macOS 27.
 
 ## Settled decisions and open questions
 
@@ -190,12 +193,14 @@ If you can't name the requirement a pattern serves, don't add it. **DRY is about
 - **Tailwind 3.4, not 4**: v4 needs Safari 16.4 and Monterey ships Safari 15 (§3.4).
 - **Name MouseTune, bundle ID `com.johnpaulalabe.mousetune`, macOS 12–27.**
 - **Tray toggles moved to Phase 3**: they need the config store.
-- **Config v1 is kill switches only**; the loader deep-merges the file over the defaults so it grows additively, and IPC types stay strict; no `ArcSwap` until Phase 4 (Phase 3 design doc).
-- **Phase 2 passes every event through**; since Phase 3 the tap demand follows the config. **The watchdog runs on `mt-input`**, not the main thread. **One `input-status-changed` event** replaces `devices-changed`/`status-changed` (Phase 2 plan).
+- **Config v1 holds the kill switches and button remaps**, and grows a section per phase; the loader deep-merges the file over the defaults so it grows additively, and IPC types stay strict.
+- **Phase 4 is split into 4a (button engine) and 4b (capture mode, editor).** **B3 click default = Mission Control.**
+- **The engine owns `CompiledRemaps`**, delivered by `Control::SetRemaps`; no `ArcSwap`.
+- Click-cycle, suppression and hotkey-fallback details: `input/{click_cycle,router}.rs` and `actions/` docs and tests.
+- **Phase 2 passed every event through**; since Phase 3 the tap demand follows the config. **The watchdog runs on `mt-input`**, not the main thread. **One `input-status-changed` event** replaces `devices-changed`/`status-changed` (Phase 2 plan).
 
 **Open, for the maintainer. Do not decide these in code:**
 - Personal use or public distribution. This decides notarization and the licence review.
-- Middle-click default: Mission Control or Look Up.
 - Final licence. `LICENSE` is MIT provisionally.
 - Trademark and App Store name check for "MouseTune".
 
@@ -209,11 +214,11 @@ Spec amendments go in the commit that proves the spec wrong.
 | Tray, window, agent behaviour | §2.1, §3.2 | `tray.rs`, `window.rs` |
 | macOS version differences | §3.4 | `platform/macos/os_version.rs` |
 | Event taps, filtering, devices, threading | §4 | `input/`, Phase 2 plan |
-| Buttons and gestures | §5 | — (Phase 4) |
+| Buttons and gestures | §5 | `input/{remaps,click_cycle,router}.rs` |
 | Drag, dock swipe | §6 | — (Phase 6) |
-| Actions, symbolic hotkeys | §7 | — (Phase 4) |
+| Actions, symbolic hotkeys | §7 | `actions/`, `platform/macos/{symbolic_hotkeys,event_poster,frontmost_app}.rs` |
 | Smooth scrolling | §8 | — (Phase 5) |
-| Config schema | §9 | — (Phase 3) |
+| Config schema | §9 | `config/` |
 | IPC contract | §10 | `ipc.rs`, `events.rs`, `src/bindings.ts` |
 | Settings UI | §11 | `src/` |
 | Licensing, upstream | §13 | — |
