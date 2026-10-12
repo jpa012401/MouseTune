@@ -85,20 +85,26 @@ const AUX_CONTROL_BUTTONS: i16 = 8;
 
 /// A media/brightness key as the system-defined event macOS's own keys send
 /// (spec §7.4), untagged and unposted.
+///
+/// `mt-exec` never drains an autorelease pool of its own, so AppKit's
+/// autoreleased temporaries are released here instead of accumulating for
+/// the app's lifetime. The returned event is owned and outlives the pool.
 pub fn system_key_event(key: SystemKey, down: bool) -> Option<Retained<CGEvent>> {
     let state: isize = if down { 0xA } else { 0xB };
-    let event = NSEvent::otherEventWithType_location_modifierFlags_timestamp_windowNumber_context_subtype_data1_data2(
-        NSEventType::SystemDefined,
-        CGPoint::new(0.0, 0.0),
-        NSEventModifierFlags::from_bits_retain((state << 8) as usize),
-        0.0,
-        0,
-        None,
-        AUX_CONTROL_BUTTONS,
-        (nx_key_type(key) << 16) | (state << 8),
-        -1,
-    )?;
-    event.CGEvent()
+    objc2::rc::autoreleasepool(|_| {
+        let event = NSEvent::otherEventWithType_location_modifierFlags_timestamp_windowNumber_context_subtype_data1_data2(
+            NSEventType::SystemDefined,
+            CGPoint::new(0.0, 0.0),
+            NSEventModifierFlags::from_bits_retain((state << 8) as usize),
+            0.0,
+            0,
+            None,
+            AUX_CONTROL_BUTTONS,
+            (nx_key_type(key) << 16) | (state << 8),
+            -1,
+        )?;
+        event.CGEvent()
+    })
 }
 
 pub struct MacEventPoster;
