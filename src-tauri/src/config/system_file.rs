@@ -25,8 +25,13 @@ impl SystemConfigFile {
 
 impl ConfigFile for SystemConfigFile {
     fn read(&self) -> io::Result<Option<String>> {
-        match fs::read_to_string(&self.path) {
-            Ok(text) => Ok(Some(text)),
+        match fs::read(&self.path) {
+            // Bytes that aren't UTF-8 are a corrupt file, not an I/O failure:
+            // the replacement characters fail to parse, so the store recovers.
+            Ok(bytes) => Ok(Some(match String::from_utf8(bytes) {
+                Ok(text) => text,
+                Err(err) => String::from_utf8_lossy(err.as_bytes()).into_owned(),
+            })),
             Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
             Err(err) => Err(err),
         }
@@ -68,6 +73,7 @@ mod tests {
     };
 
     use super::*;
+    use crate::config::store::{ConfigStore, Recovery};
 
     /// A fresh directory under the OS temp dir, removed when dropped.
     struct TempDir(PathBuf);
@@ -146,6 +152,24 @@ mod tests {
         assert_eq!(dir.names(), vec![name.clone()]);
         assert_eq!(fs::read_to_string(dir.0.join(&name)).unwrap(), "broken");
         assert_eq!(dir.file().read().unwrap(), None);
+    }
+
+    #[test]
+    fn non_utf8_file_is_read_and_recovered_with_a_backup() {
+        let dir = TempDir::new();
+        fs::write(dir.0.join("config.json"), [0xff, 0xfe, b'{']).unwrap();
+        assert!(matches!(dir.file().read(), Ok(Some(_))));
+
+        let store = ConfigStore::load(Box::new(dir.file()));
+
+        assert!(
+            matches!(store.recovery(), Some(Recovery::BackedUp { .. })),
+            "{:?}",
+            store.recovery()
+        );
+        let names = dir.names();
+        assert_eq!(names.len(), 1, "{names:?}");
+        assert!(names[0].ends_with(".bak.json"), "{names:?}");
     }
 
     #[test]
