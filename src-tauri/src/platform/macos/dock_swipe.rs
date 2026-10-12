@@ -4,7 +4,9 @@
 //! # Switched off until verified
 //!
 //! `VERIFIED_ON` lists the macOS major versions where the maintainer saw
-//! the probe (`dock_swipe_moves_spaces`) move Spaces. It is empty, so
+//! the probe (`dock_swipe_moves_spaces`) move Spaces **in its default
+//! (sequencer) mode**, the one that sends what the adapter sends. It is
+//! empty, so
 //! `platform::output_support().dock_swipe` is false, `input_loop` passes
 //! `NoSwipe`, and `SpacesAndMissionControl` compiles to the Discrete
 //! fallback. `MacDockSwipe` is built and tested but never constructed in
@@ -59,14 +61,19 @@
 //!   velocity, then a Cancelled, then the closer (`pick`), so a begun
 //!   gesture always gets a closing event. Re-sends re-post the event that
 //!   went out.
-//! - **No `CGEventSource`**: the events are created exactly as the probe
-//!   creates them (`CGEventCreate(NULL)`), so what ships is what was seen.
+//! - **No `CGEventSource`**: events are created with `CGEventCreate(NULL)`,
+//!   in the adapter and the probe alike.
 //!
-//! By default the probe sends only that. With
-//! `MOUSETUNE_PROBE_ENCODING=legacy-mix` it also writes the same values into
-//! the legacy gesture fields of the type-30 `CGEvent` (table below), and
-//! attaches the HID event last so it is the authoritative copy. The probe
-//! keeps its own fixed mask per direction, including at Began.
+//! The probe's default mode drives this same `Sequencer`, `pick` and
+//! `Api::build`, and re-posts the same closing event at +200/+500 ms, so a
+//! "worked" result from that mode verifies the shipped encoding. Two
+//! diagnostic modes do not, and can't justify adding to `VERIFIED_ON`:
+//! - `MOUSETUNE_PROBE_ENCODING=fixed-mask` sends Task 8's encoding, with
+//!   the direction's mask on every step, including Began.
+//! - `MOUSETUNE_PROBE_ENCODING=legacy-mix` does the same and also writes
+//!   the values into the legacy gesture fields of the type-30 `CGEvent`
+//!   (table below), attaching the HID event last so it is the
+//!   authoritative copy.
 //!
 //! ## Unknown (no allowed source; documented guesses)
 //!
@@ -151,8 +158,9 @@ use crate::{
     },
 };
 
-/// macOS major versions where the maintainer saw dock swipes work. Empty:
-/// the Task 8 probe's on-screen result isn't confirmed yet, so dock swipes
+/// macOS major versions where the maintainer saw dock swipes work, from
+/// the probe's **default (sequencer) mode** only: the diagnostic modes
+/// don't send what ships. Empty: no result is confirmed yet, so dock swipes
 /// stay off everywhere. **Turning them on for macOS 27 is this one line,
 /// `&[27]`**, plus the spec §3.4 and §6.1 wording.
 pub const VERIFIED_ON: &[u32] = &[];
@@ -1062,9 +1070,11 @@ mod read_back {
     }
 }
 
-/// The maintainer's hardware probe (plan Task 8). Builds through the
-/// adapter's `fields` and `Api`, keeping its own mask per direction and
-/// the optional legacy fields.
+/// The maintainer's hardware probe (plan Tasks 8–9). Its default mode
+/// drives the adapter's own `Sequencer`, `pick` and `Api::build`, so a
+/// "worked" result verifies what `MacDockSwipe` sends. Two diagnostic
+/// modes keep the Task 8 encoding: a fixed mask per direction, optionally
+/// with the legacy gesture fields.
 #[cfg(test)]
 mod probe {
     use std::{thread::sleep, time::Duration};
@@ -1075,6 +1085,8 @@ mod probe {
     const SWIPE_TIME: Duration = Duration::from_millis(500);
     /// 1.0 of progress over 0.5 s, in progress per second (units unknown).
     const END_SPEED: f64 = 2.0;
+    /// The adapter's re-sends: +200 ms, then +500 ms (`ResendSchedule`).
+    const RESEND_WAITS: [Duration; 2] = [Duration::from_millis(200), Duration::from_millis(300)];
 
     const CG_GESTURE_HID_TYPE: u32 = 110;
     const CG_SWIPE_MOTION: u32 = 123;
@@ -1084,6 +1096,26 @@ mod probe {
     const CG_GESTURE_PHASE: u32 = 132;
     const CG_SWIPE_MASK: u32 = 134;
     const CG_GESTURE_FLAVOR: u32 = 138;
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum Mode {
+        /// What `MacDockSwipe` sends. The default.
+        Sequencer,
+        /// Task 8's encoding: the direction's mask on every step.
+        FixedMask,
+        /// `FixedMask` plus the legacy gesture fields.
+        LegacyMix,
+    }
+
+    impl Mode {
+        fn from_env() -> Self {
+            match std::env::var("MOUSETUNE_PROBE_ENCODING").as_deref() {
+                Ok("fixed-mask") => Self::FixedMask,
+                Ok("legacy-mix") => Self::LegacyMix,
+                _ => Self::Sequencer,
+            }
+        }
+    }
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     enum Direction {
@@ -1117,9 +1149,74 @@ mod probe {
         }
     }
 
-    /// The probe's step: the adapter's fields, with the direction's mask
-    /// on every phase (the probe knows its direction up front).
-    fn step_fields(
+    /// A built step, the pause before posting it, and what to print.
+    struct Planned {
+        wait: Duration,
+        step: Rc<Built>,
+        line: String,
+    }
+
+    fn describe(direction: Direction, f: &SwipeFields, note: &str) -> String {
+        let phase = match f.options >> PHASE_SHIFT {
+            1 => "Began",
+            2 => "Changed",
+            4 => "Ended",
+            8 => "Cancelled",
+            _ => "?",
+        };
+        let velocity = f
+            .velocity
+            .map_or(String::new(), |v| format!(", velocity {:+.1}", v.value));
+        format!(
+            "{direction:?} {phase} progress {:+.3}, mask {}{velocity}{note}",
+            f.progress, f.mask
+        )
+    }
+
+    /// The default mode: exactly the adapter's plans and fallbacks, built
+    /// before anything is posted. Re-sends re-post the same event, as the
+    /// adapter's timers do.
+    fn plan_as_adapter(api: &Api, direction: Direction) -> Result<Vec<Planned>, String> {
+        let build = |f: &SwipeFields| api.build(f).map(|b| (*f, Rc::new(b)));
+        let mut seq = Sequencer::default();
+        let mut planned = Vec::new();
+        let mut push = |wait, (f, step): (SwipeFields, Rc<Built>), note: &str| {
+            planned.push(Planned {
+                wait,
+                step,
+                line: describe(direction, &f, note),
+            })
+        };
+        let begin = seq.begin(direction.axis());
+        let closer = begin
+            .needs
+            .and_then(|f| build(&f))
+            .ok_or("the end a begin needs didn't build")?;
+        push(
+            Duration::ZERO,
+            pick(&begin, build, None).ok_or("Began didn't build")?,
+            "",
+        );
+        for i in 1..=STEPS {
+            let change = seq.change(direction.sign() * f64::from(i) / f64::from(STEPS));
+            let built = pick(&change, build, None).ok_or("a Changed didn't build")?;
+            push(SWIPE_TIME / STEPS, built, "");
+        }
+        let end = seq.end(direction.sign() * END_SPEED, 0.0);
+        let (f, step) = pick(&end, build, Some(closer)).ok_or("no closing event built")?;
+        push(Duration::ZERO, (f, Rc::clone(&step)), " (end)");
+        push(
+            RESEND_WAITS[0],
+            (f, Rc::clone(&step)),
+            " (re-sent, +200 ms)",
+        );
+        push(RESEND_WAITS[1], (f, step), " (re-sent, +500 ms)");
+        Ok(planned)
+    }
+
+    /// The Task 8 step: the adapter's fields with the direction's mask on
+    /// every phase.
+    fn fixed_mask_fields(
         direction: Direction,
         phase: Phase,
         progress: f64,
@@ -1131,7 +1228,7 @@ mod probe {
         }
     }
 
-    fn build(api: &Api, f: &SwipeFields, legacy: bool) -> Option<Built> {
+    fn build_fixed(api: &Api, f: &SwipeFields, legacy: bool) -> Option<Built> {
         if !legacy {
             return api.build(f);
         }
@@ -1157,30 +1254,22 @@ mod probe {
         })
     }
 
-    /// A built step, the pause before posting it, and what to print.
-    struct Planned {
-        wait: Duration,
-        step: Built,
-        line: String,
-    }
-
-    /// Builds every event of one swipe before anything is posted, so a
-    /// failed build can't leave the Dock mid-gesture. `Err` says why.
-    fn plan(api: &Api, direction: Direction, legacy: bool) -> Result<Vec<Planned>, String> {
+    /// The diagnostic modes: Task 8's plan, built before anything is posted.
+    fn plan_fixed_mask(
+        api: &Api,
+        direction: Direction,
+        legacy: bool,
+    ) -> Result<Vec<Planned>, String> {
         let sign = direction.sign();
         let mut planned = Vec::new();
         let mut add = |wait, phase, progress, velocity: Option<f64>, note: &str| {
-            let step = build(
-                api,
-                &step_fields(direction, phase, progress, velocity),
-                legacy,
-            )
-            .ok_or_else(|| format!("{direction:?} {phase:?} {progress:+.3} didn't build"))?;
-            let velocity = velocity.map_or(String::new(), |v| format!(", velocity {v:+.1}"));
+            let f = fixed_mask_fields(direction, phase, progress, velocity);
+            let step = build_fixed(api, &f, legacy)
+                .ok_or_else(|| format!("{phase:?} {progress:+.3} didn't build"))?;
             planned.push(Planned {
                 wait,
-                step,
-                line: format!("{direction:?} {phase:?} progress {progress:+.3}{velocity}{note}"),
+                step: Rc::new(step),
+                line: describe(direction, &f, note),
             });
             Ok::<(), String>(())
         };
@@ -1191,21 +1280,21 @@ mod probe {
         }
         // An end without velocity beats a swipe left open (Task 8 fix round 1).
         let mut velocity = Some(sign * END_SPEED);
-        let end = step_fields(direction, Phase::Ended, sign, velocity);
-        if build(api, &end, legacy).is_none() {
+        let end = fixed_mask_fields(direction, Phase::Ended, sign, velocity);
+        if build_fixed(api, &end, legacy).is_none() {
             println!("{direction:?}: the end with velocity didn't build; ending without velocity.");
             velocity = None;
         }
         add(Duration::ZERO, Phase::Ended, sign, velocity, " (end)")?;
         add(
-            Duration::from_millis(200),
+            RESEND_WAITS[0],
             Phase::Ended,
             sign,
             velocity,
             " (end re-sent, +200 ms)",
         )?;
         add(
-            Duration::from_millis(300),
+            RESEND_WAITS[1],
             Phase::Ended,
             sign,
             velocity,
@@ -1214,8 +1303,13 @@ mod probe {
         Ok(planned)
     }
 
-    fn swipe(api: &Api, direction: Direction, legacy: bool) {
-        match plan(api, direction, legacy) {
+    fn swipe(api: &Api, direction: Direction, mode: Mode) {
+        let planned = match mode {
+            Mode::Sequencer => plan_as_adapter(api, direction),
+            Mode::FixedMask => plan_fixed_mask(api, direction, false),
+            Mode::LegacyMix => plan_fixed_mask(api, direction, true),
+        };
+        match planned {
             Ok(planned) => {
                 for p in planned {
                     sleep(p.wait);
@@ -1239,23 +1333,23 @@ mod probe {
                 "WARNING: this terminal isn't trusted for Accessibility; macOS will drop the events."
             );
         }
-        let legacy = std::env::var("MOUSETUNE_PROBE_ENCODING").as_deref() == Ok("legacy-mix");
+        let mode = Mode::from_env();
         println!(
             "Encoding: {}.",
-            if legacy {
-                "legacy-mix (HID dock swipe + legacy gesture fields)"
-            } else {
-                "hid (HID dock swipe only)"
+            match mode {
+                Mode::Sequencer => "sequencer (what MouseTune ships; the run that verifies it)",
+                Mode::FixedMask => "fixed-mask (diagnostic: Task 8's mask per direction)",
+                Mode::LegacyMix => "legacy-mix (diagnostic: fixed mask + legacy gesture fields)",
             }
         );
         println!(
             "In 3 s: a slow swipe to the RIGHT (expect the next Space), then UP (expect Mission Control), then DOWN (expect it to close)."
         );
         sleep(Duration::from_secs(3));
-        swipe(&api, Direction::Right, legacy);
+        swipe(&api, Direction::Right, mode);
         sleep(Duration::from_secs(2));
-        swipe(&api, Direction::Up, legacy);
+        swipe(&api, Direction::Up, mode);
         sleep(Duration::from_secs(2));
-        swipe(&api, Direction::Down, legacy);
+        swipe(&api, Direction::Down, mode);
     }
 }
