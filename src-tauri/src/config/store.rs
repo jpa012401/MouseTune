@@ -2,7 +2,6 @@
 
 use serde::Serialize;
 use specta::Type;
-use tracing;
 
 use crate::config::{
     file::ConfigFile,
@@ -86,6 +85,11 @@ impl ConfigStore {
                 message: err.to_string(),
             })?;
         self.current = new;
+        // The write replaced the unreadable file, so "left in place" is no longer true.
+        // A kept backup still exists, so that notice stays until dismissed.
+        if self.recovery == Some(Recovery::BackupFailed) {
+            self.recovery = None;
+        }
         for observer in &self.observers {
             observer.config_changed(&self.current);
         }
@@ -294,6 +298,48 @@ mod tests {
         let mut store = ConfigStore::load(Box::new(FakeConfigFile::with("{ broken")));
         store.dismiss_recovery();
         assert_eq!(store.recovery(), None);
+    }
+
+    #[test]
+    fn a_saved_change_clears_a_failed_backup_notice() {
+        let file = FakeConfigFile::with("{ broken");
+        file.fail_backups();
+        let mut store = ConfigStore::load(Box::new(file.clone()));
+        assert_eq!(store.recovery(), Some(&Recovery::BackupFailed));
+
+        store.update(scroll_off()).unwrap();
+
+        assert_eq!(
+            store.recovery(),
+            None,
+            "the unreadable file was overwritten"
+        );
+    }
+
+    #[test]
+    fn a_failed_save_keeps_the_failed_backup_notice() {
+        let file = FakeConfigFile::with("{ broken");
+        file.fail_backups();
+        file.fail_writes();
+        let mut store = ConfigStore::load(Box::new(file.clone()));
+
+        assert!(store.update(scroll_off()).is_err());
+
+        assert_eq!(store.recovery(), Some(&Recovery::BackupFailed));
+    }
+
+    #[test]
+    fn a_saved_change_keeps_a_kept_backup_notice_until_dismissed() {
+        let mut store = ConfigStore::load(Box::new(FakeConfigFile::with("{ broken")));
+
+        store.update(scroll_off()).unwrap();
+
+        assert_eq!(
+            store.recovery(),
+            Some(&Recovery::BackedUp {
+                file_name: "config.1760000000.bak.json".into()
+            })
+        );
     }
 
     #[test]
