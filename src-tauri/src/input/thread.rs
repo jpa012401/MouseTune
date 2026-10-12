@@ -35,26 +35,10 @@ pub enum Control {
     /// biggest variant.
     SetRemaps(Box<CompiledRemaps>),
     /// Report the next press of button 3 or higher instead of acting on it.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "IPC sends it from Phase 4b Task 7")
-    )]
     StartCapture,
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "IPC sends it from Phase 4b Task 7")
-    )]
     StopCapture,
     /// Record the next key-down (with modifiers) instead of letting it through.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "IPC sends it from Phase 4b Task 7")
-    )]
     StartKeyCapture,
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "IPC sends it from Phase 4b Task 7")
-    )]
     StopKeyCapture,
     Shutdown,
 }

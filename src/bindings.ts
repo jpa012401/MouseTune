@@ -18,12 +18,21 @@ export const commands = {
 	resetConfig: () => typedError<Config, ConfigError>(__TAURI_INVOKE("reset_config")),
 	/**  The user has seen the startup recovery notice. */
 	dismissConfigRecovery: () => __TAURI_INVOKE<void>("dismiss_config_recovery"),
+	/**  Report the next press of button 3 or higher as a `button-captured` event. */
+	startCapture: () => __TAURI_INVOKE<void>("start_capture"),
+	stopCapture: () => __TAURI_INVOKE<void>("stop_capture"),
+	/**  Record the next key-down as a `key-captured` event. */
+	startKeyCapture: () => __TAURI_INVOKE<void>("start_key_capture"),
+	stopKeyCapture: () => __TAURI_INVOKE<void>("stop_key_capture"),
 };
 
 /** Events */
 export const events = {
+	buttonCaptured: makeEvent<ButtonCaptured>("button-captured"),
 	configChanged: makeEvent<ConfigChanged>("config-changed"),
 	inputStatusChanged: makeEvent<InputStatusChanged>("input-status-changed"),
+	keyCaptureCancelled: makeEvent<KeyCaptureCancelled>("key-capture-cancelled"),
+	keyCaptured: makeEvent<KeyCaptured>("key-captured"),
 	permissionChanged: makeEvent<PermissionChanged>("permission-changed"),
 };
 
@@ -37,6 +46,10 @@ export type ActionStats = {
 	performed: number,
 	dropped: number,
 	failed: number,
+};
+
+export type ButtonCaptured = {
+	button: number,
 };
 
 /**
@@ -104,6 +117,15 @@ export type InputStatus = {
 export type InputStatusChanged = {
 	taps: TapSet,
 	devices: Device[],
+};
+
+/**  No fields, so it serializes as `{}`. */
+export type KeyCaptureCancelled = Record<string, never>;
+
+export type KeyCaptured = {
+	key_code: number,
+	modifiers: KeyModifier[],
+	key_label: string,
 };
 
 export type KeyModifier = "Command" | "Shift" | "Option" | "Control";

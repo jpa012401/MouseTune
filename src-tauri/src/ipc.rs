@@ -19,7 +19,7 @@ use crate::{
     input::{
         engine::{EngineSnapshot, ScrollStats},
         taps::TapSet,
-        thread::InputHandle,
+        thread::{Control, InputHandle},
     },
     platform::os_version,
 };
@@ -286,4 +286,30 @@ mod tests {
             ("ff", "MX Master 3", "Logitech", 5, true)
         );
     }
+}
+
+/// Report the next press of button 3 or higher as a `button-captured` event.
+#[tauri::command]
+#[specta::specta]
+pub fn start_capture(input: State<'_, Arc<InputHandle>>) {
+    input.send(Control::StartCapture);
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn stop_capture(input: State<'_, Arc<InputHandle>>) {
+    input.send(Control::StopCapture);
+}
+
+/// Record the next key-down as a `key-captured` event.
+#[tauri::command]
+#[specta::specta]
+pub fn start_key_capture(input: State<'_, Arc<InputHandle>>) {
+    input.send(Control::StartKeyCapture);
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn stop_key_capture(input: State<'_, Arc<InputHandle>>) {
+    input.send(Control::StopKeyCapture);
 }
