@@ -143,6 +143,40 @@ describe("Buttons page", () => {
     expect(saved!.buttons.remaps.slice(1)).toEqual(defaultRemaps.slice(1));
   });
 
+  it("remaps a row to a middle click", async () => {
+    let saved: Config | undefined;
+    mockBackend({ get_status: tapsOn, set_config: (a) => (saved = (a as { config: Config }).config) });
+    renderButtons();
+    const row = (await screen.findAllByRole("listitem"))[0]!;
+    fireEvent.click(within(row).getByRole("button", { name: "Change" }));
+    fireEvent.change(within(row).getByLabelText("Action"), { target: { value: "click:Middle:1" } });
+    fireEvent.click(within(row).getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(saved!.buttons.remaps[0]!.effect.action).toEqual({ type: "MouseClick", button: "Middle", clicks: 1 }),
+    );
+  });
+
+  it("lists media-key and click remaps by name", async () => {
+    mockBackend({
+      get_status: tapsOn,
+      get_config: () =>
+        configView({
+          config: {
+            ...config(),
+            buttons: {
+              remaps: [
+                { trigger: { button: 4, level: 1, duration: "click" }, effect: { action: { type: "SystemKey", key: "PlayPause" } } },
+                { trigger: { button: 5, level: 1, duration: "click" }, effect: { action: { type: "MouseClick", button: "Left", clicks: 2 } } },
+              ],
+            },
+          },
+        }),
+    });
+    renderButtons();
+    expect(await screen.findByText("Play/Pause")).toBeTruthy();
+    expect(screen.getByText("Double left click")).toBeTruthy();
+  });
+
   it("deletes a row", async () => {
     let saved: Config | undefined;
     mockBackend({ get_status: tapsOn, set_config: (a) => (saved = (a as { config: Config }).config) });

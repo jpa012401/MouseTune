@@ -1,4 +1,4 @@
-import type { Action, KeyModifier, SymbolicHotkeyId } from "../bindings";
+import type { Action, KeyModifier, MouseButton, SymbolicHotkeyId, SystemKey } from "../bindings";
 
 export type ActionChoice = { value: string; label: string; action: Action };
 
@@ -9,6 +9,29 @@ const hotkey = (id: SymbolicHotkeyId, label: string): ActionChoice => ({
 const desktops = Array.from({ length: 16 }, (_, i) =>
   hotkey(`Desktop${i + 1}` as SymbolicHotkeyId, `Desktop ${i + 1}`),
 );
+
+const MOUSE_CLICKS: [MouseButton, string, string][] = [
+  ["Left", "Left click", "Double left click"],
+  ["Right", "Right click", "Double right click"],
+  ["Middle", "Middle click", "Double middle click"],
+  ["Back", "Button 4 click", "Double Button 4 click"],
+  ["Forward", "Button 5 click", "Double Button 5 click"],
+];
+
+const mouseClick = (button: MouseButton, clicks: number, label: string): ActionChoice => ({
+  value: `click:${button}:${clicks}`, label, action: { type: "MouseClick", button, clicks },
+});
+
+const MEDIA_KEYS: [SystemKey, string][] = [
+  ["PlayPause", "Play/Pause"],
+  ["Next", "Next track"],
+  ["Previous", "Previous track"],
+  ["VolumeUp", "Volume up"],
+  ["VolumeDown", "Volume down"],
+  ["Mute", "Mute"],
+  ["BrightnessUp", "Brightness up"],
+  ["BrightnessDown", "Brightness down"],
+];
 
 /** Everything the picker offers, apart from "Keyboard shortcut…". */
 export const ACTION_GROUPS: { label: string; choices: ActionChoice[] }[] = [
@@ -35,6 +58,14 @@ export const ACTION_GROUPS: { label: string; choices: ActionChoice[] }[] = [
       { value: "nav:Forward", label: "Forward", action: { type: "Navigate", direction: "Forward" } },
     ],
   },
+  {
+    label: "Mouse click",
+    choices: MOUSE_CLICKS.flatMap(([button, single, double]) => [mouseClick(button, 1, single), mouseClick(button, 2, double)]),
+  },
+  {
+    label: "Media keys",
+    choices: MEDIA_KEYS.map(([key, label]) => ({ value: `media:${key}`, label, action: { type: "SystemKey", key } })),
+  },
 ];
 
 export function actionValue(action: Action): string {
@@ -45,11 +76,10 @@ export function actionValue(action: Action): string {
       return `nav:${action.direction}`;
     case "KeyCombo":
       return "keys";
-    // The picker learns these in a later Phase 4c task; this keeps the switch exhaustive.
     case "MouseClick":
       return `click:${action.button}:${action.clicks}`;
     case "SystemKey":
-      return `key:${action.key}`;
+      return `media:${action.key}`;
   }
 }
 
