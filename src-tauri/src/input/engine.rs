@@ -1034,6 +1034,48 @@ mod tests {
     }
 
     #[test]
+    fn changing_the_bindings_mid_two_finger_swipe_ends_the_scroll_gesture() {
+        let mut r = drag_rig();
+        press_and_drag(&mut r);
+        r.engine.set_remaps(compile(&Config::default()));
+        assert_eq!(r.gesture_scroll.log(), ["Began", "Changed dy 12", "Ended"]);
+    }
+
+    #[test]
+    fn changing_the_bindings_mid_dock_swipe_ends_the_swipe() {
+        let mut r = dock_swipe_rig();
+        button(&mut r, ButtonKind::Down, 2, 10);
+        r.engine.on_motion(&MotionEvent {
+            dx: 200,
+            dy: 0,
+            user_data: 0,
+        });
+        r.engine.on_intents();
+        r.engine.set_remaps(compile(&Config::default()));
+        let log = r.swipe.log();
+        assert_eq!(log.len(), 3, "{log:?}");
+        assert!(log[2].starts_with("end "), "{log:?}");
+    }
+
+    #[test]
+    fn a_drag_tap_timeout_mid_swipe_closes_it_and_the_release_clicks_nothing() {
+        let mut r = drag_rig();
+        press_and_drag(&mut r);
+        r.engine
+            .on_tap_disabled(TapKind::Drag, DisabledReason::Timeout);
+        r.engine.on_intents();
+        assert_eq!(r.gesture_scroll.log(), ["Began", "Changed dy 12", "Ended"]);
+        assert_eq!(button(&mut r, ButtonKind::Up, 2, 10), Verdict::Swallow);
+        r.engine.on_intents();
+        assert!(jobs(&r).is_empty(), "{:?}", jobs(&r));
+        assert_eq!(
+            r.gesture_scroll.log(),
+            ["Began", "Changed dy 12", "Ended"],
+            "nothing more posted on release"
+        );
+    }
+
+    #[test]
     fn a_drag_tap_timeout_mid_drag_unfreezes_once_the_intents_run() {
         let mut r = drag_rig();
         press_and_drag(&mut r);
