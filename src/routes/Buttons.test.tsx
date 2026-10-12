@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { emit } from "@tauri-apps/api/event";
 import App from "../App";
 import type { Config } from "../bindings";
-import { config, configView, defaultRemaps, inputStatus, mockBackend, status } from "../test/backend";
+import { config, configView, defaultRemaps, inputStatus, mockBackend, status, timingConfig } from "../test/backend";
 
 /** Capture only sees presses through the buttons tap, so most tests need it on. */
 function tapsOn() {
@@ -316,5 +316,68 @@ describe("Buttons page", () => {
     fireEvent.click(screen.getByRole("button", { name: "+ Add remap" }));
     expect(screen.getByText("Press the mouse button you want to remap…")).toBeTruthy();
     expect(screen.queryByRole("radio", { name: "Click" })).toBeNull();
+  });
+
+  it("shows the timing sliders with their values", async () => {
+    mockBackend({ get_status: tapsOn, get_config: () => configView({ config: timingConfig({ hold_ms: 400, double_click_ms: 300 }) }) });
+    renderButtons();
+    const hold = await screen.findByRole("slider", { name: "Hold delay" });
+    expect((hold as HTMLInputElement).value).toBe("400");
+    expect(screen.getByText("400 ms")).toBeTruthy();
+    expect(screen.getByText("300 ms")).toBeTruthy();
+    expect((screen.getByRole("slider", { name: "Double-click speed" }) as HTMLInputElement).min).toBe("150");
+  });
+
+  it("dragging a slider saves only when released", async () => {
+    const saved: Config[] = [];
+    mockBackend({ get_status: tapsOn, set_config: (a) => { const c = (a as { config: Config }).config; saved.push(c); return c; } });
+    renderButtons();
+    const hold = await screen.findByRole("slider", { name: "Hold delay" });
+    fireEvent.change(hold, { target: { value: "300" } });
+    fireEvent.change(hold, { target: { value: "400" } });
+    expect(screen.getByText("400 ms")).toBeTruthy();
+    expect(saved).toEqual([]);
+    fireEvent.pointerUp(hold);
+    await waitFor(() => expect(saved).toEqual([timingConfig({ hold_ms: 400, double_click_ms: 260 })]));
+  });
+
+  it("a keyboard change to a slider saves on key release", async () => {
+    const saved: Config[] = [];
+    mockBackend({ get_status: tapsOn, set_config: (a) => { const c = (a as { config: Config }).config; saved.push(c); return c; } });
+    renderButtons();
+    const speed = await screen.findByRole("slider", { name: "Double-click speed" });
+    fireEvent.change(speed, { target: { value: "270" } });
+    fireEvent.keyUp(speed, { key: "ArrowRight" });
+    await waitFor(() => expect(saved).toEqual([timingConfig({ hold_ms: 250, double_click_ms: 270 })]));
+  });
+
+  it("restore timing defaults resets only the timing", async () => {
+    let saved: Config | undefined;
+    mockBackend({
+      get_status: tapsOn,
+      get_config: () => configView({ config: timingConfig({ hold_ms: 500, double_click_ms: 400 }) }),
+      set_config: (a) => (saved = (a as { config: Config }).config),
+    });
+    renderButtons();
+    fireEvent.click(await screen.findByRole("button", { name: "Restore timing defaults" }));
+    await waitFor(() => expect(saved!.timing).toEqual({ hold_ms: 250, double_click_ms: 260 }));
+    expect(saved!.buttons.remaps).toEqual(defaultRemaps);
+  });
+
+  it("the double-click hint uses the configured window", async () => {
+    mockBackend({ get_status: tapsOn, get_config: () => configView({ config: { ...timingConfig({ hold_ms: 250, double_click_ms: 400 }), buttons: { remaps: [
+      defaultRemaps[2]!, { trigger: { button: 4, level: 2, duration: "click" }, effect: { action: { type: "SymbolicHotkey", id: "Spotlight" } } },
+    ] } } }) });
+    renderButtons();
+    expect(await screen.findByText("Single clicks on this button will wait up to 400 ms.")).toBeTruthy();
+  });
+
+  it("an out-of-range timing from Rust shows its message", async () => {
+    mockBackend({ get_status: tapsOn, set_config: () => { throw { kind: "TimingOutOfRange", field: "Hold", ms: 700 }; } });
+    renderButtons();
+    const hold = await screen.findByRole("slider", { name: "Hold delay" });
+    fireEvent.change(hold, { target: { value: "600" } });
+    fireEvent.pointerUp(hold);
+    expect((await screen.findByText("Couldn’t save your settings: Hold delay must be between 150 and 600 ms.")).getAttribute("role")).toBe("alert");
   });
 });

@@ -1,5 +1,7 @@
-import type { Action, ClickTrigger, Remap, TriggerDuration } from "../bindings";
+import type { Action, ClickTrigger, Remap, Timing, TriggerDuration } from "../bindings";
 import { actionLabel } from "./actions";
+
+export const DEFAULT_TIMING: Timing = { hold_ms: 250, double_click_ms: 260 };
 
 const LEVELS = ["Click", "Double click", "Triple click"];
 
