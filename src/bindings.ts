@@ -28,9 +28,30 @@ export const events = {
 };
 
 /* Types */
+/**  What a remap does. Phase 4b adds the rest of spec §7.1. */
+export type Action = { type: "SymbolicHotkey"; id: SymbolicHotkeyId } | { type: "Navigate"; direction: NavDirection };
+
+/**
+ *  Button remaps (design §1). Button numbers are 1-based as users count
+ *  them: 3 is the middle button. `input::remaps::compile` turns this into
+ *  the engine's lookup tables.
+ */
+export type Buttons = {
+	remaps: Remap[],
+};
+
+export type ClickTrigger = {
+	/**  1-based: 3 = middle button. */
+	button: number,
+	/**  1 = single click, 2 = double, 3 = triple. */
+	level: number,
+	duration: TriggerDuration,
+};
+
 export type Config = {
 	version: number,
 	general: General,
+	buttons: Buttons,
 };
 
 export type ConfigChanged = Config;
@@ -53,6 +74,10 @@ export type Device = {
 	has_wheel: boolean,
 };
 
+export type Effect = {
+	action: Action,
+};
+
 export type General = {
 	/**  Kill switch for button features. */
 	buttons_enabled: boolean,
@@ -72,6 +97,8 @@ export type InputStatusChanged = {
 	devices: Device[],
 };
 
+export type NavDirection = "Back" | "Forward";
+
 export type OsVersion = {
 	major: number,
 	minor: number,
@@ -88,6 +115,11 @@ export type RecoveryNotice = {
 	backup_file: string | null,
 };
 
+export type Remap = {
+	trigger: ClickTrigger,
+	effect: Effect,
+};
+
 export type ScrollStats = {
 	mouse_wheel: number,
 	passed_through: number,
@@ -100,11 +132,15 @@ export type Status = {
 	input: InputStatus,
 };
 
+export type SymbolicHotkeyId = "MissionControl" | "ShowDesktop";
+
 export type TapSet = {
 	buttons: boolean,
 	scroll: boolean,
 	flags: boolean,
 };
+
+export type TriggerDuration = "click" | "hold";
 
 /* Tauri Specta runtime */
 async function typedError<T, E>(result: Promise<T>): Promise<{ status: "ok"; data: T } | { status: "error"; error: E }> {

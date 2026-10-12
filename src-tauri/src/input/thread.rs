@@ -243,6 +243,7 @@ mod tests {
                 buttons_enabled: true,
                 scroll_enabled: false,
             },
+            ..Config::default()
         };
 
         InputConfigBridge(handle).config_changed(&config);

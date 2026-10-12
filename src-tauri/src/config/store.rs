@@ -128,6 +128,7 @@ mod tests {
                 buttons_enabled: true,
                 scroll_enabled: false,
             },
+            ..Config::default()
         }
     }
 
