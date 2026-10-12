@@ -57,6 +57,9 @@ pub fn scroll_fields(event: &CGEvent) -> ScrollFields {
         delta_axis1: get(CGEventField::ScrollWheelEventDeltaAxis1),
         delta_axis2: get(CGEventField::ScrollWheelEventDeltaAxis2),
         sender_id: get(SENDER_ID_FIELD) as u64,
+        point_delta_axis1: get(CGEventField::ScrollWheelEventPointDeltaAxis1),
+        point_delta_axis2: get(CGEventField::ScrollWheelEventPointDeltaAxis2),
+        flags: CGEvent::flags(Some(event)).0,
         user_data: get(CGEventField::EventSourceUserData),
     }
 }
@@ -658,9 +661,18 @@ mod tests {
         CGEvent::set_integer_value_field(Some(&event), CGEventField::EventSourceUserData, 42);
         CGEvent::set_integer_value_field(Some(&event), SENDER_ID_FIELD, 12345);
 
+        CGEvent::set_integer_value_field(
+            Some(&event),
+            CGEventField::ScrollWheelEventPointDeltaAxis1,
+            -36,
+        );
+        CGEvent::set_flags(Some(&event), CGEventFlags::MaskControl);
+
         let fields = scroll_fields(&event);
 
         assert_eq!(fields.delta_axis1, -3);
+        assert_eq!(fields.point_delta_axis1, -36);
+        assert_eq!(fields.flags & 0x0004_0000, 0x0004_0000, "Control held");
         assert_eq!(fields.delta_axis2, 1);
         assert_eq!(fields.user_data, 42);
         assert_eq!(fields.sender_id, 12345);
