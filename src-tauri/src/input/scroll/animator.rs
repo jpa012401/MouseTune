@@ -128,7 +128,7 @@ impl Animator {
     /// it and begins a new one (design §3).
     pub fn tick(&mut self, tick: Tick, now: Instant) {
         let x = self.rate.observe(&tick, now);
-        let px = tick_px(self.settings.speed, x, &tick);
+        let px = tick_px(self.settings.speed, false, x, &tick);
         let params = params(self.settings.smoothness, x);
         if let Some(g) = self.gesture.as_mut()
             && g.axis == tick.axis
@@ -363,6 +363,8 @@ mod tests {
             sign: 1,
             lines: 1,
             points: 0,
+            precise: false,
+            swift: false,
         }
     }
 
