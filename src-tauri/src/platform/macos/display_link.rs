@@ -230,9 +230,10 @@ impl FrameInner {
     /// While the display link paces, the timer waits just past `STALL` as a
     /// backstop. Every link frame pushes it on; if the link goes silent
     /// (display unplugged or asleep) it fires, `frame()` sees the stall and
-    /// restarts the pacing, so a coast ends without another wheel tick. Once
-    /// fired it repeats at `FRAME_SECS` until the next frame pushes it on
-    /// again, which is harmless: frames are time-based.
+    /// restarts the pacing, so a coast ends without another wheel tick. It
+    /// fires once per silence: that `frame()` then restarts the display link
+    /// (which re-arms the backstop), hands the timer to the `Timer` pacer
+    /// when the link won't start, or parks it when no frame is wanted.
     fn arm_backstop(&self) {
         if self.running.get() == Some(Pacer::DisplayLink)
             && let Some(timer) = self.timer.get()
