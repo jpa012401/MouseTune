@@ -14,7 +14,9 @@ use crate::actions::{
 
 type CGError = i32;
 type GetValue = unsafe extern "C" fn(i32, *mut u16, *mut u16, *mut u32) -> CGError;
-type IsEnabled = unsafe extern "C" fn(i32) -> bool;
+/// Returns a C `bool` as a byte: a reverse-engineered API must not hand Rust
+/// a `bool` that might be neither 0 nor 1.
+type IsEnabled = unsafe extern "C" fn(i32) -> u8;
 type SetValue = unsafe extern "C" fn(i32, u16, u16, u32) -> CGError;
 type SetEnabled = unsafe extern "C" fn(i32, bool) -> CGError;
 
@@ -27,10 +29,13 @@ unsafe extern "C" {
     fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
 }
 
-/// Looks up a C function by name. `F` must be an `unsafe extern "C" fn`
-/// type whose signature matches the symbol; callers pick one of the type
-/// aliases above.
-pub(crate) fn resolve<F: Copy>(name: &CStr) -> Option<F> {
+/// Looks up a C function by name.
+///
+/// # Safety
+///
+/// `F` must be an `unsafe extern "C" fn` type matching the C signature of
+/// `name`; callers pick one of the type aliases above.
+pub(crate) unsafe fn resolve<F: Copy>(name: &CStr) -> Option<F> {
     // A function pointer is pointer-sized on every Apple target; refuse to
     // compile for any `F` that isn't, so the copy below can't truncate.
     const { assert!(size_of::<F>() == size_of::<*mut c_void>()) };
@@ -40,8 +45,8 @@ pub(crate) fn resolve<F: Copy>(name: &CStr) -> Option<F> {
         return None;
     }
     debug_assert_eq!(size_of::<F>(), size_of::<*mut c_void>());
-    // SAFETY: F is a function-pointer type matching the symbol's C signature
-    // (see the type aliases), the sizes are equal (checked at compile time
+    // SAFETY: the caller guarantees F is a function-pointer type matching the
+    // symbol's C signature, the sizes are equal (checked at compile time
     // above), and `ptr` is non-null, so the copied value is a valid fn pointer.
     Some(unsafe { std::mem::transmute_copy(&ptr) })
 }
@@ -56,10 +61,15 @@ pub struct MacSymbolicHotkeys {
 impl MacSymbolicHotkeys {
     pub fn load() -> Option<Self> {
         Some(Self {
-            get: resolve(c"CGSGetSymbolicHotKeyValue")?,
-            is_enabled: resolve(c"CGSIsSymbolicHotKeyEnabled")?,
-            set: resolve(c"CGSSetSymbolicHotKeyValue")?,
-            set_enabled: resolve(c"CGSSetSymbolicHotKeyEnabled")?,
+            // SAFETY: each type alias is the documented reverse-engineered
+            // C signature of the symbol it resolves.
+            get: unsafe { resolve::<GetValue>(c"CGSGetSymbolicHotKeyValue") }?,
+            // SAFETY: as above.
+            is_enabled: unsafe { resolve::<IsEnabled>(c"CGSIsSymbolicHotKeyEnabled") }?,
+            // SAFETY: as above.
+            set: unsafe { resolve::<SetValue>(c"CGSSetSymbolicHotKeyValue") }?,
+            // SAFETY: as above.
+            set_enabled: unsafe { resolve::<SetEnabled>(c"CGSSetSymbolicHotKeyEnabled") }?,
         })
     }
 }
@@ -73,7 +83,7 @@ impl SymbolicHotkeys for MacSymbolicHotkeys {
             return None;
         }
         // SAFETY: plain call with the declared signature.
-        let enabled = unsafe { (self.is_enabled)(i32::from(id)) };
+        let enabled = unsafe { (self.is_enabled)(i32::from(id)) } != 0;
         Some(HotkeyState {
             enabled,
             binding: KeyBinding {
@@ -104,7 +114,9 @@ mod tests {
 
     #[test]
     fn symbol_lookup_fails_cleanly_for_a_name_that_does_not_exist() {
-        assert!(resolve::<unsafe extern "C" fn()>(c"MouseTuneNoSuchSymbol").is_none());
+        // SAFETY: the symbol doesn't exist, so no pointer is ever produced;
+        // `fn()` is pointer-sized as `resolve` requires.
+        assert!(unsafe { resolve::<unsafe extern "C" fn()>(c"MouseTuneNoSuchSymbol") }.is_none());
     }
 
     /// Read-only: reads Mission Control's binding; never sets anything.
