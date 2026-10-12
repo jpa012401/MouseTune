@@ -203,4 +203,14 @@ describe("Scroll page", () => {
     fireEvent.change(await screen.findByRole("combobox", { name: "Scroll faster" }), { target: { value: "Control" } });
     expect((await screen.findByText("Couldn’t save your settings: ⌥ Option is already used for another scroll modifier.")).getAttribute("role")).toBe("alert");
   });
+
+  it("binds a zoom key", async () => {
+    const saved: Config[] = [];
+    mockBackend({ get_status: () => status(), set_config: (a) => { const c = (a as { config: Config }).config; saved.push(c); return c; } });
+    renderScroll();
+    fireEvent.change(await screen.findByRole("combobox", { name: "Zoom" }), { target: { value: "Command" } });
+    await waitFor(() =>
+      expect(saved).toEqual([scrollConfig({ keyboard_modifiers: { horizontal: "Shift", precise: "Option", swift: null, zoom: "Command" } })]),
+    );
+  });
 });

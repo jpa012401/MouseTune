@@ -79,6 +79,12 @@ export function General() {
               on={view.config.general.scroll_enabled}
               onToggle={() => void setGeneral({ scroll_enabled: !view.config.general.scroll_enabled })}
             />
+            <SwitchRow
+              label="Freeze pointer while dragging"
+              help="Keeps the pointer still during drag gestures, like a trackpad."
+              on={view.config.general.freeze_pointer_during_drag}
+              onToggle={() => void setGeneral({ freeze_pointer_during_drag: !view.config.general.freeze_pointer_during_drag })}
+            />
           </ul>
           {saveError && (
             <p role="alert" className="mt-2 text-sm text-red-600">
@@ -108,6 +114,7 @@ export function General() {
         <TapRow label="Buttons" on={input?.taps.buttons ?? false} />
         <TapRow label="Scroll" on={input?.taps.scroll ?? false} />
         <TapRow label="Modifier keys" on={input?.taps.flags ?? false} />
+        <TapRow label="Drag" on={input?.taps.drag ?? false} />
       </ul>
 
       <h2 className="mb-2 text-sm font-semibold">Scroll events</h2>
