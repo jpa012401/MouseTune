@@ -183,15 +183,22 @@ impl ButtonRouter {
         }
     }
 
+    /// Swaps the bindings and ends the cycle. A drag or modifier in
+    /// progress is ended first, under the old bindings it was started with.
     pub fn set_remaps(&mut self, remaps: CompiledRemaps) -> Decision {
+        let mut d = Decision::pass();
+        self.let_go(&mut d.outcomes);
         self.remaps = remaps;
-        self.reset()
+        self.end(&mut d.outcomes);
+        d
     }
 
-    /// Ends the click cycle. Keeps the swallowed bits: the button tap is
-    /// still running, so the ups of swallowed downs will arrive.
+    /// Ends the click cycle, and any drag or modifier it drives. Keeps the
+    /// swallowed bits: the button tap is still running, so the ups of
+    /// swallowed downs will arrive.
     pub fn reset(&mut self) -> Decision {
         let mut d = Decision::pass();
+        self.let_go(&mut d.outcomes);
         self.end(&mut d.outcomes);
         d
     }
@@ -200,6 +207,7 @@ impl ButtonRouter {
     /// events: ups (and fresh downs) went to the OS meanwhile, so a kept bit
     /// could swallow an up whose down reached an app. An unpaired up passing
     /// is harmless; that one being swallowed leaves the app's button stuck.
+    /// Call `release_all` first: a held-through slot isn't cleared here.
     pub fn forget_swallowed(&mut self) {
         self.swallowed = 0;
     }
@@ -1280,10 +1288,56 @@ mod tests {
             &[Outcome::DragEnd, Outcome::WantsMotion(false)]
         );
         assert!(on_down.contains(&Outcome::Fire(BACK)), "B4 still clicks");
+        assert!(
+            !on_down.contains(&Outcome::Fire(MC)),
+            "an interrupted drag never clicks"
+        );
         assert_eq!(
             outcomes(r.release_all()),
             vec![Outcome::Disarm(TimerKind::Expiry)],
             "the drag is already over; only B4's expiry timer is left"
+        );
+    }
+
+    #[test]
+    fn changing_the_bindings_mid_drag_ends_the_drag() {
+        let mut r = swipe_router();
+        down(&mut r, MIDDLE);
+        r.on_motion(9, 0);
+        let changed = outcomes(r.set_remaps(compile(&Config::default())));
+        assert!(changed.contains(&Outcome::DragEnd));
+        assert!(changed.contains(&Outcome::WantsMotion(false)));
+        assert!(!r.wants_motion());
+        assert_eq!(outcomes(r.release_all()), vec![], "nothing left open");
+    }
+
+    #[test]
+    fn changing_the_bindings_releases_a_used_scroll_modifier() {
+        let mut r = router_with(
+            |b| {
+                b.scroll_bindings = vec![ScrollBinding {
+                    button: 4,
+                    effect: ScrollEffect::Zoom,
+                }]
+            },
+            OutputSupport::NONE,
+        );
+        down(&mut r, 3);
+        r.acted_as_modifier();
+        assert!(
+            outcomes(r.set_remaps(compile(&Config::default())))
+                .contains(&Outcome::ModifierReleased)
+        );
+    }
+
+    #[test]
+    fn a_reset_mid_drag_ends_the_drag() {
+        let mut r = swipe_router();
+        down(&mut r, MIDDLE);
+        r.on_motion(9, 0);
+        assert_eq!(
+            outcomes(r.reset()),
+            vec![Outcome::DragEnd, Outcome::WantsMotion(false)]
         );
     }
 
