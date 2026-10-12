@@ -8,7 +8,11 @@ use specta::Type;
 use crate::{
     actions::keys::is_modifier_key,
     config::schema::{Action, Remap, TriggerDuration},
+    input::remaps::{MAX_BUTTONS, MAX_LEVEL},
 };
+
+/// 1-based: left (1) and right (2) stay with macOS.
+pub const FIRST_REMAPPABLE_BUTTON: u8 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub enum RemapProblem {
@@ -22,13 +26,13 @@ pub enum RemapProblem {
 /// The per-entry rules shared with `compile` (which skips what fails).
 pub fn check_remap(remap: &Remap) -> Result<(), RemapProblem> {
     let t = remap.trigger;
-    if t.button < 3 {
+    if t.button < FIRST_REMAPPABLE_BUTTON {
         return Err(RemapProblem::ButtonNotRemappable);
     }
-    if t.button > 32 {
+    if usize::from(t.button) > MAX_BUTTONS {
         return Err(RemapProblem::ButtonOutOfRange);
     }
-    if !(1..=3).contains(&t.level) {
+    if !(1..=MAX_LEVEL).contains(&t.level) {
         return Err(RemapProblem::LevelOutOfRange);
     }
     if let Action::KeyCombo { key_code, .. } = remap.effect.action

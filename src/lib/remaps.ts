@@ -21,10 +21,12 @@ export function findTrigger(remaps: Remap[], trigger: ClickTrigger): number {
   );
 }
 
-/** A single click must wait out the double-click window when the button also has a multi-click binding. */
+/**
+ * A single click must wait out the double-click window whenever the button has a multi-click binding,
+ * even with no single-click row: the router replays the plain click only after the window expires.
+ */
 export function waitsForDoubleClick(remaps: Remap[], button: number): boolean {
-  const levels = remaps.filter((r) => r.trigger.button === button).map((r) => r.trigger.level);
-  return levels.includes(1) && levels.some((level) => level >= 2);
+  return remaps.some((r) => r.trigger.button === button && r.trigger.level >= 2);
 }
 
 const remap = (button: number, duration: TriggerDuration, action: Action): Remap => ({

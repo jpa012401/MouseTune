@@ -96,10 +96,10 @@ export function AddRemapPanel({ remaps, onDone }: { remaps: Remap[]; onDone: () 
           </>
         ) : (
           <>
-            <p className="mb-1">Press the mouse button you want to remap…</p>
+            <p role="status" className="mb-1">Press the mouse button you want to remap…</p>
             <p className="mb-3 text-xs text-neutral-500">Left and right buttons can’t be remapped.</p>
             <div className="flex items-center gap-3">
-              <span aria-live="polite" className="tabular-nums text-neutral-500">{`${secondsLeft} s`}</span>
+              <span aria-live="off" className="tabular-nums text-neutral-500">{`${secondsLeft} s`}</span>
               {cancelButton}
             </div>
           </>

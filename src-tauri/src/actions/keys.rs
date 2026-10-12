@@ -143,6 +143,11 @@ pub fn implied_flags(key_code: u16) -> ModifierMask {
     key_fact(key_code).map_or(NONE, |(_, _, flags)| *flags)
 }
 
+/// AppKit's function-key characters (U+F700–U+F8FF) are private-use and draw as nothing.
+fn is_private_use(c: char) -> bool {
+    ('\u{F700}'..='\u{F8FF}').contains(&c)
+}
+
 /// The label the UI shows for a captured key: a fixed name for special keys,
 /// otherwise the typed characters upper-cased, or `Key {code}` when they
 /// aren't printable.
@@ -151,7 +156,7 @@ pub fn key_label(key_code: u16, chars: &[u16]) -> String {
         return (*label).to_string();
     }
     let typed = String::from_utf16_lossy(chars).trim().to_uppercase();
-    if typed.is_empty() || typed.chars().any(char::is_control) {
+    if typed.is_empty() || typed.chars().any(|c| c.is_control() || is_private_use(c)) {
         format!("Key {key_code}")
     } else {
         typed
@@ -185,6 +190,14 @@ mod tests {
     fn unknown_unprintable_keys_fall_back_to_their_code() {
         assert_eq!(key_label(0x47, &[0x10]), "Key 71");
         assert_eq!(key_label(0x47, &[]), "Key 71");
+    }
+
+    #[test]
+    fn private_use_characters_are_not_printable() {
+        // The Help key types U+F746 (NSHelpFunctionKey), which no font draws.
+        assert_eq!(key_label(0x72, &[0xF746]), "Key 114");
+        assert_eq!(key_label(0x47, &[0xF700]), "Key 71");
+        assert_eq!(key_label(0x47, &[0xF8FF]), "Key 71");
     }
 
     #[test]

@@ -123,6 +123,14 @@ describe("Buttons page", () => {
     vi.useRealTimers();
   });
 
+  it("announces the capture prompt but not every countdown tick", async () => {
+    mockBackend({ get_status: tapsOn, start_capture: () => null, stop_capture: () => null });
+    renderButtons();
+    fireEvent.click(await screen.findByRole("button", { name: "+ Add remap" }));
+    expect(screen.getByRole("status").textContent).toBe("Press the mouse button you want to remap…");
+    expect(screen.getByText("10 s").getAttribute("aria-live")).toBe("off");
+  });
+
   it("changes a row's action", async () => {
     let saved: Config | undefined;
     mockBackend({ get_status: tapsOn, set_config: (a) => (saved = (a as { config: Config }).config) });

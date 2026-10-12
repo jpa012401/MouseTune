@@ -18,11 +18,13 @@ export function ActionPicker({ value, onChange, label = "Action" }: Props) {
   const phase = useCaptureStore((s) => s.phase);
   const combo = useCaptureStore((s) => s.combo);
   const error = useCaptureStore((s) => s.error);
+  const timedOut = useCaptureStore((s) => s.timedOut);
   const [keysChosen, setKeysChosen] = useState(value?.type === "KeyCombo");
   // True only while a recording this picker started is running, so another picker's recording is ignored.
   const [listening, setListening] = useState(false);
   // Only an error from this picker's own recording is shown; the store's error may belong to a button capture.
   const [ownError, setOwnError] = useState<string | null>(null);
+  const [ownTimeout, setOwnTimeout] = useState(false);
   const listeningRef = useRef(false);
   listeningRef.current = listening;
 
@@ -30,8 +32,9 @@ export function ActionPicker({ value, onChange, label = "Action" }: Props) {
     if (!listening || phase === "recording") return;
     setListening(false);
     setOwnError(error);
+    setOwnTimeout(timedOut);
     if (combo) onChange({ type: "KeyCombo", ...combo });
-  }, [listening, phase, combo, error, onChange]);
+  }, [listening, phase, combo, error, timedOut, onChange]);
 
   useEffect(
     () => () => {
@@ -43,6 +46,7 @@ export function ActionPicker({ value, onChange, label = "Action" }: Props) {
 
   function record() {
     setOwnError(null);
+    setOwnTimeout(false);
     void useCaptureStore.getState().startRecording();
     setListening(true);
   }
@@ -99,6 +103,7 @@ export function ActionPicker({ value, onChange, label = "Action" }: Props) {
             <button type="button" className={buttonClass} onClick={record}>
               Record again
             </button>
+            {ownTimeout && <span className="text-sm text-neutral-500">No shortcut pressed. Try again.</span>}
             {ownError && (
               <span role="alert" className="text-sm text-red-600">
                 {ownError}

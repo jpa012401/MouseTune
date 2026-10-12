@@ -50,9 +50,13 @@ describe("waitsForDoubleClick", () => {
     expect(waitsForDoubleClick([row(4, 3, "hold"), row(4, 1, "hold")], 4)).toBe(true);
   });
 
-  it("is false with only single clicks, only multi-clicks, or on another button", () => {
+  it("is true with only a multi-click binding, because the router replays a plain click after the wait", () => {
+    expect(waitsForDoubleClick([row(4, 2, "click")], 4)).toBe(true);
+    expect(waitsForDoubleClick([row(4, 3, "hold")], 4)).toBe(true);
+  });
+
+  it("is false with only single clicks or holds, or on another button", () => {
     expect(waitsForDoubleClick([row(3, 1, "click"), row(3, 1, "hold")], 3)).toBe(false);
-    expect(waitsForDoubleClick([row(4, 2, "click")], 4)).toBe(false);
     expect(waitsForDoubleClick([row(4, 1, "click"), row(5, 2, "click")], 4)).toBe(false);
   });
 });

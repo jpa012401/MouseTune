@@ -38,7 +38,7 @@ This is a mouse utility for my own Macs, not a platform. No accounts, no telemet
 
 ## Glossary
 
-- **Tap**: a CGEventTap. Four exist: Buttons, Scroll, Flags (modifier keys) and Keys (only while the recorder runs). They are switched on and off as a set (`TapSet`), never one by one from feature code.
+- **Tap**: a CGEventTap. Four exist: Buttons, Scroll, Flags (modifier keys) and Keys (only while the recorder runs). They are switched on and off as a set (`TapSet`), never one by one from feature code, except that the key recorder releases its own Keys tap from inside its callback (`TapManager::release`).
 - **Tracked mouse**: a connected HID mouse that isn't excluded. Only tracked mice turn taps on.
 - **Excluded device**: Apple vendor IDs `0x05AC` or `0x004C`, or a name containing "trackpad". These already behave like trackpads; we leave them alone.
 - **Sender ID**: CGEvent field 87, the IORegistry ID of the HID service that produced an event. It's how an event is matched to a device.
