@@ -19,9 +19,12 @@ use objc2_core_foundation::{
 };
 
 use crate::{
+    actions::{ActionSink, Job},
     input::{
-        engine::{EngineObserver, InputEngine, TapHandler},
+        engine::{ButtonSetup, EngineObserver, InputEngine, TapHandler},
         guard::guarded,
+        remaps::CompiledRemaps,
+        router::{ClickTimers, TimerKind},
         taps::TapDemand,
         thread::{Control, Flow, InputShared, Waker, handle_control},
     },
@@ -58,6 +61,21 @@ pub fn start(
 }
 
 type Engine = Rc<RefCell<InputEngine<MacTapController>>>;
+
+// Replaced in Phase 4a Task 8.
+struct NoTimers;
+impl ClickTimers for NoTimers {
+    fn arm(&mut self, _: TimerKind, _: Duration) {}
+    fn disarm(&mut self, _: TimerKind) {}
+}
+
+// Replaced in Phase 4a Task 8.
+struct NoSink;
+impl ActionSink for NoSink {
+    fn submit(&self, _: Job) -> bool {
+        false
+    }
+}
 
 /// What the control source and watchdog timer callbacks reach through their
 /// `info` pointer. Owned by `run_input_thread`, freed after the run loop stops.
@@ -123,6 +141,13 @@ fn run_input_thread(
         trusted,
         demand,
         Arc::clone(&shared.counters),
+        // Replaced in Phase 4a Task 8.
+        ButtonSetup {
+            remaps: CompiledRemaps::empty(),
+            timers: Box::new(NoTimers),
+            sink: Box::new(NoSink),
+            counters: Arc::default(),
+        },
         observer,
     )));
     let handler: Rc<RefCell<dyn TapHandler>> = engine.clone();

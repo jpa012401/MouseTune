@@ -18,6 +18,7 @@ use crate::{
     },
     input::{
         engine::{EngineObserver, EngineSnapshot, InputEngine, ScrollCounters},
+        remaps::{CompiledRemaps, compile},
         taps::{TapController, TapDemand},
     },
     permission_monitor::PermissionObserver,
@@ -29,6 +30,9 @@ use crate::{
 pub enum Control {
     SetTrusted(bool),
     SetDemand(TapDemand),
+    /// Boxed: the compiled tables are large, and every message pays for the
+    /// biggest variant.
+    SetRemaps(Box<CompiledRemaps>),
     Shutdown,
 }
 
@@ -115,6 +119,7 @@ pub struct InputConfigBridge(pub Arc<InputHandle>);
 impl ConfigObserver for InputConfigBridge {
     fn config_changed(&self, config: &Config) {
         self.0.send(Control::SetDemand(tap_demand(config)));
+        self.0.send(Control::SetRemaps(Box::new(compile(config))));
     }
 }
 
@@ -126,6 +131,10 @@ pub fn handle_control<C: TapController>(engine: &mut InputEngine<C>, msg: Contro
         }
         Control::SetDemand(demand) => {
             engine.set_demand(demand);
+            Flow::Continue
+        }
+        Control::SetRemaps(remaps) => {
+            engine.set_remaps(*remaps);
             Flow::Continue
         }
         Control::Shutdown => Flow::Stop,
@@ -174,10 +183,11 @@ mod tests {
         config::schema::General,
         input::{
             devices::DeviceEvent,
-            engine::{EngineObserver, InputEngine},
+            engine::{ButtonSetup, EngineObserver, InputEngine, TapHandler},
+            router::{ButtonEvent, ButtonKind, Verdict},
             taps::{TapDemand, TapSet},
         },
-        test_support::{FakeTapController, mouse},
+        test_support::{FakeSink, FakeTapController, FakeTimers, mouse},
     };
 
     #[derive(Default)]
@@ -200,6 +210,12 @@ mod tests {
             trusted,
             TapDemand::ALL,
             Arc::default(),
+            ButtonSetup {
+                remaps: compile(&Config::default()),
+                timers: Box::new(FakeTimers::default()),
+                sink: Box::new(FakeSink::default()),
+                counters: Arc::default(),
+            },
             Box::new(Ignore),
         );
         engine.start();
@@ -256,7 +272,30 @@ mod tests {
                 flags: true
             }))
         );
-        assert_eq!(waker.0.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            rx.try_recv(),
+            Ok(Control::SetRemaps(Box::new(compile(&config))))
+        );
+        assert_eq!(waker.0.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn set_remaps_reaches_the_engine_and_continues() {
+        let (mut engine, _) = engine(true);
+        assert_eq!(
+            handle_control(
+                &mut engine,
+                Control::SetRemaps(Box::new(CompiledRemaps::empty()))
+            ),
+            Flow::Continue
+        );
+        let middle_down = ButtonEvent {
+            kind: ButtonKind::Down,
+            button: 2,
+            sender_id: 10,
+            user_data: 0,
+        };
+        assert_eq!(engine.on_button(&middle_down), Verdict::Pass);
     }
 
     #[test]

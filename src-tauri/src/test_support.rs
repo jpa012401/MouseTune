@@ -15,6 +15,7 @@ use crate::{
         keys::{KeyBinding, KeyStroke},
         perform::{EventPoster, FrontmostApp, HotkeyState, SymbolicHotkeys},
     },
+    input::router::{ClickTimers, TimerKind},
 };
 
 /// Records every OS call, in order, with its argument.
@@ -313,5 +314,25 @@ pub struct FakeFrontmost(pub Option<&'static str>);
 impl FrontmostApp for FakeFrontmost {
     fn bundle_id(&self) -> Option<String> {
         self.0.map(String::from)
+    }
+}
+
+/// Records arm/disarm calls as strings ("arm Hold 250ms", "disarm Expiry").
+#[derive(Clone, Default)]
+pub struct FakeTimers(pub Arc<Mutex<Vec<String>>>);
+impl FakeTimers {
+    pub fn calls(&self) -> Vec<String> {
+        self.0.lock().unwrap().clone()
+    }
+}
+impl ClickTimers for FakeTimers {
+    fn arm(&mut self, kind: TimerKind, after: std::time::Duration) {
+        self.0
+            .lock()
+            .unwrap()
+            .push(format!("arm {kind:?} {}ms", after.as_millis()));
+    }
+    fn disarm(&mut self, kind: TimerKind) {
+        self.0.lock().unwrap().push(format!("disarm {kind:?}"));
     }
 }

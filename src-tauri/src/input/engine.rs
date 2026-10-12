@@ -10,11 +10,16 @@ use std::sync::{
 use serde::Serialize;
 use specta::Type;
 
-use crate::input::{
-    devices::{DeviceEvent, DeviceInfo, DeviceRegistry},
-    filter::{ScrollClass, ScrollFields, classify_scroll},
-    guard::{DisabledAction, DisabledReason, on_tap_disabled},
-    taps::{TapController, TapDemand, TapKind, TapManager, TapSet, desired_taps},
+use crate::{
+    actions::{ActionCounters, ActionSink, Job},
+    input::{
+        devices::{DeviceEvent, DeviceInfo, DeviceRegistry},
+        filter::{ScrollClass, ScrollFields, classify_scroll},
+        guard::{DisabledAction, DisabledReason, on_tap_disabled},
+        remaps::CompiledRemaps,
+        router::{ButtonEvent, ButtonRouter, ClickTimers, Decision, Outcome, TimerKind, Verdict},
+        taps::{TapController, TapDemand, TapKind, TapManager, TapSet, desired_taps},
+    },
 };
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Type)]
@@ -63,11 +68,22 @@ pub trait EngineObserver {
     fn snapshot_changed(&self, snapshot: &EngineSnapshot);
 }
 
-/// What tap callbacks call into. Implemented by `InputEngine`.
+/// What tap callbacks and click timers call into. Implemented by `InputEngine`.
 pub trait TapHandler {
     fn on_scroll(&mut self, fields: &ScrollFields);
-    fn on_button(&mut self, sender_id: u64);
+    fn on_button(&mut self, event: &ButtonEvent) -> Verdict;
+    #[allow(dead_code)] // Called by the click-timer adapter from Phase 4a Task 8.
+    fn on_click_timer(&mut self, kind: TimerKind);
     fn on_tap_disabled(&mut self, kind: TapKind, reason: DisabledReason);
+}
+
+/// What the engine needs to route buttons: the compiled bindings, the click
+/// timers it arms, and where fired actions go.
+pub struct ButtonSetup {
+    pub remaps: CompiledRemaps,
+    pub timers: Box<dyn ClickTimers>,
+    pub sink: Box<dyn ActionSink>,
+    pub counters: Arc<ActionCounters>,
 }
 
 pub struct InputEngine<C: TapController> {
@@ -76,6 +92,10 @@ pub struct InputEngine<C: TapController> {
     trusted: bool,
     demand: TapDemand,
     counters: Arc<ScrollCounters>,
+    router: ButtonRouter,
+    timers: Box<dyn ClickTimers>,
+    sink: Box<dyn ActionSink>,
+    actions: Arc<ActionCounters>,
     observer: Box<dyn EngineObserver>,
     last_published: Option<EngineSnapshot>,
 }
@@ -86,6 +106,7 @@ impl<C: TapController> InputEngine<C> {
         trusted: bool,
         demand: TapDemand,
         counters: Arc<ScrollCounters>,
+        buttons: ButtonSetup,
         observer: Box<dyn EngineObserver>,
     ) -> Self {
         Self {
@@ -94,6 +115,10 @@ impl<C: TapController> InputEngine<C> {
             trusted,
             demand,
             counters,
+            router: ButtonRouter::new(buttons.remaps),
+            timers: buttons.timers,
+            sink: buttons.sink,
+            actions: buttons.counters,
             observer,
             last_published: None,
         }
@@ -115,6 +140,11 @@ impl<C: TapController> InputEngine<C> {
         self.refresh();
     }
 
+    pub fn set_remaps(&mut self, remaps: CompiledRemaps) {
+        let decision = self.router.set_remaps(remaps);
+        self.apply(decision);
+    }
+
     pub fn apply_device_event(&mut self, event: DeviceEvent) {
         match event {
             DeviceEvent::Added(device) => self.devices.insert(device),
@@ -134,10 +164,34 @@ impl<C: TapController> InputEngine<C> {
         self.publish();
     }
 
+    /// Every trust, demand or device change ends the click cycle. The router
+    /// keeps its swallowed bits, so a press in flight still has its up eaten.
     fn refresh(&mut self) {
+        let reset = self.router.reset();
+        self.apply(reset);
         let desired = desired_taps(self.trusted, &self.devices, self.demand);
         self.taps.reconcile(desired);
         self.publish();
+    }
+
+    /// Carries out a router decision. Hot path: no allocation, no locks, no
+    /// logging.
+    fn apply(&mut self, decision: Decision) -> Verdict {
+        for outcome in decision.outcomes.iter() {
+            match outcome {
+                Outcome::Arm(kind, after) => self.timers.arm(kind, after),
+                Outcome::Disarm(kind) => self.timers.disarm(kind),
+                Outcome::Fire(action) => self.submit(Job::Perform(action)),
+                Outcome::Click { button } => self.submit(Job::Click { button }),
+            }
+        }
+        decision.verdict
+    }
+
+    fn submit(&self, job: Job) {
+        if !self.sink.submit(job) {
+            self.actions.record_dropped();
+        }
     }
 
     fn publish(&mut self) {
@@ -162,10 +216,21 @@ impl<C: TapController> TapHandler for InputEngine<C> {
         self.counters.record(classify_scroll(fields, &self.devices));
     }
 
-    /// Buttons are routed in Phase 4; Phase 2 passes them through.
-    fn on_button(&mut self, _sender_id: u64) {}
+    fn on_button(&mut self, event: &ButtonEvent) -> Verdict {
+        let decision = self.router.on_button(event);
+        self.apply(decision)
+    }
 
+    fn on_click_timer(&mut self, kind: TimerKind) {
+        let decision = self.router.on_timer(kind);
+        self.apply(decision);
+    }
+
+    /// The tap missed events while it was off, so any cycle in flight is
+    /// stale, whatever the reason.
     fn on_tap_disabled(&mut self, kind: TapKind, reason: DisabledReason) {
+        let reset = self.router.reset();
+        self.apply(reset);
         if on_tap_disabled(reason) == DisabledAction::Reenable {
             self.taps.reenable(kind);
         }
@@ -178,8 +243,14 @@ mod tests {
 
     use super::*;
     use crate::{
-        input::filter::{MOUSETUNE_EVENT_TAG, PassReason},
-        test_support::{FakeTapController, apple_trackpad, mouse},
+        actions::Job,
+        config::schema::{Action, Config, SymbolicHotkeyId},
+        input::{
+            filter::{MOUSETUNE_EVENT_TAG, PassReason},
+            remaps::compile,
+            router::ButtonKind,
+        },
+        test_support::{FakeSink, FakeTapController, FakeTimers, apple_trackpad, mouse},
     };
 
     const ALL_ON: TapSet = TapSet {
@@ -211,17 +282,29 @@ mod tests {
         taps: FakeTapController,
         published: Published,
         counters: Arc<ScrollCounters>,
+        timers: FakeTimers,
+        sink: FakeSink,
+        actions: Arc<ActionCounters>,
     }
 
     fn rig(trusted: bool) -> Rig {
         let taps = FakeTapController::default();
         let published = Published::default();
         let counters = Arc::new(ScrollCounters::default());
+        let timers = FakeTimers::default();
+        let sink = FakeSink::default();
+        let actions = Arc::new(ActionCounters::default());
         let mut engine = InputEngine::new(
             taps.clone(),
             trusted,
             TapDemand::ALL,
             Arc::clone(&counters),
+            ButtonSetup {
+                remaps: compile(&Config::default()),
+                timers: Box::new(timers.clone()),
+                sink: Box::new(sink.clone()),
+                counters: Arc::clone(&actions),
+            },
             Box::new(published.clone()),
         );
         engine.start();
@@ -230,7 +313,118 @@ mod tests {
             taps,
             published,
             counters,
+            timers,
+            sink,
+            actions,
         }
+    }
+
+    fn button(r: &mut Rig, kind: ButtonKind, button: u8, sender_id: u64) -> Verdict {
+        r.engine.on_button(&ButtonEvent {
+            kind,
+            button,
+            sender_id,
+            user_data: 0,
+        })
+    }
+    const MC: Job = Job::Perform(Action::SymbolicHotkey {
+        id: SymbolicHotkeyId::MissionControl,
+    });
+    const DESKTOP: Job = Job::Perform(Action::SymbolicHotkey {
+        id: SymbolicHotkeyId::ShowDesktop,
+    });
+
+    #[test]
+    fn a_middle_click_swallows_and_submits_mission_control() {
+        let mut r = rig(true);
+        r.engine.apply_device_event(DeviceEvent::Added(mouse(1)));
+        assert_eq!(button(&mut r, ButtonKind::Down, 2, 10), Verdict::Swallow);
+        assert_eq!(button(&mut r, ButtonKind::Up, 2, 10), Verdict::Swallow);
+        assert_eq!(*r.sink.jobs.lock().unwrap(), vec![MC]);
+        assert_eq!(
+            r.timers.calls(),
+            [
+                "arm Expiry 260ms",
+                "arm Hold 250ms",
+                "disarm Hold",
+                "disarm Expiry"
+            ]
+        );
+    }
+
+    #[test]
+    fn the_hold_timer_submits_show_desktop() {
+        let mut r = rig(true);
+        button(&mut r, ButtonKind::Down, 2, 10);
+        r.engine.on_click_timer(TimerKind::Hold);
+        assert_eq!(*r.sink.jobs.lock().unwrap(), vec![DESKTOP]);
+    }
+
+    #[test]
+    fn a_button_from_an_unknown_sender_is_still_routed() {
+        let mut r = rig(true); // no devices registered at all
+        assert_eq!(
+            button(&mut r, ButtonKind::Down, 3, 999_999),
+            Verdict::Swallow
+        );
+        assert_eq!(r.sink.jobs.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_full_queue_counts_a_drop_and_still_swallows() {
+        let mut r = rig(true);
+        r.sink.full.store(true, Ordering::SeqCst);
+        assert_eq!(button(&mut r, ButtonKind::Down, 3, 10), Verdict::Swallow);
+        assert_eq!(r.actions.stats().dropped, 1);
+    }
+
+    #[test]
+    fn config_change_mid_press_still_swallows_the_up() {
+        let mut r = rig(true);
+        button(&mut r, ButtonKind::Down, 2, 10);
+        r.engine.set_remaps(CompiledRemaps::empty());
+        r.engine.on_click_timer(TimerKind::Hold); // cancelled: must not fire
+        assert_eq!(button(&mut r, ButtonKind::Up, 2, 10), Verdict::Swallow);
+        assert!(r.sink.jobs.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_kill_switch_mid_press_still_swallows_the_up() {
+        let mut r = rig(true);
+        button(&mut r, ButtonKind::Down, 2, 10);
+        r.engine.set_demand(TapDemand {
+            buttons: false,
+            scroll: true,
+            flags: true,
+        });
+        assert_eq!(button(&mut r, ButtonKind::Up, 2, 10), Verdict::Swallow);
+        assert!(
+            r.timers
+                .calls()
+                .ends_with(&["disarm Hold".to_string(), "disarm Expiry".to_string()])
+        );
+        // The cycle was reset, so the release fires nothing.
+        assert!(r.sink.jobs.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_tap_timeout_mid_press_cancels_the_hold() {
+        let mut r = rig(true);
+        button(&mut r, ButtonKind::Down, 2, 10);
+        r.engine
+            .on_tap_disabled(TapKind::Buttons, DisabledReason::Timeout);
+        r.engine.on_click_timer(TimerKind::Hold);
+        assert!(r.sink.jobs.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_user_input_disable_mid_press_cancels_the_hold() {
+        let mut r = rig(true);
+        button(&mut r, ButtonKind::Down, 2, 10);
+        r.engine
+            .on_tap_disabled(TapKind::Buttons, DisabledReason::UserInput);
+        r.engine.on_click_timer(TimerKind::Hold);
+        assert!(r.sink.jobs.lock().unwrap().is_empty());
     }
 
     #[test]

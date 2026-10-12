@@ -19,6 +19,7 @@ use crate::input::{
     engine::TapHandler,
     filter::ScrollFields,
     guard::{DisabledReason, guarded},
+    router::{ButtonEvent, ButtonKind},
     taps::{TapController, TapKind},
 };
 
@@ -50,6 +51,22 @@ pub fn scroll_fields(event: &CGEvent) -> ScrollFields {
         tablet_device_id: get(CGEventField::TabletEventDeviceID),
         delta_axis1: get(CGEventField::ScrollWheelEventDeltaAxis1),
         delta_axis2: get(CGEventField::ScrollWheelEventDeltaAxis2),
+        sender_id: get(SENDER_ID_FIELD) as u64,
+        user_data: get(CGEventField::EventSourceUserData),
+    }
+}
+
+/// Copies a button tap event's fields. A button number that doesn't fit a
+/// `u8` saturates to 255, which the router passes as out of range.
+pub fn button_event(event_type: CGEventType, event: &CGEvent) -> ButtonEvent {
+    let get = |field| CGEvent::integer_value_field(Some(event), field);
+    ButtonEvent {
+        kind: if event_type == CGEventType::OtherMouseDown {
+            ButtonKind::Down
+        } else {
+            ButtonKind::Up
+        },
+        button: u8::try_from(get(CGEventField::MouseEventButtonNumber)).unwrap_or(u8::MAX),
         sender_id: get(SENDER_ID_FIELD) as u64,
         user_data: get(CGEventField::EventSourceUserData),
     }
@@ -256,8 +273,9 @@ unsafe extern "C-unwind" fn button_callback(
     event: NonNull<CGEvent>,
     user_info: *mut c_void,
 ) -> *mut CGEvent {
+    // The verdict is ignored until Phase 4a Task 8: every event still passes.
     dispatch(TapKind::Buttons, event_type, event, user_info, |h, e| {
-        h.on_button(CGEvent::integer_value_field(Some(e), SENDER_ID_FIELD) as u64)
+        let _ = h.on_button(&button_event(event_type, e));
     })
 }
 
@@ -275,7 +293,10 @@ unsafe extern "C-unwind" fn flags_callback(
 mod tests {
     use std::{cell::Cell, sync::atomic::Ordering};
 
-    use objc2_core_graphics::CGScrollEventUnit;
+    use objc2_core_foundation::CGPoint;
+    use objc2_core_graphics::{CGMouseButton, CGScrollEventUnit};
+
+    use crate::input::router::{TimerKind, Verdict};
 
     use super::*;
 
@@ -292,7 +313,10 @@ mod tests {
                 panic!("handler bug");
             }
         }
-        fn on_button(&mut self, _: u64) {}
+        fn on_button(&mut self, _: &ButtonEvent) -> Verdict {
+            Verdict::Pass
+        }
+        fn on_click_timer(&mut self, _: TimerKind) {}
         fn on_tap_disabled(&mut self, _: TapKind, _: DisabledReason) {}
     }
 
@@ -417,6 +441,62 @@ mod tests {
         assert_eq!(fields.user_data, 42);
         assert_eq!(fields.sender_id, 12345);
         assert_eq!(fields.is_continuous, 0, "line events are discrete");
+    }
+
+    #[test]
+    fn button_event_fields_are_copied_from_a_real_event() {
+        let e = CGEvent::new_mouse_event(
+            None,
+            CGEventType::OtherMouseUp,
+            CGPoint::ZERO,
+            CGMouseButton(3),
+        )
+        .unwrap();
+        CGEvent::set_integer_value_field(Some(&e), SENDER_ID_FIELD, 777);
+        assert_eq!(
+            button_event(CGEventType::OtherMouseUp, &e),
+            ButtonEvent {
+                kind: ButtonKind::Up,
+                button: 3,
+                sender_id: 777,
+                user_data: 0
+            }
+        );
+    }
+
+    #[test]
+    fn a_down_with_user_data_is_copied_as_a_down() {
+        let e = CGEvent::new_mouse_event(
+            None,
+            CGEventType::OtherMouseDown,
+            CGPoint::ZERO,
+            CGMouseButton(2),
+        )
+        .unwrap();
+        CGEvent::set_integer_value_field(Some(&e), CGEventField::EventSourceUserData, 42);
+        let fields = button_event(CGEventType::OtherMouseDown, &e);
+        assert_eq!(
+            (fields.kind, fields.button, fields.user_data),
+            (ButtonKind::Down, 2, 42)
+        );
+    }
+
+    /// CoreGraphics stores the button number as a signed byte: setting 258
+    /// reads back 2, and 255 reads back -1. So the out-of-range values a real
+    /// event can carry are negative, and they must not wrap into a valid CG
+    /// button number.
+    #[test]
+    fn a_button_number_that_doesnt_fit_u8_saturates_instead_of_wrapping() {
+        let e = CGEvent::new_mouse_event(
+            None,
+            CGEventType::OtherMouseDown,
+            CGPoint::ZERO,
+            CGMouseButton(3),
+        )
+        .unwrap();
+        CGEvent::set_integer_value_field(Some(&e), CGEventField::MouseEventButtonNumber, -126);
+        // `as u8` would give 130.
+        assert_eq!(button_event(CGEventType::OtherMouseDown, &e).button, 255);
     }
 
     /// Our synthetic smooth-scroll events (Phase 5) are pixel-based; the
