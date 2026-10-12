@@ -70,6 +70,24 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn an_older_file_keeps_its_remaps_and_gains_the_default_drag() {
+        let outcome = parse_config(Some(
+            r#"{ "version": 1, "buttons": { "remaps": [
+                { "trigger": { "button": 3, "level": 1, "duration": "hold" }, "effect": { "action": { "type": "SymbolicHotkey", "id": "ShowDesktop" } } }
+            ] } }"#,
+        ));
+        assert!(!outcome.recover);
+        let b = &outcome.config.buttons;
+        assert_eq!(b.remaps.len(), 1, "the file's remaps are kept as they are");
+        assert_eq!(
+            b.drags,
+            crate::config::schema::Buttons::default().drags,
+            "the new list comes from the defaults"
+        );
+        assert!(outcome.config.general.freeze_pointer_during_drag);
+    }
+
+    #[test]
     fn a_phase_5a_file_gets_the_modifier_defaults() {
         let outcome = parse_config(Some(
             r#"{ "version": 1, "scroll": { "smooth": true, "smoothness": "high", "speed": "low", "trackpad_simulation": false, "invert_vertical": true, "invert_horizontal": false } }"#,
@@ -178,6 +196,7 @@ mod tests {
             general: General {
                 buttons_enabled: false,
                 scroll_enabled: true,
+                freeze_pointer_during_drag: true,
             },
             ..Config::default()
         };
@@ -192,6 +211,7 @@ mod tests {
             general: General {
                 buttons_enabled: true,
                 scroll_enabled: false,
+                freeze_pointer_during_drag: true,
             },
             ..Config::default()
         };
@@ -214,6 +234,7 @@ mod tests {
             general: General {
                 buttons_enabled: true,
                 scroll_enabled: false,
+                freeze_pointer_during_drag: true,
             },
             ..Config::default()
         };

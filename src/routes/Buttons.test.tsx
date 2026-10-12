@@ -7,7 +7,7 @@ import { config, configView, defaultRemaps, inputStatus, mockBackend, status, ti
 
 /** Capture only sees presses through the buttons tap, so most tests need it on. */
 function tapsOn() {
-  return status({ input: inputStatus({ taps: { buttons: true, scroll: true, flags: true, keys: false } }) });
+  return status({ input: inputStatus({ taps: { buttons: true, scroll: true, flags: true, keys: false, drag: false } }) });
 }
 
 function renderButtons() {
@@ -28,7 +28,7 @@ describe("Buttons page", () => {
     const rows = within(list).getAllByRole("listitem").map((li) => li.textContent);
     expect(rows).toEqual([
       expect.stringContaining("Mission Control"),
-      expect.stringContaining("Show Desktop"),
+      expect.stringContaining("Spaces & Mission Control"),
       expect.stringContaining("Back"),
       expect.stringContaining("Forward"),
     ]);
@@ -36,7 +36,7 @@ describe("Buttons page", () => {
   });
 
   it("says so when there are no remaps", async () => {
-    mockBackend({ get_status: tapsOn, get_config: () => configView({ config: { ...config(), buttons: { remaps: [] } } }) });
+    mockBackend({ get_status: tapsOn, get_config: () => configView({ config: { ...config(), buttons: { ...config().buttons, remaps: [], drags: [] } } }) });
     renderButtons();
     expect(await screen.findByText("No buttons are remapped.")).toBeTruthy();
   });
@@ -164,6 +164,7 @@ describe("Buttons page", () => {
           config: {
             ...config(),
             buttons: {
+              ...config().buttons,
               remaps: [
                 { trigger: { button: 4, level: 1, duration: "click" }, effect: { action: { type: "SystemKey", key: "PlayPause" } } },
                 { trigger: { button: 5, level: 1, duration: "click" }, effect: { action: { type: "MouseClick", button: "Left", clicks: 2 } } },
@@ -182,18 +183,147 @@ describe("Buttons page", () => {
     mockBackend({ get_status: tapsOn, set_config: (a) => (saved = (a as { config: Config }).config) });
     renderButtons();
     fireEvent.click(within((await screen.findAllByRole("listitem"))[2]!).getByRole("button", { name: "Delete" }));
-    await waitFor(() => expect(saved!.buttons.remaps).toEqual([defaultRemaps[0], defaultRemaps[1], defaultRemaps[3]]));
+    await waitFor(() => expect(saved!.buttons.remaps).toEqual([defaultRemaps[0], defaultRemaps[2]]));
   });
 
   it("restore_defaults_keeps_the_kill_switches", async () => {
     let saved: Config | undefined;
     vi.spyOn(window, "confirm").mockReturnValue(true);
-    mockBackend({ get_status: tapsOn, get_config: () => configView({ config: { ...config({ buttons_enabled: false }), buttons: { remaps: [] } } }), set_config: (a) => (saved = (a as { config: Config }).config) });
+    mockBackend({ get_status: tapsOn, get_config: () => configView({ config: { ...config({ buttons_enabled: false }), buttons: { ...config().buttons, remaps: [] } } }), set_config: (a) => (saved = (a as { config: Config }).config) });
     renderButtons();
     fireEvent.click(await screen.findByRole("button", { name: "Restore defaults" }));
-    expect(window.confirm).toHaveBeenCalledWith("Replace your button remaps with the defaults?");
+    expect(window.confirm).toHaveBeenCalledWith("Replace your button bindings with the defaults?");
     await waitFor(() => expect(saved!.buttons.remaps).toEqual(defaultRemaps));
     expect(saved!.general.buttons_enabled).toBe(false);
+  });
+
+  it("lists drag, scroll and acts-as rows", async () => {
+    mockBackend({
+      get_status: tapsOn,
+      get_config: () => configView({ config: { ...config(), buttons: {
+        remaps: defaultRemaps,
+        drags: [{ button: 3, effect: { type: "SpacesAndMissionControl" } }],
+        scroll_bindings: [{ button: 4, effect: "Zoom" }],
+        hold_through: [{ button: 6, acts_as: "Middle" }],
+      } } }),
+    });
+    renderButtons();
+    expect(await screen.findByText("Middle button · Drag")).toBeTruthy();
+    expect(screen.getByText("Spaces & Mission Control")).toBeTruthy();
+    expect(screen.getByText("Button 4 · Scroll")).toBeTruthy();
+    expect(screen.getByText("Button 6 · Acts as")).toBeTruthy();
+  });
+
+  it("adds a drag with separate actions", async () => {
+    let saved: Config | undefined;
+    mockBackend({ get_status: tapsOn, start_capture: () => null, stop_capture: () => null, set_config: (a) => (saved = (a as { config: Config }).config) });
+    renderButtons();
+    fireEvent.click(await screen.findByRole("button", { name: "+ Add remap" }));
+    await act(() => emit("button-captured", { button: 7 }));
+    fireEvent.click(screen.getByRole("radio", { name: "Drag" }));
+    fireEvent.change(screen.getByLabelText("Drag effect"), { target: { value: "Discrete" } });
+    fireEvent.change(screen.getByLabelText("Left"), { target: { value: "nav:Back" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    await waitFor(() =>
+      expect(saved!.buttons.drags).toContainEqual({
+        button: 7,
+        effect: { type: "Discrete", left: { type: "Navigate", direction: "Back" }, right: null, up: null, down: null },
+      }),
+    );
+  });
+
+  it("adds a scroll binding", async () => {
+    const saved: Config[] = [];
+    mockBackend({ get_status: tapsOn, start_capture: () => null, stop_capture: () => null, set_config: (a) => { const c = (a as { config: Config }).config; saved.push(c); return c; } });
+    renderButtons();
+    fireEvent.click(await screen.findByRole("button", { name: "+ Add remap" }));
+    await act(() => emit("button-captured", { button: 4 }));
+    fireEvent.click(screen.getByRole("radio", { name: "Scroll" }));
+    fireEvent.change(screen.getByLabelText("Scroll effect"), { target: { value: "AppSwitcher" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    await waitFor(() => expect(saved.at(-1)!.buttons.scroll_bindings).toEqual([{ button: 4, effect: "AppSwitcher" }]));
+    expect(saved.at(-1)!.buttons.drags).toEqual(config().buttons.drags);
+    expect(saved.at(-1)!.buttons.remaps).toEqual(defaultRemaps);
+  });
+
+  it("adds an acts-as binding", async () => {
+    let saved: Config | undefined;
+    mockBackend({ get_status: tapsOn, start_capture: () => null, stop_capture: () => null, set_config: (a) => (saved = (a as { config: Config }).config) });
+    renderButtons();
+    fireEvent.click(await screen.findByRole("button", { name: "+ Add remap" }));
+    await act(() => emit("button-captured", { button: 6 }));
+    fireEvent.click(screen.getByRole("radio", { name: "Acts as" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "Acts as" }), { target: { value: "Middle" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    await waitFor(() => expect(saved!.buttons.hold_through).toEqual([{ button: 6, acts_as: "Middle" }]));
+  });
+
+  it("won't let a button with other bindings act as another button", async () => {
+    mockBackend({ get_status: tapsOn, start_capture: () => null, stop_capture: () => null });
+    renderButtons();
+    fireEvent.click(await screen.findByRole("button", { name: "+ Add remap" }));
+    await act(() => emit("button-captured", { button: 3 }));
+    fireEvent.click(screen.getByRole("radio", { name: "Acts as" }));
+    expect(screen.getByText("Middle button already has other bindings, so it can’t act as another button.")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Add" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("deletes a drag row", async () => {
+    let saved: Config | undefined;
+    mockBackend({ get_status: tapsOn, set_config: (a) => (saved = (a as { config: Config }).config) });
+    renderButtons();
+    const row = (await screen.findByText("Middle button · Drag")).closest("li")!;
+    fireEvent.click(within(row).getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(saved!.buttons.drags).toEqual([]));
+    expect(saved!.buttons.remaps).toEqual(defaultRemaps);
+  });
+
+  it("separate actions needs a direction before Add is enabled", async () => {
+    mockBackend({ get_status: tapsOn, start_capture: () => null, stop_capture: () => null });
+    renderButtons();
+    fireEvent.click(await screen.findByRole("button", { name: "+ Add remap" }));
+    await act(() => emit("button-captured", { button: 7 }));
+    fireEvent.click(screen.getByRole("radio", { name: "Drag" }));
+    fireEvent.change(screen.getByLabelText("Drag effect"), { target: { value: "Discrete" } });
+    expect(screen.getByText("Choose at least one direction.")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Add" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText("Left"), { target: { value: "nav:Back" } });
+    expect(screen.queryByText("Choose at least one direction.")).toBeNull();
+    expect((screen.getByRole("button", { name: "Add" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("an edited drag row can't be saved with no direction", async () => {
+    mockBackend({ get_status: tapsOn });
+    renderButtons();
+    const row = (await screen.findByText("Middle button · Drag")).closest("li")!;
+    fireEvent.click(within(row).getByRole("button", { name: "Change" }));
+    fireEvent.change(within(row).getByLabelText("Drag effect"), { target: { value: "Discrete" } });
+    expect(within(row).getByText("Choose at least one direction.")).toBeTruthy();
+    expect((within(row).getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("changes a drag row's effect", async () => {
+    let saved: Config | undefined;
+    mockBackend({ get_status: tapsOn, set_config: (a) => (saved = (a as { config: Config }).config) });
+    renderButtons();
+    const row = (await screen.findByText("Middle button · Drag")).closest("li")!;
+    fireEvent.click(within(row).getByRole("button", { name: "Change" }));
+    fireEvent.change(within(row).getByLabelText("Drag effect"), { target: { value: "ScrollSwipe" } });
+    fireEvent.click(within(row).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(saved!.buttons.drags).toEqual([{ button: 3, effect: { type: "ScrollSwipe" } }]));
+  });
+
+  it("restore defaults restores every binding list", async () => {
+    let saved: Config | undefined;
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    mockBackend({
+      get_status: tapsOn,
+      get_config: () => configView({ config: { ...config(), buttons: { remaps: [], drags: [], scroll_bindings: [{ button: 4, effect: "Zoom" }], hold_through: [] } } }),
+      set_config: (a) => (saved = (a as { config: Config }).config),
+    });
+    renderButtons();
+    fireEvent.click(await screen.findByRole("button", { name: "Restore defaults" }));
+    await waitFor(() => expect(saved!.buttons).toEqual(config().buttons));
   });
 
   it("cancelling restore defaults changes nothing", async () => {
@@ -221,8 +351,8 @@ describe("Buttons page", () => {
   });
 
   it("warns when single clicks will wait for a double click", async () => {
-    mockBackend({ get_status: tapsOn, get_config: () => configView({ config: { ...config(), buttons: { remaps: [
-      defaultRemaps[2]!, { trigger: { button: 4, level: 2, duration: "click" }, effect: { action: { type: "SymbolicHotkey", id: "Spotlight" } } },
+    mockBackend({ get_status: tapsOn, get_config: () => configView({ config: { ...config(), buttons: { ...config().buttons, remaps: [
+      defaultRemaps[1]!, { trigger: { button: 4, level: 2, duration: "click" }, effect: { action: { type: "SymbolicHotkey", id: "Spotlight" } } },
     ] } } }) });
     renderButtons();
     expect(await screen.findByText("Single clicks on this button will wait up to 260 ms.")).toBeTruthy();
@@ -365,8 +495,8 @@ describe("Buttons page", () => {
   });
 
   it("the double-click hint uses the configured window", async () => {
-    mockBackend({ get_status: tapsOn, get_config: () => configView({ config: { ...timingConfig({ hold_ms: 250, double_click_ms: 400 }), buttons: { remaps: [
-      defaultRemaps[2]!, { trigger: { button: 4, level: 2, duration: "click" }, effect: { action: { type: "SymbolicHotkey", id: "Spotlight" } } },
+    mockBackend({ get_status: tapsOn, get_config: () => configView({ config: { ...timingConfig({ hold_ms: 250, double_click_ms: 400 }), buttons: { ...config().buttons, remaps: [
+      defaultRemaps[1]!, { trigger: { button: 4, level: 2, duration: "click" }, effect: { action: { type: "SymbolicHotkey", id: "Spotlight" } } },
     ] } } }) });
     renderButtons();
     expect(await screen.findByText("Single clicks on this button will wait up to 400 ms.")).toBeTruthy();

@@ -13,14 +13,17 @@ pub enum TapKind {
     Flags,
     /// Key downs and ups, only while a shortcut is being recorded.
     Keys,
+    /// Pointer movement, only while a drag-bound button is down.
+    Drag,
 }
 
 impl TapKind {
-    pub const ALL: [TapKind; 4] = [
+    pub const ALL: [TapKind; 5] = [
         TapKind::Buttons,
         TapKind::Scroll,
         TapKind::Flags,
         TapKind::Keys,
+        TapKind::Drag,
     ];
 }
 
@@ -30,6 +33,7 @@ pub struct TapSet {
     pub scroll: bool,
     pub flags: bool,
     pub keys: bool,
+    pub drag: bool,
 }
 
 impl TapSet {
@@ -38,6 +42,7 @@ impl TapSet {
         scroll: false,
         flags: false,
         keys: false,
+        drag: false,
     };
 
     pub fn get(self, kind: TapKind) -> bool {
@@ -46,6 +51,7 @@ impl TapSet {
             TapKind::Scroll => self.scroll,
             TapKind::Flags => self.flags,
             TapKind::Keys => self.keys,
+            TapKind::Drag => self.drag,
         }
     }
 
@@ -55,18 +61,21 @@ impl TapSet {
             TapKind::Scroll => self.scroll = on,
             TapKind::Flags => self.flags = on,
             TapKind::Keys => self.keys = on,
+            TapKind::Drag => self.drag = on,
         }
     }
 }
 
-/// What the configuration needs (`config::schema::tap_demand`), plus
-/// whether a shortcut is being recorded (`keys`, set by the engine).
+/// What the configuration needs (`config::schema::tap_demand`). The engine
+/// sets `keys` (a shortcut is being recorded) and `drag` (a drag-bound
+/// button is down) itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TapDemand {
     pub buttons: bool,
     pub scroll: bool,
     pub flags: bool,
     pub keys: bool,
+    pub drag: bool,
 }
 
 #[cfg(test)]
@@ -76,6 +85,7 @@ impl TapDemand {
         scroll: true,
         flags: true,
         keys: true,
+        drag: true,
     };
 }
 
@@ -100,6 +110,8 @@ pub fn desired_taps(trusted: bool, devices: &DeviceRegistry, demand: TapDemand) 
         flags: demand.flags && any,
         // Recording a shortcut works from the keyboard alone.
         keys: demand.keys,
+        // Only while a drag-bound button is down (the engine sets it).
+        drag: demand.drag && buttons,
     }
 }
 
@@ -188,11 +200,13 @@ mod tests {
         scroll: true,
         flags: true,
         keys: false,
+        drag: false,
     };
 
     /// Everything the config can ask for; no recording.
     const MOUSE: TapDemand = TapDemand {
         keys: false,
+        drag: false,
         ..TapDemand::ALL
     };
 
@@ -202,6 +216,29 @@ mod tests {
             r.insert(d.clone());
         }
         r
+    }
+
+    #[test]
+    fn the_drag_tap_runs_only_when_asked_and_trusted() {
+        let mut reg = DeviceRegistry::default();
+        reg.insert(crate::test_support::mouse(1));
+        let demand = TapDemand {
+            drag: true,
+            ..TapDemand::ALL
+        };
+        assert!(desired_taps(true, &reg, demand).drag);
+        assert!(!desired_taps(false, &reg, demand).drag);
+        assert!(
+            !desired_taps(
+                true,
+                &reg,
+                TapDemand {
+                    drag: false,
+                    ..TapDemand::ALL
+                }
+            )
+            .drag
+        );
     }
 
     #[test]
@@ -238,6 +275,7 @@ mod tests {
             scroll: true,
             flags: true,
             keys: false,
+            drag: false,
         };
         assert_eq!(desired_taps(true, &with(&[basic]), MOUSE), want);
     }
@@ -253,6 +291,7 @@ mod tests {
             scroll: false,
             flags: true,
             keys: false,
+            drag: false,
         };
         assert_eq!(desired_taps(true, &with(&[no_wheel]), MOUSE), want);
     }
@@ -275,6 +314,7 @@ mod tests {
             scroll: false,
             flags: true,
             keys: false,
+            drag: false,
         };
         assert_eq!(
             desired_taps(true, &with(&[basic_mouse, trackpad]), MOUSE),
@@ -305,12 +345,14 @@ mod tests {
             scroll: false,
             flags: false,
             keys: false,
+            drag: false,
         };
         let want = TapSet {
             buttons: true,
             scroll: false,
             flags: false,
             keys: false,
+            drag: false,
         };
         assert_eq!(desired_taps(true, &with(&[mouse(1)]), demand), want);
     }
@@ -322,6 +364,7 @@ mod tests {
             scroll: false,
             flags: false,
             keys: true,
+            drag: false,
         };
         assert!(desired_taps(true, &DeviceRegistry::default(), demand).keys);
         assert!(!desired_taps(false, &DeviceRegistry::default(), demand).keys);
@@ -336,6 +379,7 @@ mod tests {
             scroll: true,
             flags: false,
             keys: true,
+            drag: false,
         });
         fake.os_disables(TapKind::Scroll);
 
@@ -356,7 +400,8 @@ mod tests {
                 buttons: false,
                 scroll: true,
                 flags: false,
-                keys: false
+                keys: false,
+                drag: false
             }
         );
     }
@@ -371,18 +416,21 @@ mod tests {
             scroll: false,
             flags: false,
             keys: false,
+            drag: false,
         });
         manager.reconcile(TapSet {
             buttons: true,
             scroll: false,
             flags: false,
             keys: false,
+            drag: false,
         });
         manager.reconcile(TapSet {
             buttons: false,
             scroll: true,
             flags: false,
             keys: false,
+            drag: false,
         });
 
         assert_eq!(
@@ -400,6 +448,7 @@ mod tests {
                 scroll: true,
                 flags: false,
                 keys: false,
+                drag: false,
             }
         );
     }
@@ -413,6 +462,7 @@ mod tests {
             scroll: true,
             flags: false,
             keys: false,
+            drag: false,
         });
 
         fake.os_disables(TapKind::Scroll);
@@ -424,6 +474,7 @@ mod tests {
                 scroll: true,
                 flags: false,
                 keys: false,
+                drag: false,
             }
         );
         assert_eq!(
@@ -433,6 +484,7 @@ mod tests {
                 scroll: true,
                 flags: false,
                 keys: false,
+                drag: false,
             }
         );
     }
@@ -456,6 +508,7 @@ mod tests {
             scroll: true,
             flags: false,
             keys: false,
+            drag: false,
         });
         assert_eq!(manager.enabled(), TapSet::NONE);
 
@@ -468,6 +521,7 @@ mod tests {
                 scroll: true,
                 flags: false,
                 keys: false,
+                drag: false,
             }
         );
         assert!(manager.enabled().scroll);
@@ -482,6 +536,7 @@ mod tests {
             scroll: false,
             flags: false,
             keys: false,
+            drag: false,
         });
         fake.os_disables(TapKind::Buttons);
 
@@ -494,6 +549,7 @@ mod tests {
                 scroll: false,
                 flags: false,
                 keys: false,
+                drag: false,
             }
         );
     }
@@ -507,6 +563,7 @@ mod tests {
             scroll: true,
             flags: false,
             keys: false,
+            drag: false,
         });
         fake.wedge(TapKind::Scroll);
 
@@ -517,6 +574,7 @@ mod tests {
                 scroll: true,
                 flags: false,
                 keys: false,
+                drag: false,
             }
         );
         assert!(manager.enabled().scroll);
@@ -532,6 +590,7 @@ mod tests {
             scroll: true,
             flags: false,
             keys: false,
+            drag: false,
         });
         fake.wedge(TapKind::Scroll);
 

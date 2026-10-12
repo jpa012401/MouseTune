@@ -8,7 +8,8 @@ use crate::config::{
     load::parse_config,
     schema::{CURRENT_VERSION, Config, KeyModifier},
     validate::{
-        RemapProblem, TimingField, check_timing, duplicate_scroll_modifier, validate_remaps,
+        BindingList, BindingProblem, RemapProblem, TimingField, check_timing,
+        duplicate_scroll_modifier, validate_bindings, validate_remaps,
     },
 };
 
@@ -31,6 +32,12 @@ pub enum ConfigError {
     DuplicateScrollModifier { key: KeyModifier },
     #[error("{field:?} timing of {ms} ms is out of range")]
     TimingOutOfRange { field: TimingField, ms: u32 },
+    #[error("{list:?} binding {index} is invalid: {reason:?}")]
+    InvalidBinding {
+        list: BindingList,
+        index: u32,
+        reason: BindingProblem,
+    },
 }
 
 /// The settings file couldn't be used at startup.
@@ -94,6 +101,17 @@ impl ConfigStore {
                 }
             })?;
         }
+        // Like remaps: only a changed button section is checked, so a bad
+        // hand-edited binding still loads and other settings still save.
+        if new.buttons != self.current.buttons
+            && let Err((list, index, reason)) = validate_bindings(&new.buttons)
+        {
+            return Err(ConfigError::InvalidBinding {
+                list,
+                index: index as u32,
+                reason,
+            });
+        }
         // Only a changed binding is checked, like remaps: a bad hand-edited
         // file still loads, and its other settings must still save.
         if new.scroll.keyboard_modifiers != self.current.scroll.keyboard_modifiers
@@ -141,7 +159,8 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::*;
-    use crate::config::schema::General;
+    use crate::config::schema::{DragBinding, DragEffect, General};
+    use crate::config::validate::{BindingList, BindingProblem};
     use crate::test_support::FakeConfigFile;
 
     const SCROLL_OFF: &str =
@@ -153,6 +172,7 @@ mod tests {
             general: General {
                 buttons_enabled: true,
                 scroll_enabled: false,
+                freeze_pointer_during_drag: true,
             },
             ..Config::default()
         }
@@ -184,6 +204,26 @@ mod tests {
                 .unwrap()
                 .push((config.clone(), self.file.writes().len()));
         }
+    }
+
+    #[test]
+    fn an_invalid_binding_is_rejected_without_writing() {
+        let file = FakeConfigFile::missing();
+        let mut store = ConfigStore::load(Box::new(file.clone()));
+        let mut next = store.current().clone();
+        next.buttons.drags.push(DragBinding {
+            button: 3,
+            effect: DragEffect::ScrollSwipe,
+        });
+        assert_eq!(
+            store.update(next),
+            Err(ConfigError::InvalidBinding {
+                list: BindingList::Drags,
+                index: 1,
+                reason: BindingProblem::Duplicate
+            })
+        );
+        assert!(file.writes().is_empty());
     }
 
     #[test]
@@ -432,6 +472,27 @@ mod tests {
         let written: Config = serde_json::from_str(&file.writes()[0]).unwrap();
         assert!(!written.general.buttons_enabled);
         assert_eq!(written.buttons.remaps[0].trigger.button, 1);
+    }
+
+    #[test]
+    fn a_bad_hand_edited_binding_does_not_block_the_kill_switches() {
+        let file = FakeConfigFile::with(
+            r#"{ "version": 1, "buttons": { "drags": [
+                { "button": 4, "effect": { "type": "SpacesAndMissionControl" } },
+                { "button": 4, "effect": { "type": "ScrollSwipe" } } ] } }"#,
+        );
+        let mut store = ConfigStore::load(Box::new(file.clone()));
+        assert_eq!(store.current().buttons.drags.len(), 2, "it still loads");
+        assert!(store.recovery().is_none());
+
+        let mut next = store.current().clone();
+        next.general.buttons_enabled = false;
+        let saved = store.update(next).expect("the kill switch saves");
+
+        assert!(!saved.general.buttons_enabled);
+        assert_eq!(file.writes().len(), 1);
+        let written: Config = serde_json::from_str(&file.writes()[0]).unwrap();
+        assert_eq!(written.buttons.drags.len(), 2, "the file keeps both");
     }
 
     #[test]

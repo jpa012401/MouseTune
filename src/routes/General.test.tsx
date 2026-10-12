@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { emit } from "@tauri-apps/api/event";
 import App from "../App";
+import type { Config } from "../bindings";
 import { config, configView, device, inputStatus, mockBackend, status } from "../test/backend";
 
 function renderGeneral() {
@@ -35,7 +36,7 @@ describe("General page", () => {
 
   it("shows which taps are running", async () => {
     mockBackend({
-      get_status: () => status({ input: inputStatus({ devices: [device()], taps: { buttons: true, scroll: false, flags: true, keys: false } }) }),
+      get_status: () => status({ input: inputStatus({ devices: [device()], taps: { buttons: true, scroll: false, flags: true, keys: false, drag: false } }) }),
     });
     renderGeneral();
     const engine = await screen.findByRole("list", { name: "Input engine" });
@@ -50,7 +51,7 @@ describe("General page", () => {
     await screen.findByText("No mouse connected");
 
     await act(() =>
-      emit("input-status-changed", { taps: { buttons: true, scroll: true, flags: true, keys: false }, devices: [device()] }),
+      emit("input-status-changed", { taps: { buttons: true, scroll: true, flags: true, keys: false, drag: false }, devices: [device()] }),
     );
 
     // Synchronous on purpose: the page's 1 s poll returns the old backend
@@ -65,7 +66,7 @@ describe("General page", () => {
     await screen.findByText(/MX Master 3/);
 
     await act(() =>
-      emit("input-status-changed", { taps: { buttons: false, scroll: false, flags: false, keys: false }, devices: [] }),
+      emit("input-status-changed", { taps: { buttons: false, scroll: false, flags: false, keys: false, drag: false }, devices: [] }),
     );
 
     // Synchronous on purpose: the poll would still return the mouse, so only
@@ -243,5 +244,20 @@ describe("General page — Input switches", () => {
     expect(within(list).getByText("Performed").parentElement!.textContent).toContain("7");
     expect(within(list).getByText("Dropped").parentElement!.textContent).toContain("1");
     expect(within(list).getByText("Failed").parentElement!.textContent).toContain("2");
+  });
+
+  it("turns pointer freezing off", async () => {
+    let saved: Config | undefined;
+    mockBackend({ get_status: () => status(), set_config: (a) => (saved = (a as { config: Config }).config) });
+    renderGeneral();
+    fireEvent.click(await screen.findByRole("switch", { name: "Freeze pointer while dragging" }));
+    await waitFor(() => expect(saved!.general.freeze_pointer_during_drag).toBe(false));
+  });
+
+  it("shows whether the Drag tap is running", async () => {
+    mockBackend({ get_status: () => status({ input: inputStatus({ devices: [device()], taps: { buttons: true, scroll: true, flags: true, keys: false, drag: true } }) }) });
+    renderGeneral();
+    const engine = await screen.findByRole("list", { name: "Input engine" });
+    expect(within(engine).getByText("Drag").nextSibling?.textContent).toBe("On");
   });
 });

@@ -12,13 +12,14 @@ pub struct ModifierKeys {
     pub horizontal: u64,
     pub precise: u64,
     pub swift: u64,
+    pub zoom: u64,
     /// Every bound key; a held key outside this passes the tick through.
     pub bound: u64,
 }
 
 impl ModifierKeys {
     /// A key bound twice (a hand-edited file) counts for its first effect
-    /// only: horizontal, then precise, then swift.
+    /// only: horizontal, then precise, swift, zoom.
     pub fn compile(m: &ScrollModifiers) -> Self {
         let mut bound = 0;
         let mut take = |key: Option<KeyModifier>| {
@@ -32,10 +33,12 @@ impl ModifierKeys {
         let horizontal = take(m.horizontal);
         let precise = take(m.precise);
         let swift = take(m.swift);
+        let zoom = take(m.zoom);
         Self {
             horizontal,
             precise,
             swift,
+            zoom,
             bound,
         }
     }
@@ -56,9 +59,34 @@ mod tests {
                 horizontal: 0x2_0000,
                 precise: 0x8_0000,
                 swift: 0,
+                zoom: 0,
                 bound: 0xA_0000
             }
         );
+    }
+
+    #[test]
+    fn zoom_compiles_last_and_joins_the_bound_keys() {
+        let zoom = ScrollModifiers {
+            horizontal: None,
+            precise: None,
+            swift: None,
+            zoom: Some(crate::config::schema::KeyModifier::Command),
+        };
+        assert_eq!(
+            ModifierKeys::compile(&zoom),
+            ModifierKeys {
+                zoom: 0x10_0000,
+                bound: 0x10_0000,
+                ..ModifierKeys::default()
+            }
+        );
+        let clash = ScrollModifiers {
+            horizontal: Some(crate::config::schema::KeyModifier::Command),
+            zoom: Some(crate::config::schema::KeyModifier::Command),
+            ..zoom
+        };
+        assert_eq!(ModifierKeys::compile(&clash).zoom, 0);
     }
 
     #[test]
@@ -67,6 +95,7 @@ mod tests {
             horizontal: None,
             precise: None,
             swift: None,
+            zoom: None,
         };
         assert_eq!(ModifierKeys::compile(&none), ModifierKeys::default());
     }
@@ -77,6 +106,7 @@ mod tests {
             horizontal: Some(Option),
             precise: Some(Option),
             swift: Some(Control),
+            zoom: None,
         };
         assert_eq!(
             ModifierKeys::compile(&clash),
@@ -84,6 +114,7 @@ mod tests {
                 horizontal: 0x8_0000,
                 precise: 0,
                 swift: 0x4_0000,
+                zoom: 0,
                 bound: 0xC_0000
             }
         );
@@ -91,6 +122,7 @@ mod tests {
             horizontal: None,
             precise: Some(Shift),
             swift: Some(Shift),
+            zoom: None,
         };
         assert_eq!(ModifierKeys::compile(&late).swift, 0);
     }

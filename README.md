@@ -111,6 +111,37 @@ Report how the scroll feels (too short a coast, too fast, too slow). The curve's
 6. Set *Hold delay* to 500 ms, including releasing the drag off the slider: a hold needs a visibly longer press. Click *Restore timing defaults*.
 7. Set *Double-click speed* to 400 ms: the double-click hint says 400 ms, and slow double clicks on a button with a double-click action register.
 
+### Verifying buttons as modifiers and drag (Phase 6 acceptance, 5-button mouse)
+
+Dock swipe and magnify are built but switched off until you verify them (see the next section). So today Spaces and Mission Control step, and zoom uses the keyboard shortcut.
+
+1. Hold B3 and drag left or right: you move one Space to that side per drag. Drag up: Mission Control opens. Drag down: App Exposé.
+2. Releasing a drag never leaves Mission Control half open.
+3. During a B3 drag the pointer stays still, and it moves again on release. Turn MouseTune off from the tray mid-drag, or unplug the mouse mid-drag: the pointer is free.
+4. A B3 click still opens Mission Control. A slow start with no movement does nothing until you release.
+5. Set B5 · Drag to *Two-finger swipe*. In Safari a horizontal drag goes Back or Forward, and in Maps it pans.
+6. Set B4 · Scroll to *Zoom*. Holding B4 and scrolling zooms Preview in and out with ⌘= and ⌘-. A button-bound Zoom works with no ⌘ held.
+7. Set B4 · Scroll to *App Switcher*: hold B4, scroll to pick an app, release B4 to switch. ⌘ is released when you let go, so no ⌘ stays down.
+8. Set a button · Acts as to *Middle button*. Holding it and moving drags like a real middle button (for example, panning with autoscroll in a browser).
+9. Turn off *Freeze pointer while dragging*: the pointer now moves during drags.
+
+Also check:
+
+- Set the Zoom key to ⌘. With ⌘ physically held, scrolling still zooms on every tick in Safari and Preview.
+- Revoke Accessibility in System Settings while a stand-in button (Acts as) is held: nothing stays stuck down afterwards.
+
+### Turning on the interactive swipe and magnify (maintainer)
+
+Both are off. Each has one `VERIFIED_ON` list; it stays empty until you have seen the probe work on your Mac. The probes post real events, so keep the terminal trusted for Accessibility and watch the screen.
+
+1. `cd src-tauri && cargo test dock_swipe_events_read_back -- --ignored --nocapture` (posts nothing; must pass first).
+2. `cargo test dock_swipe_moves_spaces -- --ignored --nocapture`. Use the default mode, with no `MOUSETUNE_PROBE_ENCODING`: it sends what MouseTune ships. Have two Spaces open. You should see Spaces slide and Mission Control open and close, each fully.
+3. `cargo test magnify_probe -- --ignored --nocapture` with Preview or Maps frontmost: the image should zoom in, then out. Then run `MOUSETUNE_PROBE_MAGNIFY=ticks cargo test magnify_probe -- --ignored --nocapture`, which sends what one wheel tick sends.
+
+Watch for Mission Control or a Space change that stays half done, or a zoom that jumps instead of following. If the screen gets stuck, press Esc or Ctrl-↑, or run `killall Dock`.
+
+When a probe works, tell the agent what you saw. To turn it on, follow the flip checklists next to `VERIFIED_ON` in `src-tauri/src/platform/macos/dock_swipe.rs` and `src-tauri/src/platform/macos/magnify.rs`. After that, steps 1 and 6 above become the interactive swipe and the pinch zoom.
+
 ## Building
 
 ```sh

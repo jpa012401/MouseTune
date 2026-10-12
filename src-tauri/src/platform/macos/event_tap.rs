@@ -25,7 +25,7 @@ use crate::input::{
     filter::ScrollFields,
     guard::{DisabledReason, guarded},
     key_recorder::{KeyEvent, KeyKind},
-    router::{ButtonEvent, ButtonKind, Verdict},
+    router::{ButtonEvent, ButtonKind, MotionEvent, Verdict},
     scroll::ScrollVerdict,
     taps::{TapController, TapKind},
 };
@@ -40,12 +40,18 @@ pub fn event_mask(kind: TapKind) -> u64 {
         TapKind::Scroll => bit(CGEventType::ScrollWheel),
         TapKind::Flags => bit(CGEventType::FlagsChanged),
         TapKind::Keys => bit(CGEventType::KeyDown) | bit(CGEventType::KeyUp),
+        TapKind::Drag => {
+            bit(CGEventType::MouseMoved)
+                | bit(CGEventType::LeftMouseDragged)
+                | bit(CGEventType::RightMouseDragged)
+                | bit(CGEventType::OtherMouseDragged)
+        }
     }
 }
 
 pub fn tap_options(kind: TapKind) -> CGEventTapOptions {
     match kind {
-        TapKind::Flags => CGEventTapOptions::ListenOnly,
+        TapKind::Flags | TapKind::Drag => CGEventTapOptions::ListenOnly,
         TapKind::Buttons | TapKind::Scroll | TapKind::Keys => CGEventTapOptions::Default,
     }
 }
@@ -155,12 +161,28 @@ pub fn key_event(event_type: CGEventType, event: &CGEvent) -> KeyEvent {
 pub struct TapContext {
     pub handler: OnceCell<Rc<RefCell<dyn TapHandler>>>,
     pub degraded: Arc<AtomicBool>,
+    /// Runs after a caught panic in any callout: the engine may be mid-drag
+    /// and can't be trusted to unfreeze (`platform::pointer::release`).
+    pub on_panic: fn(),
+}
+
+/// Calls its function if dropped while a panic unwinds, so a callout that
+/// panics releases the pointer before `guarded` catches the panic, on every
+/// panic, not only the first. Create it inside the `guarded` closure.
+pub(crate) struct OnUnwind(pub(crate) fn());
+
+impl Drop for OnUnwind {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            (self.0)();
+        }
+    }
 }
 
 pub struct MacTapController {
     context: *const TapContext,
     run_loop: CFRetained<CFRunLoop>,
-    ports: [Option<CFRetained<CFMachPort>>; 4],
+    ports: [Option<CFRetained<CFMachPort>>; 5],
 }
 
 impl MacTapController {
@@ -170,7 +192,7 @@ impl MacTapController {
         Self {
             context,
             run_loop,
-            ports: [None, None, None, None],
+            ports: [None, None, None, None, None],
         }
     }
 
@@ -180,6 +202,7 @@ impl MacTapController {
             TapKind::Scroll => 1,
             TapKind::Flags => 2,
             TapKind::Keys => 3,
+            TapKind::Drag => 4,
         }
     }
 
@@ -189,6 +212,7 @@ impl MacTapController {
             TapKind::Scroll => scroll_callback as _,
             TapKind::Flags => flags_callback as _,
             TapKind::Keys => key_callback as _,
+            TapKind::Drag => motion_callback as _,
         };
         // SAFETY: the callbacks match `CGEventTapCallBack`; `context` outlives
         // the tap (owned by the input thread, which owns this controller).
@@ -320,6 +344,7 @@ fn dispatch(
     // `CGEventTapCreate`, valid for the input thread's lifetime.
     let context = unsafe { &*(user_info as *const TapContext) };
     let verdict = guarded(&context.degraded, Verdict::Pass, || {
+        let _release = OnUnwind(context.on_panic);
         let Some(handler) = context.handler.get() else {
             return Verdict::Pass;
         };
@@ -391,6 +416,29 @@ unsafe extern "C-unwind" fn flags_callback(
     })
 }
 
+pub fn motion_event(event: &CGEvent) -> MotionEvent {
+    let get = |field| CGEvent::integer_value_field(Some(event), field);
+    let clamp = |v: i64| i32::try_from(v).unwrap_or(if v < 0 { i32::MIN } else { i32::MAX });
+    MotionEvent {
+        dx: clamp(get(CGEventField::MouseEventDeltaX)),
+        dy: clamp(get(CGEventField::MouseEventDeltaY)),
+        user_data: get(CGEventField::EventSourceUserData),
+    }
+}
+
+unsafe extern "C-unwind" fn motion_callback(
+    _proxy: CGEventTapProxy,
+    event_type: CGEventType,
+    event: NonNull<CGEvent>,
+    user_info: *mut c_void,
+) -> *mut CGEvent {
+    // Listen-only: the verdict is ignored, movement is never changed.
+    dispatch(TapKind::Drag, event_type, event, user_info, |h, e| {
+        h.on_motion(&motion_event(e));
+        Verdict::Pass
+    })
+}
+
 unsafe extern "C-unwind" fn key_callback(
     _proxy: CGEventTapProxy,
     event_type: CGEventType,
@@ -405,7 +453,10 @@ unsafe extern "C-unwind" fn key_callback(
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::Cell, sync::atomic::Ordering};
+    use std::{
+        cell::Cell,
+        sync::atomic::{AtomicUsize, Ordering},
+    };
 
     use objc2_core_foundation::CGPoint;
     use objc2_core_graphics::{
@@ -450,12 +501,15 @@ mod tests {
         }
         fn on_tap_disabled(&mut self, _: TapKind, _: DisabledReason) {}
         fn on_frame(&mut self) {}
+        fn on_motion(&mut self, _: &MotionEvent) {}
+        fn on_intents(&mut self) {}
     }
 
     fn context(handler: Option<Rc<RefCell<Handler>>>) -> TapContext {
         let context = TapContext {
             handler: OnceCell::new(),
             degraded: Arc::new(AtomicBool::new(false)),
+            on_panic: || {},
         };
         if let Some(handler) = handler {
             let handler: Rc<RefCell<dyn TapHandler>> = handler;
@@ -632,6 +686,46 @@ mod tests {
         assert!(context.degraded.load(Ordering::SeqCst));
     }
 
+    static RELEASED: AtomicBool = AtomicBool::new(false);
+    static RELEASES: AtomicUsize = AtomicUsize::new(0);
+
+    #[test]
+    fn a_panic_in_a_callout_releases_the_pointer() {
+        let (handler, _) = handler(true);
+        let mut context = context(Some(handler));
+        context.on_panic = || RELEASED.store(true, Ordering::SeqCst);
+
+        let (sent, returned) = scroll_through(&context);
+
+        assert_eq!(returned, sent);
+        assert!(RELEASED.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn every_caught_panic_releases_the_pointer_not_just_the_first() {
+        let mut context = context(Some(button_handler(Verdict::Swallow, true)));
+        context.on_panic = || {
+            RELEASES.fetch_add(1, Ordering::SeqCst);
+        };
+
+        button_through(&context, CGEventType::OtherMouseDown);
+        button_through(&context, CGEventType::OtherMouseDown);
+
+        assert_eq!(RELEASES.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn a_healthy_callout_leaves_the_pointer_alone() {
+        static UNTOUCHED: AtomicBool = AtomicBool::new(true);
+        let (handler, _) = handler(false);
+        let mut context = context(Some(handler));
+        context.on_panic = || UNTOUCHED.store(false, Ordering::SeqCst);
+
+        scroll_through(&context);
+
+        assert!(UNTOUCHED.load(Ordering::SeqCst));
+    }
+
     #[test]
     fn a_re_entrant_call_passes_through_without_calling_the_handler() {
         let (handler, scrolls) = handler(false);
@@ -746,7 +840,32 @@ mod tests {
     }
 
     #[test]
-    fn only_the_flags_tap_is_listen_only() {
+    fn drag_tap_listens_to_moves_and_drags_only() {
+        assert_eq!(
+            event_mask(TapKind::Drag),
+            (1 << 5) | (1 << 6) | (1 << 7) | (1 << 27)
+        );
+    }
+
+    #[test]
+    fn motion_fields_are_copied_from_a_real_event() {
+        let e = CGEvent::new_mouse_event(
+            None,
+            CGEventType::MouseMoved,
+            CGPoint { x: 0.0, y: 0.0 },
+            objc2_core_graphics::CGMouseButton::Left,
+        )
+        .unwrap();
+        CGEvent::set_integer_value_field(Some(&e), CGEventField::MouseEventDeltaX, 12);
+        CGEvent::set_integer_value_field(Some(&e), CGEventField::MouseEventDeltaY, -5);
+        CGEvent::set_integer_value_field(Some(&e), CGEventField::EventSourceUserData, 0x4D54);
+        let m = motion_event(&e);
+        assert_eq!((m.dx, m.dy, m.user_data), (12, -5, 0x4D54));
+    }
+
+    #[test]
+    fn only_the_flags_and_drag_taps_are_listen_only() {
+        assert_eq!(tap_options(TapKind::Drag), CGEventTapOptions::ListenOnly);
         assert_eq!(tap_options(TapKind::Flags), CGEventTapOptions::ListenOnly);
         assert_eq!(tap_options(TapKind::Buttons), CGEventTapOptions::Default);
         assert_eq!(tap_options(TapKind::Scroll), CGEventTapOptions::Default);

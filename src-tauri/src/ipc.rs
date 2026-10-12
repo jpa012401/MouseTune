@@ -245,6 +245,7 @@ mod tests {
                 scroll: true,
                 flags: false,
                 keys: false,
+                drag: false,
             },
             devices: vec![mouse(255)],
         };
@@ -263,7 +264,8 @@ mod tests {
                 buttons: true,
                 scroll: true,
                 flags: false,
-                keys: false
+                keys: false,
+                drag: false
             }
         );
         assert_eq!(

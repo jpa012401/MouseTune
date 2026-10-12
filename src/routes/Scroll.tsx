@@ -31,6 +31,7 @@ const EFFECTS: [keyof ScrollModifiers, string][] = [
   ["horizontal", "Scroll horizontally"],
   ["precise", "Scroll precisely"],
   ["swift", "Scroll faster"],
+  ["zoom", "Zoom"],
 ];
 
 function Segmented<T extends string>({

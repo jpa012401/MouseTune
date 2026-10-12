@@ -38,7 +38,7 @@ This is a mouse utility for my own Macs, not a platform. No accounts, no telemet
 
 ## Glossary
 
-- **Tap**: a CGEventTap. Four exist: Buttons, Scroll, Flags (modifier keys) and Keys (only while the recorder runs). They are switched on and off as a set (`TapSet`), never one by one from feature code, except that the key recorder releases its own Keys tap from inside its callback (`TapManager::release`).
+- **Tap**: a CGEventTap. Five exist: Buttons, Scroll, Flags (modifier keys), Keys (only while the recorder runs) and Drag (listen-only, only while a drag-bound button is down). They are switched on and off as a set (`TapSet`), never one by one from feature code, except that the key recorder releases its own Keys tap from inside its callback (`TapManager::release`).
 - **Tracked mouse**: a connected HID mouse that isn't excluded. Only tracked mice turn taps on.
 - **Excluded device**: Apple vendor IDs `0x05AC` or `0x004C`, or a name containing "trackpad". These already behave like trackpads; we leave them alone.
 - **Sender ID**: CGEvent field 87, the IORegistry ID of the HID service that produced an event. It's how an event is matched to a device.
@@ -176,15 +176,18 @@ If you can't name the requirement a pattern serves, don't add it. **DRY is about
 
 ## Current state
 
+- **Implemented on phase-6-modifiers-and-drag, not yet merged:** Phase 6 (drag tap and router drags, intent ring, pointer freeze with release guarantees, hold-through, button + scroll effects, Discrete / two-finger / dock-swipe drags, Buttons UI). Dock swipe and magnify are built but switched off (`VERIFIED_ON` empty), so Spaces/Mission Control run as Discrete and zoom posts ⌘= / ⌘-. The scroll tap also swallows ticks taken by a held scroll binding or the zoom key. **Pending manual hardware acceptance** (README).
 - **Merged on `main`:** Phase 0 (scaffold), Phase 1 (Accessibility onboarding, permission monitor, tray status, settings shell), Phase 2 (input thread, event taps, HID mouse tracking, General page), Phase 3 (config store with two kill switches, typed config commands and event, tray switches, recovery notice), Phase 4a (click cycle, router, `mt-exec` executor with `Navigate` and symbolic hotkeys), Phase 4b (capture mode, key recorder, editable Buttons screen, the full hotkey table, `KeyCombo`), Phase 5a (scroll config section, acceleration/curve/animator core, CVDisplayLink frame driver with timer fallback, scroll poster, in-place inversion, tray toggles), Phase 5b (display-link backstop, scroll modifier keys, precise setting, swipe swift, Scroll screen with curve plot) and Phase 4c (mouse-click and media-key remaps, nav_overrides, configurable timing). Phases 2–5b and 4c are **pending manual hardware acceptance** (README). The scroll tap swallows plain mouse-wheel ticks while smoothing is on; the button tap swallows routed events.
-- **Next:** Phase 6 (buttons as modifiers, drag, zoom).
+- **Next:** Phase 7 (launch at login, release build, signing and notarization).
 - **Known gaps:**
-  - Config holds the two kill switches, `buttons.remaps` (editable in the UI since Phase 4b), timing (sliders since Phase 4c), nav_overrides (file-only) and the scroll section (editable on the Scroll screen since Phase 5b); later phases add their sections.
+  - Config holds the two kill switches, `buttons.remaps` (editable in the UI since Phase 4b), timing (sliders since Phase 4c), nav_overrides (file-only), the scroll section (editable on the Scroll screen since Phase 5b) and `buttons.drags`, `buttons.scroll_bindings` and `buttons.hold_through` (editable on the Buttons screen since Phase 6); later phases add their sections.
   - The Accessibility commands still return `Result<(), String>`; config commands use the typed `ConfigError`.
   - Parked UI edge cases (bridge-failure-only): a failed Dismiss or config load is only reported on the General page; brief stale switch if a tray change races the initial load.
   - Any config save (even a remap edit) closes a scroll gesture in flight (clean Ended).
-  - Deferred: a shutdown join timeout (also for `mt-exec` on quit; the 7 px drag cancel waits for Phase 6), a tap-timeout counter, a degraded indicator in the tray, and moving `spawn` out of `input/`.
-- **Never exercised for real:** the Accessibility prompt and settings-pane flow; the tray icon rendering; a bundled or signed build; CI on GitHub (no remote yet); macOS 12–26; Intel; an external mouse through the HID adapter; tap teardown on quit with real taps; tray switch checkmarks; a kill switch turning a real tap off; the watchdog's tap rebuild (`revive`); the CGS install path (unreachable binding); posting key combos and clicks; the click timers on real input; the B3/B4/B5 defaults on a real mouse; button-tap swallowing with real taps; the Keys tap under Accessibility; button capture on hardware; whether macOS asks for Input Monitoring; the new hotkeys' CGS IDs and default-shortcut fallbacks; recording ⌘Q / ⌘Tab / ⌘Space; smooth scrolling on real hardware (the animator's feel, Safari rubber-banding, momentum); CVDisplayLink on macOS 12–26 and with mixed 60/120 Hz displays; the 120 Hz timer fallback outside tests; in-place inversion on a real wheel; scroll modifier keys and swipe swift on real hardware; the display-link backstop with a real unplugged display; mouse-click remaps and their click state; media keys (system-defined NSEvent created on mt-exec); nav_overrides edits; configurable timing on a real mouse. *Exercised:* reading hotkey 32 (enabled, Ctrl+Up) and the frontmost bundle ID on macOS 27.
+  - Any config save releases a held hold-through and ends a drag in flight (refresh).
+  - A panic inside the intents runner while posting a release (hold-through up, App Switcher ⌘ up) loses that release; no production panic source is known on that path.
+  - Deferred: a shutdown join timeout (also for `mt-exec` on quit), a tap-timeout counter, a degraded indicator in the tray, and moving `spawn` out of `input/`.
+- **Never exercised for real:** the Accessibility prompt and settings-pane flow; the tray icon rendering; a bundled or signed build; CI on GitHub (no remote yet); macOS 12–26; Intel; an external mouse through the HID adapter; tap teardown on quit with real taps; tray switch checkmarks; a kill switch turning a real tap off; the watchdog's tap rebuild (`revive`); the CGS install path (unreachable binding); posting key combos and clicks; the click timers on real input; the B3/B4/B5 defaults on a real mouse; button-tap swallowing with real taps; the Keys tap under Accessibility; button capture on hardware; whether macOS asks for Input Monitoring; the new hotkeys' CGS IDs and default-shortcut fallbacks; recording ⌘Q / ⌘Tab / ⌘Space; smooth scrolling on real hardware (the animator's feel, Safari rubber-banding, momentum); CVDisplayLink on macOS 12–26 and with mixed 60/120 Hz displays; the 120 Hz timer fallback outside tests; in-place inversion on a real wheel; scroll modifier keys and swipe swift on real hardware; the display-link backstop with a real unplugged display; mouse-click remaps and their click state; media keys (system-defined NSEvent created on mt-exec); nav_overrides edits; configurable timing on a real mouse; drags, pointer freeze and its release paths, hold-through, App Switcher and zoom on real hardware; dock swipe and magnify on macOS 12–26; the AppKit magnify read-back test pins macOS 27.0.1 values and CI hasn't run it; the intents run-loop source firing after a real callout. *Exercised:* reading hotkey 32 (enabled, Ctrl+Up) and the frontmost bundle ID on macOS 27.
 
 ## Settled decisions and open questions
 
@@ -203,6 +206,7 @@ If you can't name the requirement a pattern serves, don't add it. **DRY is about
 - **Edits save immediately through `set_config`**; Rust validates remaps (`config/validate.rs`). No draft state.
 - **Config actions compile to a `Copy` `CompiledAction`**, so the tap callback never touches heap data.
 - **Hot-path results (captures) leave as `Job::Notice`** on the bounded queue to `mt-exec`.
+- **Phase 6:** tap callouts queue Copy intents (`input::intents`) and never post; the pointer is unfrozen and held buttons/keys are released on every refresh, tap disable, shutdown and caught panic; private outputs (dock swipe, magnify) are used only on macOS versions their spike verified, otherwise their fallbacks (Discrete; ⌘= / ⌘-). B3 hold is no longer a default.
 - Click-cycle, suppression and hotkey-fallback details: `input/{click_cycle,router}.rs` and `actions/` docs and tests.
 - **Phase 2 passed every event through**; since Phase 3 the tap demand follows the config. **The watchdog runs on `mt-input`**, not the main thread. **One `input-status-changed` event** replaces `devices-changed`/`status-changed` (Phase 2 plan).
 
@@ -222,7 +226,7 @@ Spec amendments go in the commit that proves the spec wrong.
 | macOS version differences | §3.4 | `platform/macos/os_version.rs` |
 | Event taps, filtering, devices, threading | §4 | `input/`, Phase 2 plan |
 | Buttons and gestures | §5 | `input/{remaps,click_cycle,router,capture,key_recorder}.rs`, `config/validate.rs`, `actions/`, `actions/nav.rs` |
-| Drag, dock swipe | §6 | — (Phase 6) |
+| Drag, dock swipe | §6 | `input/{router,intents,drag}.rs`, `platform/macos/{pointer,dock_swipe,magnify}.rs`, Phase 6 design |
 | Actions, symbolic hotkeys | §7 | `actions/`, `platform/macos/{symbolic_hotkeys,frontmost_app}.rs`, `platform/macos/event_poster.rs` (clicks, system keys) |
 | Smooth scrolling | §8 | `input/scroll/` (incl. `modifiers.rs`, `preview.rs`), `platform/macos/{display_link,scroll_poster}.rs`, `src/routes/Scroll.tsx`, Phase 5a and 5b designs |
 | Config schema | §9 | `config/` |

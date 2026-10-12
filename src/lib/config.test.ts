@@ -15,7 +15,7 @@ describe("configErrorMessage", () => {
     expect(configErrorMessage("the core is gone")).toBe("Couldn’t save your settings: the core is gone");
   });
   it("explains an invalid remap in plain words, naming the row", () => {
-    const remaps = [defaultRemaps[2]!, defaultRemaps[2]!];
+    const remaps = [defaultRemaps[1]!, defaultRemaps[1]!];
     expect(configErrorMessage({ kind: "InvalidRemap", index: 1, reason: "DuplicateTrigger" }, remaps)).toBe(
       "Couldn’t save your settings: Button 4 · Click is set twice.",
     );
@@ -43,5 +43,16 @@ describe("configErrorMessage", () => {
     expect(configErrorMessage({ kind: "InvalidRemap", index: 0, reason: "ClicksOutOfRange" })).toBe(
       "Couldn’t save your settings: a mouse click can only be single or double.",
     );
+  });
+
+  it("explains each invalid binding", () => {
+    const msg = (list: "Drags" | "ScrollBindings" | "HoldThrough", reason: string) =>
+      configErrorMessage({ kind: "InvalidBinding", list, index: 0, reason } as never);
+    expect(msg("Drags", "Duplicate")).toBe("Couldn’t save your settings: that button already has that kind of binding.");
+    expect(msg("Drags", "ButtonNotRemappable")).toBe("Couldn’t save your settings: left and right buttons can’t be remapped.");
+    expect(msg("Drags", "ButtonOutOfRange")).toBe("Couldn’t save your settings: MouseTune supports buttons up to 32.");
+    expect(msg("HoldThrough", "HoldThroughConflict")).toBe("Couldn’t save your settings: a button that acts as another button can’t have other bindings.");
+    expect(msg("Drags", "EmptyDiscrete")).toBe("Couldn’t save your settings: choose at least one direction for separate actions.");
+    expect(msg("Drags", "InvalidAction")).toBe("Couldn’t save your settings: one of the drag’s actions can’t be used.");
   });
 });

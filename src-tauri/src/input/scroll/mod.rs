@@ -70,6 +70,17 @@ impl ScrollEngine {
     /// A tick `classify_scroll` called a mouse wheel. Hot path: O(1), no
     /// allocation, nothing posted (Phase 5b design §2).
     pub fn on_wheel(&mut self, fields: &ScrollFields, now: Instant) -> ScrollVerdict {
+        self.wheel(fields, now, false)
+    }
+
+    /// `force_horizontal` swaps the tick's axis after it's read, as the
+    /// horizontal key does.
+    fn wheel(
+        &mut self,
+        fields: &ScrollFields,
+        now: Instant,
+        force_horizontal: bool,
+    ) -> ScrollVerdict {
         if !self.settings.smooth {
             return self.inverted_in_place();
         }
@@ -77,15 +88,13 @@ impl ScrollEngine {
         if held & !self.keys.bound != 0 {
             // A key with no scroll effect: leave the tick to macOS and apps
             // (⌃ + scroll is Accessibility Zoom).
-            if self.animator.end() {
-                self.frames.request();
-            }
+            self.end_gesture();
             return self.inverted_in_place();
         }
         let Some(mut tick) = Tick::from_fields(fields) else {
             return ScrollVerdict::Pass;
         };
-        if held & self.keys.horizontal != 0 {
+        if force_horizontal || held & self.keys.horizontal != 0 {
             tick = tick.swapped();
         }
         tick.precise = held & self.keys.precise != 0;
@@ -93,6 +102,28 @@ impl ScrollEngine {
         self.animator.tick(tick, now);
         self.frames.request();
         ScrollVerdict::Swallow
+    }
+
+    /// Closes a coasting gesture at the next frame, for ticks something else
+    /// takes (zoom, app switch). Hot path: posts nothing.
+    pub fn end_gesture(&mut self) {
+        if self.animator.end() {
+            self.frames.request();
+        }
+    }
+
+    /// The key bound to zoom is held. Hot path: O(1).
+    pub fn zoom_key_held(&self, flags: u64) -> bool {
+        self.keys.zoom != 0 && flags & self.keys.zoom != 0
+    }
+
+    /// A tick taken by a held button's Horizontal binding: smoothed sideways.
+    /// Needs smoothing: with it off the tick passes untouched (spec §8.5).
+    pub fn on_wheel_horizontal(&mut self, fields: &ScrollFields, now: Instant) -> ScrollVerdict {
+        if !self.settings.smooth {
+            return ScrollVerdict::Pass;
+        }
+        self.wheel(fields, now, true)
     }
 
     /// One display frame: post its events, and stop frames once idle.

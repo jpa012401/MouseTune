@@ -14,12 +14,12 @@ use crossbeam_channel::Sender;
 use crate::{
     actions::{ActionCounters, ActionSink},
     config::{
-        schema::{Config, Scroll, tap_demand},
+        schema::{Config, Scroll, engine_scroll, tap_demand},
         store::ConfigObserver,
     },
     input::{
         engine::{EngineObserver, EngineSnapshot, InputEngine, ScrollCounters},
-        remaps::{CompiledRemaps, compile},
+        remaps::{CompiledRemaps, OutputSupport, compile_with},
         taps::{TapController, TapDemand},
     },
     permission_monitor::PermissionObserver,
@@ -125,13 +125,19 @@ impl PermissionObserver for PermissionBridge {
 }
 
 /// Tells the input engine which taps the saved settings want.
-pub struct InputConfigBridge(pub Arc<InputHandle>);
+pub struct InputConfigBridge {
+    pub handle: Arc<InputHandle>,
+    pub support: OutputSupport,
+}
 
 impl ConfigObserver for InputConfigBridge {
     fn config_changed(&self, config: &Config) {
-        self.0.send(Control::SetDemand(tap_demand(config)));
-        self.0.send(Control::SetRemaps(Box::new(compile(config))));
-        self.0.send(Control::SetScroll(config.scroll));
+        self.handle.send(Control::SetDemand(tap_demand(config)));
+        self.handle.send(Control::SetRemaps(Box::new(compile_with(
+            config,
+            self.support,
+        ))));
+        self.handle.send(Control::SetScroll(engine_scroll(config)));
     }
 }
 
@@ -224,6 +230,7 @@ mod tests {
     };
 
     use super::*;
+    use crate::input::remaps::compile;
     use crate::{
         actions::{CompiledAction, Job, Notice},
         config::schema::{General, NavDirection, Scroll},
@@ -236,7 +243,8 @@ mod tests {
             taps::{TapDemand, TapSet},
         },
         test_support::{
-            FakeClock, FakeFrames, FakeScrollPoster, FakeSink, FakeTapController, FakeTimers, mouse,
+            FakeClock, FakeFrames, FakeScrollPoster, FakeSink, FakeTapController, FakeTimers,
+            fake_gestures, mouse,
         },
     };
 
@@ -279,6 +287,7 @@ mod tests {
                 Box::new(FakeFrames::default()),
                 Box::new(FakeScrollPoster::default()),
             ),
+            fake_gestures(),
             Box::new(Ignore),
         );
         engine.start();
@@ -304,6 +313,7 @@ mod tests {
             scroll: false,
             flags: false,
             keys: false,
+            drag: false,
         };
         assert_eq!(
             handle_control(&mut engine, Control::SetDemand(off)),
@@ -322,11 +332,16 @@ mod tests {
             general: General {
                 buttons_enabled: true,
                 scroll_enabled: false,
+                freeze_pointer_during_drag: true,
             },
             ..Config::default()
         };
 
-        InputConfigBridge(handle).config_changed(&config);
+        InputConfigBridge {
+            handle,
+            support: OutputSupport::NONE,
+        }
+        .config_changed(&config);
 
         assert_eq!(
             rx.try_recv(),
@@ -334,14 +349,26 @@ mod tests {
                 buttons: true,
                 scroll: false,
                 flags: true,
-                keys: false
+                keys: false,
+                drag: false
             }))
         );
         assert_eq!(
             rx.try_recv(),
-            Ok(Control::SetRemaps(Box::new(compile(&config))))
+            Ok(Control::SetRemaps(Box::new(compile_with(
+                &config,
+                OutputSupport::NONE
+            ))))
         );
-        assert_eq!(rx.try_recv(), Ok(Control::SetScroll(config.scroll)));
+        // Scrolling is off, so the engine gets smoothing off (default config
+        // has no inversion and no zoom key to clear).
+        assert_eq!(
+            rx.try_recv(),
+            Ok(Control::SetScroll(Scroll {
+                smooth: false,
+                ..config.scroll
+            }))
+        );
         assert_eq!(waker.0.load(Ordering::SeqCst), 3);
     }
 

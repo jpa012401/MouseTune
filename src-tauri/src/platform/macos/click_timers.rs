@@ -16,14 +16,14 @@ use crate::{
         guard::guarded,
         router::{ClickTimers, TimerKind},
     },
-    platform::event_tap::TapContext,
+    platform::event_tap::{OnUnwind, TapContext},
 };
 
 /// "Not armed": a fire date about 31 years away, also used as the repeat
 /// interval so a fired timer parks itself instead of firing again.
 pub(crate) const NEVER_SECS: f64 = 1.0e9;
 
-type TimerCallback = unsafe extern "C-unwind" fn(*mut CFRunLoopTimer, *mut c_void);
+pub(crate) type TimerCallback = unsafe extern "C-unwind" fn(*mut CFRunLoopTimer, *mut c_void);
 
 pub struct MacClickTimers {
     hold: CFRetained<CFRunLoopTimer>,
@@ -33,9 +33,12 @@ pub struct MacClickTimers {
 impl MacClickTimers {
     /// `context` must outlive the timers; dropping them invalidates both.
     pub fn new(context: *const TapContext, run_loop: &CFRunLoop) -> Self {
+        let info = context.cast_mut().cast();
+        let timer =
+            |callback| parked_timer(info, run_loop, callback).expect("CFRunLoopTimerCreate failed");
         Self {
-            hold: parked_timer(context, run_loop, hold_fired),
-            expiry: parked_timer(context, run_loop, expiry_fired),
+            hold: timer(hold_fired),
+            expiry: timer(expiry_fired),
         }
     }
 
@@ -48,14 +51,16 @@ impl MacClickTimers {
 }
 
 /// Creates a timer that won't fire until armed and adds it to `run_loop`.
-fn parked_timer(
-    context: *const TapContext,
+/// `info` must outlive the timer: the owner invalidates it on `Drop`.
+/// `None` if CoreFoundation couldn't create it.
+pub(crate) fn parked_timer(
+    info: *mut c_void,
     run_loop: &CFRunLoop,
     callback: TimerCallback,
-) -> CFRetained<CFRunLoopTimer> {
+) -> Option<CFRetained<CFRunLoopTimer>> {
     let mut timer_context = CFRunLoopTimerContext {
         version: 0,
-        info: context.cast_mut().cast(),
+        info,
         retain: None,
         release: None,
         copyDescription: None,
@@ -73,12 +78,11 @@ fn parked_timer(
             Some(callback),
             &mut timer_context,
         )
-    }
-    .expect("CFRunLoopTimerCreate failed");
+    }?;
     // SAFETY: reading an immutable CoreFoundation constant.
     let modes = unsafe { kCFRunLoopCommonModes };
     run_loop.add_timer(Some(&timer), modes);
-    timer
+    Some(timer)
 }
 
 impl ClickTimers for MacClickTimers {
@@ -119,6 +123,7 @@ fn fire(info: *mut c_void, kind: TimerKind) {
     // before the context is freed.
     let context = unsafe { &*info.cast_const().cast::<TapContext>() };
     guarded(&context.degraded, (), || {
+        let _release = OnUnwind(context.on_panic);
         let Some(handler) = context.handler.get() else {
             return;
         };
@@ -170,6 +175,8 @@ mod tests {
         }
         fn on_tap_disabled(&mut self, _: TapKind, _: DisabledReason) {}
         fn on_frame(&mut self) {}
+        fn on_motion(&mut self, _: &crate::input::router::MotionEvent) {}
+        fn on_intents(&mut self) {}
     }
 
     fn run_for(secs: f64) {
@@ -178,12 +185,59 @@ mod tests {
         CFRunLoop::run_in_mode(mode, secs, false);
     }
 
+    /// Panics on every timer, like a router bug would.
+    struct Panicker;
+    impl TapHandler for Panicker {
+        fn on_scroll(&mut self, _: &ScrollFields) -> ScrollVerdict {
+            ScrollVerdict::Pass
+        }
+        fn on_button(&mut self, _: &ButtonEvent) -> Verdict {
+            Verdict::Pass
+        }
+        fn on_click_timer(&mut self, _: TimerKind) {
+            panic!("router bug");
+        }
+        fn on_key(&mut self, _: &KeyEvent) -> Verdict {
+            Verdict::Pass
+        }
+        fn on_tap_disabled(&mut self, _: TapKind, _: DisabledReason) {}
+        fn on_frame(&mut self) {}
+        fn on_motion(&mut self, _: &crate::input::router::MotionEvent) {}
+        fn on_intents(&mut self) {}
+    }
+
+    static TIMER_RELEASES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+    #[test]
+    fn a_panicking_timer_releases_the_pointer_and_marks_degraded() {
+        let context = TapContext {
+            handler: OnceCell::new(),
+            degraded: Arc::new(AtomicBool::new(false)),
+            on_panic: || {
+                TIMER_RELEASES.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            },
+        };
+        let handler: Rc<RefCell<dyn TapHandler>> = Rc::new(RefCell::new(Panicker));
+        assert!(context.handler.set(handler).is_ok());
+        let run_loop = CFRunLoop::current().expect("test thread has a run loop");
+        let mut timers = MacClickTimers::new(&context, &run_loop);
+
+        timers.arm(TimerKind::Hold, Duration::from_millis(10));
+        run_for(0.1);
+
+        assert_eq!(TIMER_RELEASES.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert!(context.degraded.load(std::sync::atomic::Ordering::SeqCst));
+        timers.disarm(TimerKind::Hold);
+        drop(timers); // invalidates both before `context` goes
+    }
+
     #[test]
     fn an_armed_timer_fires_once_can_be_re_armed_and_a_disarmed_one_never_fires() {
         let fired = Rc::new(RefCell::new(Vec::new()));
         let context = TapContext {
             handler: OnceCell::new(),
             degraded: Arc::new(AtomicBool::new(false)),
+            on_panic: || {},
         };
         let handler: Rc<RefCell<dyn TapHandler>> =
             Rc::new(RefCell::new(Recorder(Rc::clone(&fired))));

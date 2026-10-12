@@ -1,13 +1,12 @@
 import { describe, expect, it } from "vitest";
-import type { Remap } from "../bindings";
-import { defaultButtonRemaps, findTrigger, remapLabel, waitsForDoubleClick } from "./remaps";
-import { defaultRemaps } from "../test/backend";
+import type { Buttons, Remap } from "../bindings";
+import { actsAsLabel, dragEffectReady, bindingConflict, bindingRows, defaultButtonRemaps, defaultButtons, dragLabel, findTrigger, remapLabel, scrollLabel, waitsForDoubleClick } from "./remaps";
+import { config, defaultRemaps } from "../test/backend";
 
 describe("remapLabel", () => {
   it("names the default remaps in plain words", () => {
     expect(defaultRemaps.map(remapLabel)).toEqual([
       { trigger: "Middle button · Click", action: "Mission Control" },
-      { trigger: "Middle button · Hold", action: "Show Desktop" },
       { trigger: "Button 4 · Click", action: "Back" },
       { trigger: "Button 5 · Click", action: "Forward" },
     ]);
@@ -64,5 +63,56 @@ describe("waitsForDoubleClick", () => {
 describe("defaultButtonRemaps", () => {
   it("matches Rust's Buttons::default()", () => {
     expect(defaultButtonRemaps).toEqual(defaultRemaps);
+  });
+});
+
+const empty: Buttons = { remaps: [], drags: [], scroll_bindings: [], hold_through: [] };
+
+describe("binding labels", () => {
+  it("names each drag, scroll and acts-as effect", () => {
+    expect(dragLabel({ type: "SpacesAndMissionControl" })).toBe("Spaces & Mission Control");
+    expect(dragLabel({ type: "ScrollSwipe" })).toBe("Two-finger swipe");
+    expect(
+      dragLabel({ type: "Discrete", left: { type: "Navigate", direction: "Back" }, right: { type: "Navigate", direction: "Forward" }, up: null, down: null }),
+    ).toBe("Left: Back, Right: Forward");
+    expect(scrollLabel("Zoom")).toBe("Zoom");
+    expect(scrollLabel("Horizontal")).toBe("Scroll horizontally");
+    expect(scrollLabel("AppSwitcher")).toBe("App Switcher");
+    expect(actsAsLabel("Middle")).toBe("Middle button");
+    expect(actsAsLabel("Back")).toBe("Button 4");
+  });
+
+  it("lists every binding by button", () => {
+    const b: Buttons = {
+      remaps: [{ trigger: { button: 3, level: 1, duration: "click" }, effect: { action: { type: "SymbolicHotkey", id: "MissionControl" } } }],
+      drags: [{ button: 3, effect: { type: "SpacesAndMissionControl" } }],
+      scroll_bindings: [{ button: 4, effect: "Zoom" }],
+      hold_through: [{ button: 6, acts_as: "Middle" }],
+    };
+    expect(bindingRows(b).map((r) => `${r.trigger} → ${r.action}`)).toEqual([
+      "Middle button · Click → Mission Control",
+      "Middle button · Drag → Spaces & Mission Control",
+      "Button 4 · Scroll → Zoom",
+      "Button 6 · Acts as → Middle button",
+    ]);
+  });
+
+  it("finds conflicts between bindings", () => {
+    const b: Buttons = { ...empty, drags: [{ button: 3, effect: { type: "ScrollSwipe" } }], hold_through: [{ button: 6, acts_as: "Left" }] };
+    expect(bindingConflict(b, 3, "drag")).toBe("Middle button · Drag is already set to Two-finger swipe. Change that row instead.");
+    expect(bindingConflict(b, 3, "through")).toBe("Middle button already has other bindings, so it can’t act as another button.");
+    expect(bindingConflict(b, 6, "scroll")).toBe("Button 6 acts as another button, so it can’t have other bindings.");
+    expect(bindingConflict(b, 4, "scroll")).toBeNull();
+  });
+
+  it("a drag effect is ready unless separate actions has no direction", () => {
+    expect(dragEffectReady(null)).toBe(false);
+    expect(dragEffectReady({ type: "ScrollSwipe" })).toBe(true);
+    expect(dragEffectReady({ type: "Discrete", left: null, right: null, up: null, down: null })).toBe(false);
+    expect(dragEffectReady({ type: "Discrete", left: null, right: null, up: null, down: { type: "Navigate", direction: "Back" } })).toBe(true);
+  });
+
+  it("defaultButtons matches the fixture's default config", () => {
+    expect(defaultButtons).toEqual(config().buttons);
   });
 });

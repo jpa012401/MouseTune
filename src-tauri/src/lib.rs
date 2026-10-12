@@ -100,11 +100,12 @@ pub fn run() {
             // PermissionMonitor reads trust itself and converges on its next poll.
             let trusted = accessibility.is_trusted();
             let (sink, jobs) = actions::queue::queue();
+            let support = platform::output_support();
             let input = input::thread::spawn(
                 trusted,
                 config::schema::tap_demand(store.current()),
-                input::remaps::compile(store.current()),
-                store.current().scroll,
+                input::remaps::compile_with(store.current(), support),
+                config::schema::engine_scroll(store.current()),
                 Box::new(sink),
                 Box::new(events::EmitInputStatus(app.handle().clone())),
             );
@@ -125,9 +126,10 @@ pub fn run() {
             app.manage(ExecThread(Mutex::new(Some(exec))));
 
             tray::build(app.handle(), trusted, &config)?;
-            store.subscribe(Box::new(input::thread::InputConfigBridge(Arc::clone(
-                &input,
-            ))));
+            store.subscribe(Box::new(input::thread::InputConfigBridge {
+                handle: Arc::clone(&input),
+                support,
+            }));
             store.subscribe(Box::new(actions::nav::NavOverridesBridge(nav)));
             store.subscribe(Box::new(tray::TrayConfigStatus(app.handle().clone())));
             store.subscribe(Box::new(events::EmitConfigChanged(app.handle().clone())));
