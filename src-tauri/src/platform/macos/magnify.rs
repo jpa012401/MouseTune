@@ -56,6 +56,14 @@
 //! magnification 0; the Changed carries `amount × STEP_SCALE`, so one wheel
 //! tick is one complete pinch of ±10%.
 //!
+//! # The probe
+//!
+//! `magnify_probe` (ignored; the maintainer runs it) builds every event with
+//! this module's `build` before posting any. Its default mode sends one
+//! gesture each way (Began, 10 Changed of ±0.05, Ended), so a "worked"
+//! result verifies the encoding. `MOUSETUNE_PROBE_MAGNIFY=ticks` sends 5
+//! ticks each way through `choose`, exactly what `MacMagnify::step` posts.
+//!
 //! ## Unknown (no allowed source)
 //!
 //! - **Whether apps act on it when posted.** AppKit decodes it in-process;
@@ -94,9 +102,11 @@ use crate::{
     platform::event_poster::MacEventPoster,
 };
 
-/// macOS major versions where the maintainer saw the probe's **default**
-/// mode zoom Preview or Maps (in and out). Empty: nothing is confirmed, so
-/// every version uses the ⌘= / ⌘- keys.
+/// macOS major versions where the maintainer saw `magnify_probe` zoom
+/// Preview or Maps in and then out, in its **default** mode (which proves the
+/// encoding) and its `MOUSETUNE_PROBE_MAGNIFY=ticks` mode (which sends
+/// exactly `MacMagnify`'s per-tick triples). Empty: nothing is confirmed,
+/// so every version uses the ⌘= / ⌘- keys.
 ///
 /// Flip checklist, when the maintainer reports "worked" on macOS 27:
 /// 1. This line becomes `&[27]`.
@@ -375,5 +385,155 @@ mod tests {
         let strokes = zoom_key_strokes(-1.0);
         assert_eq!(strokes, [stroke(0x1B, true), stroke(0x1B, false)]);
         assert!(strokes.iter().all(|s| s.key_code != 0x37));
+    }
+}
+
+/// The maintainer's hardware probe (plan Task 10). Every event comes from
+/// the adapter's own `build` (and, in the ticks mode, `choose`), and all of
+/// them are built before any is posted.
+#[cfg(test)]
+mod probe {
+    use std::{thread::sleep, time::Duration};
+
+    use super::*;
+
+    const CHANGES: u32 = 10;
+    const CHANGE: f64 = 0.05;
+    const GAP: Duration = Duration::from_millis(30);
+    const TICKS: u32 = 5;
+    const TICK_GAP: Duration = Duration::from_millis(200);
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum Mode {
+        /// One gesture per direction: Began, 10 Changed of ±0.05, Ended.
+        Gesture,
+        /// What `MacMagnify::step` sends per wheel tick, 5 ticks each way.
+        Ticks,
+    }
+
+    impl Mode {
+        fn from_env() -> Self {
+            match std::env::var("MOUSETUNE_PROBE_MAGNIFY").as_deref() {
+                Ok("ticks") => Self::Ticks,
+                _ => Self::Gesture,
+            }
+        }
+    }
+
+    struct Planned {
+        wait: Duration,
+        event: CFRetained<CGEvent>,
+        line: String,
+    }
+
+    fn describe(f: &MagnifyFields) -> String {
+        let phase = match f.phase {
+            PHASE_BEGAN => "Began",
+            PHASE_CHANGED => "Changed",
+            PHASE_ENDED => "Ended",
+            _ => "?",
+        };
+        format!("{phase} magnification {:+.3}", f.magnification)
+    }
+
+    fn planned(wait: Duration, f: &MagnifyFields, event: CFRetained<CGEvent>) -> Planned {
+        Planned {
+            wait,
+            event,
+            line: describe(f),
+        }
+    }
+
+    fn one_gesture(sign: f64) -> Result<Vec<Planned>, String> {
+        let mut steps = vec![(
+            Duration::ZERO,
+            MagnifyFields {
+                phase: PHASE_BEGAN,
+                magnification: 0.0,
+            },
+        )];
+        for _ in 0..CHANGES {
+            steps.push((
+                GAP,
+                MagnifyFields {
+                    phase: PHASE_CHANGED,
+                    magnification: sign * CHANGE,
+                },
+            ));
+        }
+        steps.push((
+            GAP,
+            MagnifyFields {
+                phase: PHASE_ENDED,
+                magnification: 0.0,
+            },
+        ));
+        steps
+            .iter()
+            .map(|(wait, f)| {
+                let event = build(f).ok_or_else(|| format!("{} didn't build", describe(f)))?;
+                Ok(planned(*wait, f, event))
+            })
+            .collect()
+    }
+
+    fn adapter_ticks(sign: f64) -> Result<Vec<Planned>, String> {
+        let mut out = Vec::new();
+        for _ in 0..TICKS {
+            let built = |f: &MagnifyFields| build(f).map(|event| (*f, event));
+            let Step::Gesture(triple) = choose(true, sign, built) else {
+                return Err("a tick's triple didn't build (the adapter would post keys)".into());
+            };
+            for (i, (f, event)) in triple.into_iter().enumerate() {
+                let wait = if i == 0 { TICK_GAP } else { Duration::ZERO };
+                out.push(planned(wait, &f, event));
+            }
+        }
+        Ok(out)
+    }
+
+    /// Run by the maintainer only:
+    /// `cargo test magnify_probe -- --ignored --nocapture`, then optionally
+    /// `MOUSETUNE_PROBE_MAGNIFY=ticks cargo test magnify_probe -- --ignored --nocapture`.
+    /// Posts real events. Watch the screen.
+    #[test]
+    #[ignore = "posts real magnify events; the maintainer runs and watches it"]
+    fn magnify_probe() {
+        if !crate::platform::permissions::is_accessibility_trusted() {
+            println!(
+                "WARNING: this terminal isn't trusted for Accessibility; macOS will drop the events."
+            );
+        }
+        let mode = Mode::from_env();
+        let plan = |sign| match mode {
+            Mode::Gesture => one_gesture(sign),
+            Mode::Ticks => adapter_ticks(sign),
+        };
+        println!(
+            "Mode: {}.",
+            match mode {
+                Mode::Gesture => "gesture (Began, 10 x Changed of 0.05, Ended, each way)",
+                Mode::Ticks => "ticks (5 wheel ticks each way, exactly what MacMagnify sends)",
+            }
+        );
+        let (zoom_in, zoom_out) = match (plan(1.0), plan(-1.0)) {
+            (Ok(i), Ok(o)) => (i, o),
+            (Err(why), _) | (_, Err(why)) => {
+                println!("Posted nothing, because {why}.");
+                return;
+            }
+        };
+        println!("Keep the pointer over the window.");
+        println!("In 3 s: zoom IN on the frontmost Preview or Maps window, then OUT.");
+        sleep(Duration::from_secs(3));
+        for (label, events) in [("IN", zoom_in), ("OUT", zoom_out)] {
+            println!("Zoom {label}:");
+            for p in events {
+                sleep(p.wait);
+                CGEvent::post(CGEventTapLocation::SessionEventTap, Some(&p.event));
+                println!("  {}", p.line);
+            }
+            sleep(Duration::from_secs(1));
+        }
     }
 }
