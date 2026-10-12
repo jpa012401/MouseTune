@@ -225,3 +225,92 @@ impl ConfigFile for FakeConfigFile {
         Ok("config.1760000000.bak.json".to_owned())
     }
 }
+
+use crate::actions::{
+    ActionSink, Job, OutputError,
+    keys::{KeyBinding, KeyStroke},
+    perform::{EventPoster, FrontmostApp, HotkeyState, SymbolicHotkeys},
+};
+
+/// Records submitted jobs; `full` makes every submit fail like a full queue.
+#[derive(Clone, Default)]
+pub struct FakeSink {
+    pub jobs: Arc<Mutex<Vec<Job>>>,
+    pub full: Arc<AtomicBool>,
+}
+impl ActionSink for FakeSink {
+    fn submit(&self, job: Job) -> bool {
+        if self.full.load(Ordering::SeqCst) {
+            return false;
+        }
+        self.jobs.lock().unwrap().push(job);
+        true
+    }
+}
+
+/// Every OS output in order, as readable strings.
+#[derive(Clone, Default)]
+pub struct OutputLog(pub Arc<Mutex<Vec<String>>>);
+impl OutputLog {
+    pub fn all(&self) -> Vec<String> {
+        self.0.lock().unwrap().clone()
+    }
+    fn push(&self, s: String) {
+        self.0.lock().unwrap().push(s)
+    }
+}
+
+pub struct FakeHotkeys {
+    pub log: OutputLog,
+    pub state: Option<HotkeyState>,
+    pub install_fails: bool,
+}
+impl SymbolicHotkeys for FakeHotkeys {
+    fn read(&self, id: u16) -> Option<HotkeyState> {
+        self.log.push(format!("read {id}"));
+        self.state
+    }
+    fn install(&self, id: u16, b: KeyBinding) -> Result<(), OutputError> {
+        self.log.push(format!(
+            "install {id} key {} mods {:#x}",
+            b.key_code, b.modifiers.0
+        ));
+        if self.install_fails {
+            Err(OutputError::Os("CGSSetSymbolicHotKeyValue"))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+pub struct FakePoster {
+    pub log: OutputLog,
+    pub panics: bool,
+}
+impl EventPoster for FakePoster {
+    fn post_keys(&self, strokes: &[KeyStroke]) -> Result<(), OutputError> {
+        if self.panics {
+            panic!("poster bug");
+        }
+        for s in strokes {
+            self.log.push(format!(
+                "key {:#x} {} {:#x}",
+                s.key_code,
+                if s.down { "down" } else { "up" },
+                s.flags.0
+            ));
+        }
+        Ok(())
+    }
+    fn click(&self, b: u8) -> Result<(), OutputError> {
+        self.log.push(format!("click {b}"));
+        Ok(())
+    }
+}
+
+pub struct FakeFrontmost(pub Option<&'static str>);
+impl FrontmostApp for FakeFrontmost {
+    fn bundle_id(&self) -> Option<String> {
+        self.0.map(String::from)
+    }
+}

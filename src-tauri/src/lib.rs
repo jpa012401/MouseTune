@@ -6,6 +6,9 @@
 compile_error!("MouseTune only supports macOS.");
 
 mod accessibility;
+// Wired up in Phase 4a Task 8.
+#[allow(dead_code)]
+mod actions;
 mod config;
 mod events;
 mod input;
