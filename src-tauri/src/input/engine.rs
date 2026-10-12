@@ -1140,7 +1140,7 @@ mod tests {
     }
 
     #[test]
-    fn a_config_save_while_holding_through_keeps_the_hold_until_the_release() {
+    fn a_bindings_change_while_holding_through_keeps_the_hold_until_the_release() {
         let mut r = hold_through_rig();
         button(&mut r, ButtonKind::Down, 5, 10);
         r.engine.on_intents();
