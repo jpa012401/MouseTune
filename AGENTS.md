@@ -173,12 +173,12 @@ If you can't name the requirement a pattern serves, don't add it. **DRY is about
 
 ## Current state
 
-- **Merged on `main`:** Phase 0 (scaffold), Phase 1 (Accessibility onboarding, permission monitor, tray status, settings shell) and Phase 2 (input thread, event taps, HID mouse tracking, General page). Phase 2 passes every event through and is **pending manual hardware acceptance** (README).
-- **Implemented on `phase-3-config-store`, not yet merged:** Phase 3 (config store, kill-switch commands and event, tray switches, General page switches and recovery notice).
+- **Merged on `main`:** Phase 0 (scaffold), Phase 1 (Accessibility onboarding, permission monitor, tray status, settings shell), Phase 2 (input thread, event taps, HID mouse tracking, General page) and Phase 3 (config store with two kill switches, typed config commands and event, tray switches, recovery notice). Phases 2–3 are **pending manual hardware acceptance** (README); events are still passed through unchanged.
 - **Next:** Phase 4 (click cycle, router, basic actions).
 - **Known gaps:**
   - Config holds only the two kill switches; later phases add their sections.
   - The Accessibility commands still return `Result<(), String>`; config commands use the typed `ConfigError`.
+  - Parked UI edge cases (bridge-failure-only): a failed Dismiss or config load is only reported on the General page; brief stale switch if a tray change races the initial load.
   - Deferred: a shutdown join timeout, a tap-timeout counter, a degraded indicator in the tray, and moving `spawn` out of `input/`.
 - **Never exercised for real:** the Accessibility prompt and settings-pane flow; the tray icon rendering; a bundled or signed build; CI on GitHub (no remote yet); macOS 12–26; Intel; an external mouse through the HID adapter; tap teardown on quit with real taps; tray switch checkmarks; a kill switch turning a real tap off; the watchdog's tap rebuild (`revive`).
 
