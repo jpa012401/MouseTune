@@ -10,4 +10,7 @@ describe("configErrorMessage", () => {
       "Couldn’t save your settings: settings version 7 isn’t supported (expected 1)",
     );
   });
+  it("falls back to the raw reason for anything that isn't a ConfigError", () => {
+    expect(configErrorMessage("the core is gone")).toBe("Couldn’t save your settings: the core is gone");
+  });
 });

@@ -138,6 +138,77 @@ describe("General page — Input switches", () => {
     expect(screen.getByRole("switch", { name: "Scrolling" }).getAttribute("aria-checked")).toBe("true");
   });
 
+  it("a save that throws shows why instead of failing silently", async () => {
+    mockBackend({
+      get_status: () => status(),
+      set_config: () => {
+        throw new Error("boom");
+      },
+    });
+    renderGeneral();
+    fireEvent.click(await screen.findByRole("switch", { name: "Scrolling" }));
+    expect((await screen.findByText(/boom/)).getAttribute("role")).toBe("alert");
+    expect(screen.getByRole("switch", { name: "Scrolling" }).getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("a dismiss that throws shows why", async () => {
+    mockBackend({
+      get_status: () => status(),
+      get_config: () => configView({ recovery: { backup_file: "config.1760000000.bak.json" } }),
+      dismiss_config_recovery: () => {
+        throw new Error("boom");
+      },
+    });
+    renderGeneral();
+    fireEvent.click(await screen.findByRole("button", { name: "Dismiss" }));
+    expect((await screen.findByText(/boom/)).getAttribute("role")).toBe("alert");
+  });
+
+  it("says when the settings couldn't be loaded", async () => {
+    mockBackend({
+      get_status: () => status(),
+      get_config: () => {
+        throw "the settings store is unavailable";
+      },
+    });
+    renderGeneral();
+    expect(
+      (await screen.findByText("Couldn’t load your settings: the settings store is unavailable")).getAttribute("role"),
+    ).toBe("alert");
+    expect(screen.queryByRole("switch", { name: "Scrolling" })).toBeNull();
+  });
+
+  it("a change from the tray clears a stale save error", async () => {
+    mockBackend({
+      get_status: () => status(),
+      set_config: () => {
+        throw { kind: "Io", message: "disk full" };
+      },
+    });
+    renderGeneral();
+    fireEvent.click(await screen.findByRole("switch", { name: "Scrolling" }));
+    await screen.findByText(/disk full/);
+    await act(() => emit("config-changed", config({ buttons_enabled: false })));
+    expect(screen.queryByText(/disk full/)).toBeNull();
+  });
+
+  it("a saved change removes the notice that the old file was left in place", async () => {
+    let recovery: { backup_file: string | null } | null = { backup_file: null };
+    mockBackend({
+      get_status: () => status(),
+      get_config: () => configView({ recovery }),
+      set_config: () => {
+        recovery = null;
+        return config({ scroll_enabled: false });
+      },
+    });
+    renderGeneral();
+    await screen.findByText(/was left in place/);
+    fireEvent.click(screen.getByRole("switch", { name: "Scrolling" }));
+    await waitFor(() => expect(screen.queryByText(/was left in place/)).toBeNull());
+    expect(screen.getByRole("switch", { name: "Scrolling" }).getAttribute("aria-checked")).toBe("false");
+  });
+
   it("follows changes made from the tray", async () => {
     mockBackend({ get_status: () => status() });
     renderGeneral();

@@ -71,6 +71,7 @@ export function General() {
   const input = useStatusStore((s) => s.status?.input);
   const view = useConfigStore((s) => s.view);
   const saveError = useConfigStore((s) => s.error);
+  const loadError = useConfigStore((s) => s.loadError);
   const { setGeneral } = useConfigStore.getState();
 
   // The engine pushes taps and devices as events, but scroll counters change
@@ -88,6 +89,12 @@ export function General() {
         <p role="alert" className="mb-6 text-sm text-red-600">
           MouseTune recovered from an internal error. Some input may have been passed through
           unchanged. Check the logs for details.
+        </p>
+      )}
+
+      {loadError && (
+        <p role="alert" className="mb-6 text-sm text-red-600">
+          {loadError}
         </p>
       )}
 

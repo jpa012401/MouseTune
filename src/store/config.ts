@@ -4,7 +4,10 @@ import { configErrorMessage } from "../lib/config";
 
 type ConfigState = {
   view: ConfigView | null;
+  /** Why the last save or dismiss failed. Cleared by the next success or a change from elsewhere. */
   error: string | null;
+  /** Why the settings couldn't be loaded at all. */
+  loadError: string | null;
   load: () => Promise<void>;
   setGeneral: (patch: Partial<GeneralSettings>) => Promise<void>;
   dismissRecovery: () => Promise<void>;
@@ -14,45 +17,59 @@ type ConfigState = {
 export const useConfigStore = create<ConfigState>((set, get) => ({
   view: null,
   error: null,
+  loadError: null,
   load: async () => {
     try {
-      set({ view: await commands.getConfig() });
+      set({ view: await commands.getConfig(), loadError: null });
     } catch (err) {
-      set({ error: String(err) });
+      set({ loadError: `Couldn’t load your settings: ${String(err)}` });
     }
   },
   setGeneral: async (patch) => {
     const { view } = get();
     if (!view) return;
-    const result = await commands.setConfig({
-      ...view.config,
-      general: { ...view.config.general, ...patch },
-    });
-    if (result.status === "ok") {
-      set((state) => (state.view ? { view: { ...state.view, config: result.data }, error: null } : state));
-    } else {
-      set({ error: configErrorMessage(result.error) });
+    try {
+      const result = await commands.setConfig({
+        ...view.config,
+        general: { ...view.config.general, ...patch },
+      });
+      if (result.status === "error") {
+        set({ error: configErrorMessage(result.error) });
+        return;
+      }
+      // A save can clear the recovery notice in Rust (the unreadable file was overwritten).
+      const { recovery } = await commands.getConfig();
+      set({ view: { config: result.data, recovery }, error: null });
+    } catch (err) {
+      set({ error: configErrorMessage(err) });
     }
   },
   dismissRecovery: async () => {
-    await commands.dismissConfigRecovery();
-    set((state) => (state.view ? { view: { ...state.view, recovery: null } } : state));
+    try {
+      await commands.dismissConfigRecovery();
+      set((state) => (state.view ? { view: { ...state.view, recovery: null }, error: null } : state));
+    } catch (err) {
+      set({ error: `Couldn’t dismiss the notice: ${String(err)}` });
+    }
   },
 }));
 
-/** Loads the config and follows changes made elsewhere (the tray). Returns a cleanup function. */
+/** Follows changes made elsewhere (the tray), then loads the config. Returns a cleanup function. */
 export function startConfigSync(): () => void {
-  void useConfigStore.getState().load();
-
-  const unlisteners = [
-    events.configChanged.listen(({ payload }) => {
-      useConfigStore.setState((state) =>
-        state.view ? { view: { ...state.view, config: payload } } : state,
-      );
-    }),
-  ];
+  let stopped = false;
+  const unlisten = events.configChanged.listen(({ payload }) => {
+    useConfigStore.setState((state) =>
+      state.view ? { view: { ...state.view, config: payload }, error: null } : state,
+    );
+  });
+  // Load only once the listener is registered, so a change made in between isn't missed.
+  const loadIfRunning = () => {
+    if (!stopped) void useConfigStore.getState().load();
+  };
+  unlisten.then(loadIfRunning, loadIfRunning);
 
   return () => {
-    for (const unlisten of unlisteners) void unlisten.then((fn) => fn());
+    stopped = true;
+    void unlisten.then((fn) => fn());
   };
 }
