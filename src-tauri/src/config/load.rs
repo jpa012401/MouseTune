@@ -1,5 +1,7 @@
 //! Loading rules (design §1 table). Pure: the store does the I/O.
 
+use serde_json::Value;
+
 use crate::config::{migrate::migrate, schema::Config};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,15 +37,60 @@ fn try_parse(text: &str) -> Option<Config> {
     if version == 0 || version > crate::config::schema::CURRENT_VERSION {
         return None;
     }
-    let mut config: Config = serde_json::from_value(migrate(value, version)).ok()?;
+    let defaults = serde_json::to_value(Config::default()).ok()?;
+    let merged = merge_defaults(defaults, migrate(value, version));
+    let mut config: Config = serde_json::from_value(merged).ok()?;
     config.version = crate::config::schema::CURRENT_VERSION;
     Some(config)
+}
+
+/// Fills what the file leaves out from `defaults`, so the file can omit any
+/// section or field while the types stay strict. Objects merge key by key;
+/// any other file value wins. Unknown file keys are kept (serde ignores them).
+fn merge_defaults(defaults: Value, file: Value) -> Value {
+    match (defaults, file) {
+        (Value::Object(mut merged), Value::Object(file)) => {
+            for (key, file_value) in file {
+                let value = match merged.remove(&key) {
+                    Some(default_value) => merge_defaults(default_value, file_value),
+                    None => file_value,
+                };
+                merged.insert(key, value);
+            }
+            Value::Object(merged)
+        }
+        (_, file) => file,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::schema::General;
+    use serde_json::json;
+
+    #[test]
+    fn merge_fills_missing_keys_at_every_depth_and_keeps_file_values() {
+        let defaults =
+            json!({ "a": 1, "outer": { "x": true, "inner": { "y": 2, "z": 3 } }, "list": [1] });
+        let file =
+            json!({ "outer": { "inner": { "z": 9 }, "extra": "kept" }, "list": [], "unknown": 5 });
+        assert_eq!(
+            merge_defaults(defaults, file),
+            json!({ "a": 1, "outer": { "x": true, "inner": { "y": 2, "z": 9 }, "extra": "kept" }, "list": [], "unknown": 5 })
+        );
+    }
+
+    #[test]
+    fn merge_lets_a_non_object_file_value_replace_a_default_object() {
+        assert_eq!(
+            merge_defaults(
+                json!({ "general": { "x": true } }),
+                json!({ "general": null })
+            ),
+            json!({ "general": null })
+        );
+    }
 
     fn ok(config: Config) -> LoadOutcome {
         LoadOutcome {

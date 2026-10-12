@@ -1,5 +1,7 @@
-//! The settings file's shape. Sections are `#[serde(default)]` so later
-//! phases can add fields without a version bump (design §1).
+//! The settings file's shape. Every field is required so the UI can't send
+//! partial settings; the loader fills what a file leaves out from the
+//! defaults (`load::merge_defaults`), so later phases can add fields without
+//! a version bump (design §1).
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -12,7 +14,6 @@ pub const CURRENT_VERSION: u32 = 1;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub struct Config {
     pub version: u32,
-    #[serde(default)]
     pub general: General,
 }
 
@@ -26,7 +27,6 @@ impl Default for Config {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
-#[serde(default)]
 pub struct General {
     /// Kill switch for button features.
     pub buttons_enabled: bool,
@@ -56,6 +56,17 @@ pub fn tap_demand(config: &Config) -> TapDemand {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn config_from_the_ui_must_be_complete() {
+        assert!(serde_json::from_value::<Config>(serde_json::json!({ "version": 1 })).is_err());
+        assert!(
+            serde_json::from_value::<Config>(
+                serde_json::json!({ "version": 1, "general": { "scroll_enabled": false } })
+            )
+            .is_err()
+        );
+    }
 
     fn config(buttons: bool, scroll: bool) -> Config {
         Config {

@@ -30,7 +30,7 @@ export const events = {
 /* Types */
 export type Config = {
 	version: number,
-	general?: General,
+	general: General,
 };
 
 export type ConfigChanged = Config;
@@ -55,9 +55,9 @@ export type Device = {
 
 export type General = {
 	/**  Kill switch for button features. */
-	buttons_enabled?: boolean,
+	buttons_enabled: boolean,
 	/**  Kill switch for scroll features. */
-	scroll_enabled?: boolean,
+	scroll_enabled: boolean,
 };
 
 export type InputStatus = {
