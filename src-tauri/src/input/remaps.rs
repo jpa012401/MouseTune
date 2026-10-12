@@ -47,6 +47,9 @@ pub struct OutputSupport {
 }
 
 impl OutputSupport {
+    /// Every output on its fallback. Production always asks
+    /// `platform::output_support`; tests start from this.
+    #[cfg(test)]
     pub const NONE: Self = Self {
         dock_swipe: false,
         magnify: false,

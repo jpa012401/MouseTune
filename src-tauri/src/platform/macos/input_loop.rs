@@ -203,7 +203,7 @@ fn run_input_thread(
         }),
         swipe: swipe_output(&run_loop, &shared.degraded),
         scroll: Box::new(MacScrollPoster::new()),
-        magnify: Box::new(MacMagnify),
+        magnify: Box::new(MacMagnify::new()),
     };
     let engine: Engine = Rc::new(RefCell::new(InputEngine::new(
         controller,
