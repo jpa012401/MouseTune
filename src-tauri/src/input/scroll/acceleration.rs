@@ -150,7 +150,9 @@ pub struct SwipeTracker {
 }
 
 impl SwipeTracker {
-    /// Swipes completed earlier in this streak, before this tick's run.
+    /// Swipes completed earlier in this streak, before this tick's run. The
+    /// first tick of a new run already counts the swipe just finished, so it
+    /// gets the next swipe's factor: intended, the speed-up shows at once.
     pub fn observe(&mut self, tick: &Tick, now: Instant) -> u32 {
         let previous = self.last.replace((now, tick.axis, tick.sign));
         let gap = previous
