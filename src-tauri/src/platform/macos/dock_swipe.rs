@@ -50,9 +50,9 @@
 //!   direction isn't known yet.
 //! - **Velocity** is `SwipeOutput::end`'s velocity in progress per second,
 //!   in one velocity child on the Ended event, on the locked axis.
-//! - **Ended is re-sent** at +200 ms and +500 ms (`ResendSchedule`), so a
-//!   dropped end can't leave Mission Control half open. A new Began or a
-//!   Cancelled withdraws pending re-sends.
+//! - **Ended and Cancelled are re-sent** at +200 ms and +500 ms
+//!   (`ResendSchedule`), so a dropped close can't leave Mission Control
+//!   half open. A new Began or a Cancelled withdraws pending re-sends first.
 //! - **A Began is posted only if the matching Ended (with its velocity
 //!   child) also builds**, so the adapter never opens a gesture it can't
 //!   close.
@@ -236,11 +236,11 @@ pub fn fields(axis: DragAxis, phase: Phase, progress: f64, velocity: Option<f64>
     }
 }
 
-/// When an Ended is re-sent, in `CFAbsoluteTime` seconds.
+/// When an Ended or Cancelled is re-sent, in `CFAbsoluteTime` seconds.
 pub struct ResendSchedule;
 
 impl ResendSchedule {
-    /// Re-sends for an end posted at `end`: +200 ms and +500 ms.
+    /// Re-sends for an end (or cancel) posted at `end`: +200 ms and +500 ms.
     pub fn after_end(end: f64) -> [f64; 2] {
         [end + 0.2, end + 0.5]
     }
@@ -307,13 +307,15 @@ impl Sequencer {
         }
     }
 
-    pub fn cancel(&mut self) -> Plan {
+    /// `now` is the `CFAbsoluteTime` the cancel is posted at.
+    pub fn cancel(&mut self, now: f64) -> Plan {
         let Some((axis, progress)) = self.active.take() else {
             return Plan::NOTHING;
         };
         Plan {
             disarm: true,
             post: Some(fields(axis, Phase::Cancelled, progress, None)),
+            resend_at: Some(ResendSchedule::after_end(now)),
             ..Plan::NOTHING
         }
     }
@@ -566,7 +568,7 @@ impl SwipeOutput for MacDockSwipe {
     }
 
     fn cancel(&mut self) {
-        let plan = self.sequencer.cancel();
+        let plan = self.sequencer.cancel(CFAbsoluteTimeGetCurrent());
         self.run(plan);
     }
 }
@@ -724,23 +726,24 @@ mod tests {
         );
         assert_eq!(s.change(0.7), Plan::NOTHING);
         assert_eq!(s.end(1.0, 11.0), Plan::NOTHING);
-        assert_eq!(s.cancel(), Plan::NOTHING);
+        assert_eq!(s.cancel(11.0), Plan::NOTHING);
     }
 
     #[test]
-    fn a_cancel_posts_cancelled_at_the_last_progress_and_withdraws_re_sends() {
+    fn a_cancel_posts_cancelled_at_the_last_progress_and_is_re_sent_like_an_end() {
         let mut s = Sequencer::default();
         s.begin(DragAxis::Vertical);
         s.change(-0.3);
         assert_eq!(
-            s.cancel(),
+            s.cancel(10.0),
             Plan {
                 disarm: true,
                 post: Some(sf(2, 1, -0.3, 0x0800_0000, None)),
+                resend_at: Some([10.2, 10.5]),
                 ..Plan::NOTHING
             }
         );
-        assert_eq!(s.cancel(), Plan::NOTHING);
+        assert_eq!(s.cancel(11.0), Plan::NOTHING);
     }
 
     #[test]
@@ -748,7 +751,7 @@ mod tests {
         let mut s = Sequencer::default();
         assert_eq!(s.change(0.5), Plan::NOTHING);
         assert_eq!(s.end(2.0, 10.0), Plan::NOTHING);
-        assert_eq!(s.cancel(), Plan::NOTHING);
+        assert_eq!(s.cancel(10.0), Plan::NOTHING);
         s.begin(DragAxis::Horizontal);
         s.abandon();
         assert_eq!(s.change(0.5), Plan::NOTHING);
@@ -911,7 +914,7 @@ mod read_back {
         );
         s.begin(DragAxis::Vertical);
         s.change(-0.25);
-        let cancelled = read(s.cancel()).expect("reads back");
+        let cancelled = read(s.cancel(0.0)).expect("reads back");
         assert_eq!(
             (
                 cancelled.motion,
