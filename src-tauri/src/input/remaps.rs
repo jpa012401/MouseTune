@@ -310,7 +310,7 @@ mod tests {
     }
 
     #[test]
-    fn defaults_map_the_middle_button_to_cg_button_2() {
+    fn phase4_buttons_map_the_middle_button_to_cg_button_2() {
         let compiled = compile(&Config {
             buttons: phase4_buttons(),
             ..Config::default()

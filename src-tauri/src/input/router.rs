@@ -676,7 +676,7 @@ mod tests {
         );
     }
 
-    fn defaults() -> ButtonRouter {
+    fn phase4_router() -> ButtonRouter {
         ButtonRouter::new(compile(&Config {
             buttons: phase4_buttons(),
             ..Config::default()
@@ -727,14 +727,14 @@ mod tests {
 
     #[test]
     fn unbound_button_passes_down_and_up() {
-        let mut r = defaults();
+        let mut r = phase4_router();
         assert_eq!(down(&mut r, 5), (Verdict::Pass, vec![]));
         assert_eq!(up(&mut r, 5), (Verdict::Pass, vec![]));
     }
 
     #[test]
     fn a_click_with_nothing_else_bound_fires_on_down() {
-        let mut r = defaults();
+        let mut r = phase4_router();
         assert_eq!(
             down(&mut r, 3),
             (Verdict::Swallow, vec![EXPIRY_260, Outcome::Fire(BACK)])
@@ -747,7 +747,7 @@ mod tests {
 
     #[test]
     fn middle_click_released_before_the_hold_fires_mission_control_on_up() {
-        let mut r = defaults();
+        let mut r = phase4_router();
         assert_eq!(
             down(&mut r, MIDDLE),
             (Verdict::Swallow, vec![EXPIRY_260, HOLD_250])
@@ -767,7 +767,7 @@ mod tests {
 
     #[test]
     fn middle_hold_fires_show_desktop_and_no_click_on_release() {
-        let mut r = defaults();
+        let mut r = phase4_router();
         down(&mut r, MIDDLE);
         assert_eq!(timer(&mut r, TimerKind::Hold), vec![Outcome::Fire(DESKTOP)]);
         assert_eq!(
@@ -778,7 +778,7 @@ mod tests {
 
     #[test]
     fn two_quick_clicks_without_a_double_binding_fire_twice() {
-        let mut r = defaults();
+        let mut r = phase4_router();
         down(&mut r, 3);
         up(&mut r, 3);
         assert_eq!(
@@ -862,7 +862,7 @@ mod tests {
 
     #[test]
     fn our_own_synthetic_events_pass_untouched() {
-        let mut r = defaults();
+        let mut r = phase4_router();
         let tagged = ButtonEvent {
             user_data: crate::input::filter::MOUSETUNE_EVENT_TAG,
             ..event(ButtonKind::Down, 3)
@@ -872,14 +872,14 @@ mod tests {
 
     #[test]
     fn a_stray_timer_fire_does_nothing() {
-        let mut r = defaults();
+        let mut r = phase4_router();
         assert_eq!(timer(&mut r, TimerKind::Hold), vec![]);
         assert_eq!(timer(&mut r, TimerKind::Expiry), vec![]);
     }
 
     #[test]
     fn reset_keeps_the_up_swallowed_and_cancels_the_hold() {
-        let mut r = defaults();
+        let mut r = phase4_router();
         down(&mut r, MIDDLE);
         assert_eq!(
             split(r.reset()).1,
@@ -902,7 +902,7 @@ mod tests {
 
     #[test]
     fn an_up_from_another_mouse_doesnt_release_this_mouses_press() {
-        let mut r = defaults();
+        let mut r = phase4_router();
         down_from(&mut r, MIDDLE, 70);
         down_from(&mut r, MIDDLE, 71); // ends 70's cycle, starts 71's
         assert_eq!(up_from(&mut r, MIDDLE, 70), (Verdict::Swallow, vec![]));
@@ -932,7 +932,7 @@ mod tests {
 
     #[test]
     fn a_fresh_passing_down_clears_a_stale_swallowed_bit() {
-        let mut r = defaults();
+        let mut r = phase4_router();
         down(&mut r, MIDDLE); // swallowed; its up never reaches us
         r.set_remaps(compile(&Config {
             buttons: Buttons {
@@ -949,7 +949,7 @@ mod tests {
 
     #[test]
     fn forgetting_swallowed_bits_lets_the_next_up_pass() {
-        let mut r = defaults();
+        let mut r = phase4_router();
         assert_eq!(down(&mut r, MIDDLE).0, Verdict::Swallow);
         r.forget_swallowed();
         assert_eq!(up(&mut r, MIDDLE).0, Verdict::Pass);
@@ -957,14 +957,14 @@ mod tests {
 
     #[test]
     fn a_foreign_down_passes_and_its_up_passes() {
-        let mut r = defaults();
+        let mut r = phase4_router();
         assert_eq!(split(r.on_foreign_down(MIDDLE)), (Verdict::Pass, vec![]));
         assert_eq!(up(&mut r, MIDDLE), (Verdict::Pass, vec![]));
     }
 
     #[test]
     fn a_foreign_down_clears_a_stale_swallowed_bit() {
-        let mut r = defaults();
+        let mut r = phase4_router();
         down(&mut r, MIDDLE); // swallowed; its up never reaches us
         r.on_foreign_down(MIDDLE);
         assert_eq!(up(&mut r, MIDDLE), (Verdict::Pass, vec![]));
@@ -972,13 +972,13 @@ mod tests {
 
     #[test]
     fn an_out_of_range_foreign_down_passes() {
-        let mut r = defaults();
+        let mut r = phase4_router();
         assert_eq!(split(r.on_foreign_down(40)), (Verdict::Pass, vec![]));
     }
 
     #[test]
     fn a_captured_down_is_swallowed_and_so_is_its_up() {
-        let mut r = defaults();
+        let mut r = phase4_router();
         assert_eq!(
             split(r.on_captured_down(MIDDLE)),
             (Verdict::Swallow, vec![])
@@ -988,7 +988,7 @@ mod tests {
 
     #[test]
     fn capturing_mid_cycle_ends_that_cycle_without_firing() {
-        let mut r = defaults();
+        let mut r = phase4_router();
         down(&mut r, MIDDLE); // arms expiry + hold
         assert_eq!(
             split(r.on_captured_down(3)),
@@ -1431,7 +1431,7 @@ mod tests {
 
     #[test]
     fn out_of_range_buttons_pass() {
-        let mut r = defaults();
+        let mut r = phase4_router();
         assert_eq!(down(&mut r, 40), (Verdict::Pass, vec![]));
     }
 }
