@@ -38,12 +38,13 @@ This is a mouse utility for my own Macs, not a platform. No accounts, no telemet
 
 ## Glossary
 
-- **Tap**: a CGEventTap. Three exist: Buttons, Scroll and Flags (modifier keys). They are switched on and off as a set (`TapSet`), never one by one from feature code.
+- **Tap**: a CGEventTap. Four exist: Buttons, Scroll, Flags (modifier keys) and Keys (only while the recorder runs). They are switched on and off as a set (`TapSet`), never one by one from feature code.
 - **Tracked mouse**: a connected HID mouse that isn't excluded. Only tracked mice turn taps on.
 - **Excluded device**: Apple vendor IDs `0x05AC` or `0x004C`, or a name containing "trackpad". These already behave like trackpads; we leave them alone.
 - **Sender ID**: CGEvent field 87, the IORegistry ID of the HID service that produced an event. It's how an event is matched to a device.
 - **Pass through**: return the original event unmodified. This is the default answer to any doubt.
 - **Degraded**: a tap callback panicked and was caught. The engine keeps running, and the UI says so.
+- **Capture**: the next mouse-button press is reported to the UI instead of acting. **Recorder**: the temporary active Keys tap that records a keyboard shortcut.
 - **Trusted**: the app has Accessibility permission (`AXIsProcessTrusted`). Never say "has permissions" loosely; this is the only permission that matters.
 - **Job**: an action or plain click the input engine hands to `mt-exec`.
 - **`mt-exec`**: the executor thread that performs actions off the hot path, over a bounded 64-slot queue. A full queue drops the job and counts it.
@@ -176,13 +177,14 @@ If you can't name the requirement a pattern serves, don't add it. **DRY is about
 ## Current state
 
 - **Merged on `main`:** Phase 0 (scaffold), Phase 1 (Accessibility onboarding, permission monitor, tray status, settings shell), Phase 2 (input thread, event taps, HID mouse tracking, General page), Phase 3 (config store with two kill switches, typed config commands and event, tray switches, recovery notice) and Phase 4a (click cycle, router, `mt-exec` executor with `Navigate` and symbolic hotkeys, read-only Buttons page). Phases 2–4a are **pending manual hardware acceptance** (README). The scroll path still passes every event through unchanged; the button tap swallows routed events.
-- **Next:** Phase 4b (capture mode, Buttons editor).
+- **Implemented on `phase-4b-buttons-editor`, not yet merged:** Phase 4b (capture mode, key recorder, editable Buttons screen, the full hotkey table, `KeyCombo`). **Pending manual hardware acceptance** (README).
+- **Next:** Phase 4c (mouse-click remaps, `SystemKey` media keys, `nav_overrides`, configurable timing).
 - **Known gaps:**
-  - Config holds the two kill switches and `buttons.remaps` (read-only in the UI until Phase 4b); later phases add their sections.
+  - Config holds the two kill switches and `buttons.remaps` (editable in the UI since Phase 4b); later phases add their sections.
   - The Accessibility commands still return `Result<(), String>`; config commands use the typed `ConfigError`.
   - Parked UI edge cases (bridge-failure-only): a failed Dismiss or config load is only reported on the General page; brief stale switch if a tray change races the initial load.
   - Deferred: a shutdown join timeout (also for `mt-exec` on quit; the 7 px drag cancel waits for Phase 6), a tap-timeout counter, a degraded indicator in the tray, and moving `spawn` out of `input/`.
-- **Never exercised for real:** the Accessibility prompt and settings-pane flow; the tray icon rendering; a bundled or signed build; CI on GitHub (no remote yet); macOS 12–26; Intel; an external mouse through the HID adapter; tap teardown on quit with real taps; tray switch checkmarks; a kill switch turning a real tap off; the watchdog's tap rebuild (`revive`); the CGS install path (unreachable binding); posting key combos and clicks; the click timers on real input; the B3/B4/B5 defaults on a real mouse; button-tap swallowing with real taps. *Exercised:* reading hotkey 32 (enabled, Ctrl+Up) and the frontmost bundle ID on macOS 27.
+- **Never exercised for real:** the Accessibility prompt and settings-pane flow; the tray icon rendering; a bundled or signed build; CI on GitHub (no remote yet); macOS 12–26; Intel; an external mouse through the HID adapter; tap teardown on quit with real taps; tray switch checkmarks; a kill switch turning a real tap off; the watchdog's tap rebuild (`revive`); the CGS install path (unreachable binding); posting key combos and clicks; the click timers on real input; the B3/B4/B5 defaults on a real mouse; button-tap swallowing with real taps; the Keys tap under Accessibility; button capture on hardware; whether macOS asks for Input Monitoring; the new hotkeys' CGS IDs and default-shortcut fallbacks; recording ⌘Q / ⌘Tab / ⌘Space. *Exercised:* reading hotkey 32 (enabled, Ctrl+Up) and the frontmost bundle ID on macOS 27.
 
 ## Settled decisions and open questions
 
@@ -193,8 +195,11 @@ If you can't name the requirement a pattern serves, don't add it. **DRY is about
 - **Name MouseTune, bundle ID `com.johnpaulalabe.mousetune`, macOS 12–27.**
 - **Tray toggles moved to Phase 3**: they need the config store.
 - **Config v1 holds the kill switches and button remaps**, and grows a section per phase; the loader deep-merges the file over the defaults so it grows additively, and IPC types stay strict.
-- **Phase 4 is split into 4a (button engine) and 4b (capture mode, editor).** **B3 click default = Mission Control.**
+- **Phase 4 is split into 4a (button engine) and 4b (capture mode, editor); 4c holds mouse-click remaps, media keys, `nav_overrides` and timing.** **B3 click default = Mission Control.**
 - **The engine owns `CompiledRemaps`**, delivered by `Control::SetRemaps`; no `ArcSwap`.
+- **Edits save immediately through `set_config`**; Rust validates remaps (`config/validate.rs`). No draft state.
+- **Config actions compile to a `Copy` `CompiledAction`**, so the tap callback never touches heap data.
+- **Hot-path results (captures) leave as `Job::Notice`** on the bounded queue to `mt-exec`.
 - Click-cycle, suppression and hotkey-fallback details: `input/{click_cycle,router}.rs` and `actions/` docs and tests.
 - **Phase 2 passed every event through**; since Phase 3 the tap demand follows the config. **The watchdog runs on `mt-input`**, not the main thread. **One `input-status-changed` event** replaces `devices-changed`/`status-changed` (Phase 2 plan).
 
@@ -213,7 +218,7 @@ Spec amendments go in the commit that proves the spec wrong.
 | Tray, window, agent behaviour | §2.1, §3.2 | `tray.rs`, `window.rs` |
 | macOS version differences | §3.4 | `platform/macos/os_version.rs` |
 | Event taps, filtering, devices, threading | §4 | `input/`, Phase 2 plan |
-| Buttons and gestures | §5 | `input/{remaps,click_cycle,router}.rs` |
+| Buttons and gestures | §5 | `input/{remaps,click_cycle,router,capture,key_recorder}.rs`, `config/validate.rs`, `actions/` |
 | Drag, dock swipe | §6 | — (Phase 6) |
 | Actions, symbolic hotkeys | §7 | `actions/`, `platform/macos/{symbolic_hotkeys,event_poster,frontmost_app}.rs` |
 | Smooth scrolling | §8 | — (Phase 5) |

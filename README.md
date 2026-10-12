@@ -63,6 +63,16 @@ Taps pass every event through unchanged in this phase (since Phase 4a the button
 7. Turn off Settings → General → Mouse buttons (or the tray's Enable buttons): B3 does a plain middle click again.
 8. Disable Mission Control's keyboard shortcut in System Settings, then click B3: Mission Control still opens (unreachable binding). This changes WindowServer hotkey state; restore your shortcut in System Settings afterwards if you changed it. Afterwards System Settings shows that shortcut as enabled with an unusual key: that is the unreachable binding MouseTune installed. Run it only with the maintainer's go-ahead.
 
+### Verifying the Buttons editor (Phase 4b acceptance, 5-button mouse)
+
+1. Settings → Buttons → + Add remap, press B4, choose Double click and Spotlight, then Add: a double click on B4 opens Spotlight, and a single click on B4 still goes Back after at most 260 ms.
+2. Add a remap for B5 · Hold, choose Keyboard shortcut…, press ⌘⇧4, then Add: holding B5 shows the screenshot crosshair.
+3. Try to add B3 · Click again: the "already set" message appears and Add stays disabled.
+4. Restore defaults: the list and the button behaviour return to the Phase 4a defaults.
+5. Start recording a shortcut and press ⌘Q: nothing quits, and ⌘Q is recorded.
+6. Start mouse capture (+ Add remap), then close the Settings window: B3 still opens Mission Control.
+7. Note whether macOS asked for Input Monitoring the first time you recorded a shortcut, and report it. It is assumed that Accessibility is enough; this step checks that.
+
 ## Building
 
 ```sh
