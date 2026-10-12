@@ -105,7 +105,7 @@ pub fn run() {
                 trusted,
                 config::schema::tap_demand(store.current()),
                 input::remaps::compile_with(store.current(), support),
-                store.current().scroll,
+                config::schema::engine_scroll(store.current()),
                 Box::new(sink),
                 Box::new(events::EmitInputStatus(app.handle().clone())),
             );

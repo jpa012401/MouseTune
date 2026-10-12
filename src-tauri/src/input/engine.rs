@@ -1979,6 +1979,76 @@ mod tests {
         assert_eq!(r.magnify.log(), ["step 1.00"]);
     }
 
+    /// The config's scroll and button bindings reach the engine the way the
+    /// composition root sends them.
+    fn apply_config(r: &mut Rig, c: &Config) {
+        r.engine.set_demand(crate::config::schema::tap_demand(c));
+        r.engine.set_remaps(compile(c));
+        r.engine.set_scroll(crate::config::schema::engine_scroll(c));
+    }
+
+    fn zoom_binding_config() -> Config {
+        let mut c = Config {
+            buttons: phase4_buttons(),
+            ..Config::default()
+        };
+        c.buttons.scroll_bindings = vec![crate::config::schema::ScrollBinding {
+            button: 4,
+            effect: crate::config::schema::ScrollEffect::Zoom,
+        }];
+        c
+    }
+
+    #[test]
+    fn with_the_scroll_kill_switch_off_plain_ticks_pass_and_bound_ticks_act() {
+        let mut r = rig(true);
+        r.engine.apply_device_event(DeviceEvent::Added(mouse(1)));
+        let mut c = zoom_binding_config();
+        c.general.scroll_enabled = false;
+        c.scroll.invert_vertical = true;
+        apply_config(&mut r, &c);
+        assert!(r.engine.snapshot().taps.scroll, "the binding needs the tap");
+        assert_eq!(r.engine.on_scroll(&wheel(1)), ScrollVerdict::Pass);
+        button(&mut r, ButtonKind::Down, 3, 10);
+        assert_eq!(r.engine.on_scroll(&wheel(1)), ScrollVerdict::Swallow);
+        r.engine.on_intents();
+        assert_eq!(r.magnify.log(), ["step 1.00"]);
+        assert!(r.frames.calls().is_empty(), "nothing smoothed");
+    }
+
+    #[test]
+    fn with_the_scroll_kill_switch_off_a_bound_zoom_key_does_nothing() {
+        let mut r = rig(true);
+        r.engine.apply_device_event(DeviceEvent::Added(mouse(1)));
+        let mut c = zoom_binding_config();
+        c.general.scroll_enabled = false;
+        c.scroll.keyboard_modifiers.zoom = Some(crate::config::schema::KeyModifier::Command);
+        apply_config(&mut r, &c);
+        let cmd = ScrollFields {
+            flags: 0x10_0000,
+            ..wheel(1)
+        };
+        assert_eq!(r.engine.on_scroll(&cmd), ScrollVerdict::Pass);
+        r.engine.on_intents();
+        assert!(r.magnify.log().is_empty());
+    }
+
+    #[test]
+    fn turning_the_buttons_kill_switch_off_mid_press_stops_its_scroll_binding() {
+        let mut r = rig(true);
+        r.engine.apply_device_event(DeviceEvent::Added(mouse(1)));
+        let mut c = zoom_binding_config();
+        c.scroll.smooth = false;
+        apply_config(&mut r, &c);
+        button(&mut r, ButtonKind::Down, 3, 10);
+        c.general.buttons_enabled = false;
+        apply_config(&mut r, &c);
+        assert!(!r.engine.snapshot().taps.buttons);
+        assert_eq!(r.engine.on_scroll(&wheel(1)), ScrollVerdict::Pass);
+        r.engine.on_intents();
+        assert!(r.magnify.log().is_empty());
+    }
+
     #[test]
     fn an_unbound_command_still_passes() {
         let mut r = rig(true);

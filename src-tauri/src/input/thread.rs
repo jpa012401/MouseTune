@@ -14,7 +14,7 @@ use crossbeam_channel::Sender;
 use crate::{
     actions::{ActionCounters, ActionSink},
     config::{
-        schema::{Config, Scroll, tap_demand},
+        schema::{Config, Scroll, engine_scroll, tap_demand},
         store::ConfigObserver,
     },
     input::{
@@ -137,7 +137,7 @@ impl ConfigObserver for InputConfigBridge {
             config,
             self.support,
         ))));
-        self.handle.send(Control::SetScroll(config.scroll));
+        self.handle.send(Control::SetScroll(engine_scroll(config)));
     }
 }
 
@@ -360,7 +360,15 @@ mod tests {
                 OutputSupport::NONE
             ))))
         );
-        assert_eq!(rx.try_recv(), Ok(Control::SetScroll(config.scroll)));
+        // Scrolling is off, so the engine gets smoothing off (default config
+        // has no inversion and no zoom key to clear).
+        assert_eq!(
+            rx.try_recv(),
+            Ok(Control::SetScroll(Scroll {
+                smooth: false,
+                ..config.scroll
+            }))
+        );
         assert_eq!(waker.0.load(Ordering::SeqCst), 3);
     }
 

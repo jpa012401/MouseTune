@@ -421,11 +421,37 @@ pub fn tap_demand(config: &Config) -> TapDemand {
     let s = &config.scroll;
     TapDemand {
         buttons: g.buttons_enabled,
-        // Off when no setting would change a wheel event (spec §4.1).
-        scroll: g.scroll_enabled && (s.smooth || s.invert_vertical || s.invert_horizontal),
+        // Off when no setting would change a wheel event (spec §4.1). The
+        // zoom key is a scroll feature; button scroll bindings are a button
+        // feature, so each follows its own kill switch.
+        scroll: (g.scroll_enabled
+            && (s.smooth
+                || s.invert_vertical
+                || s.invert_horizontal
+                || s.keyboard_modifiers.zoom.is_some()))
+            || (g.buttons_enabled && !config.buttons.scroll_bindings.is_empty()),
         flags: g.buttons_enabled || g.scroll_enabled,
         keys: false,
         drag: false,
+    }
+}
+
+/// The scroll settings the input engine applies. With the scroll kill
+/// switch off the scroll tap may still run for button scroll bindings, so
+/// every scroll feature is off here: plain ticks and the zoom key pass.
+pub fn engine_scroll(config: &Config) -> Scroll {
+    if config.general.scroll_enabled {
+        return config.scroll;
+    }
+    Scroll {
+        smooth: false,
+        invert_vertical: false,
+        invert_horizontal: false,
+        keyboard_modifiers: ScrollModifiers {
+            zoom: None,
+            ..config.scroll.keyboard_modifiers
+        },
+        ..config.scroll
     }
 }
 
@@ -713,5 +739,73 @@ mod tests {
         assert!(demand(true, false, false, true));
         assert!(!demand(true, false, false, false), "nothing would change");
         assert!(!demand(false, true, true, true), "kill switch wins");
+    }
+
+    /// Smoothing and inversion off: only the zoom key or a binding needs the tap.
+    fn plain(buttons: bool, scroll: bool) -> Config {
+        let mut c = config(buttons, scroll);
+        c.scroll.smooth = false;
+        c.buttons.drags.clear();
+        c
+    }
+
+    #[test]
+    fn a_bound_zoom_key_needs_the_scroll_tap_unless_scrolling_is_off() {
+        let mut on = plain(true, true);
+        on.scroll.keyboard_modifiers.zoom = Some(KeyModifier::Command);
+        assert_eq!(
+            tap_demand(&on),
+            TapDemand {
+                buttons: true,
+                scroll: true,
+                flags: true,
+                keys: false,
+                drag: false
+            }
+        );
+        let mut off = plain(true, false);
+        off.scroll.keyboard_modifiers.zoom = Some(KeyModifier::Command);
+        assert_eq!(
+            tap_demand(&off),
+            TapDemand {
+                buttons: true,
+                scroll: false,
+                flags: true,
+                keys: false,
+                drag: false
+            }
+        );
+    }
+
+    #[test]
+    fn a_scroll_binding_needs_the_scroll_tap_unless_buttons_are_off() {
+        let binding = ScrollBinding {
+            button: 4,
+            effect: ScrollEffect::Zoom,
+        };
+        let mut scroll_off = plain(true, false);
+        scroll_off.buttons.scroll_bindings = vec![binding];
+        assert_eq!(
+            tap_demand(&scroll_off),
+            TapDemand {
+                buttons: true,
+                scroll: true,
+                flags: true,
+                keys: false,
+                drag: false
+            }
+        );
+        let mut buttons_off = plain(false, true);
+        buttons_off.buttons.scroll_bindings = vec![binding];
+        assert_eq!(
+            tap_demand(&buttons_off),
+            TapDemand {
+                buttons: false,
+                scroll: false,
+                flags: true,
+                keys: false,
+                drag: false
+            }
+        );
     }
 }
