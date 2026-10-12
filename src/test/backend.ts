@@ -1,5 +1,5 @@
 import { mockIPC } from "@tauri-apps/api/mocks";
-import type { Config, ConfigView, Device, General as GeneralSettings, InputStatus, Remap, Status } from "../bindings";
+import type { Config, ConfigView, Device, General as GeneralSettings, InputStatus, Remap, Scroll as ScrollSettings, Status } from "../bindings";
 
 export function device(overrides: Partial<Device> = {}): Device {
   return { id: "1a", name: "MX Master 3", manufacturer: "Logitech", button_count: 5, has_wheel: true, ...overrides };
@@ -45,8 +45,16 @@ export function config(overrides: Partial<GeneralSettings> = {}): Config {
       trackpad_simulation: true,
       invert_vertical: false,
       invert_horizontal: false,
+      precise: false,
+      keyboard_modifiers: { horizontal: "Shift", precise: "Option", swift: null },
     },
   };
+}
+
+/** The default config with some scroll settings changed. */
+export function scrollConfig(patch: Partial<ScrollSettings>): Config {
+  const base = config();
+  return { ...base, scroll: { ...base.scroll, ...patch } };
 }
 
 export function configView(overrides: Partial<ConfigView> = {}): ConfigView {

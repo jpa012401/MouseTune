@@ -78,7 +78,7 @@ export type Config = {
 
 export type ConfigChanged = Config;
 
-export type ConfigError = { kind: "Io"; message: string } | { kind: "UnsupportedVersion"; found: number; expected: number } | { kind: "InvalidRemap"; index: number; reason: RemapProblem };
+export type ConfigError = { kind: "Io"; message: string } | { kind: "UnsupportedVersion"; found: number; expected: number } | { kind: "InvalidRemap"; index: number; reason: RemapProblem } | { kind: "DuplicateScrollModifier"; key: KeyModifier };
 
 /**  Settings plus any startup recovery the UI should mention. */
 export type ConfigView = {
@@ -173,6 +173,20 @@ export type Scroll = {
 	 */
 	invert_vertical: boolean,
 	invert_horizontal: boolean,
+	/**  A slow wheel scrolls in fine steps (Phase 5b design §3). */
+	precise: boolean,
+	keyboard_modifiers: ScrollModifiers,
+};
+
+/**
+ *  Which held key applies each scroll effect (Phase 5b design §1): one key
+ *  per effect, each key at most once (`validate::duplicate_scroll_modifier`).
+ *  A key that isn't bound passes the tick through.
+ */
+export type ScrollModifiers = {
+	horizontal: KeyModifier | null,
+	precise: KeyModifier | null,
+	swift: KeyModifier | null,
 };
 
 export type ScrollSpeed = 
