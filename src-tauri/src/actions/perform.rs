@@ -1,8 +1,9 @@
+use super::nav::{SharedNavOverrides, nav_strategy};
 use super::{
     CompiledAction, Job, NoticeObserver, OutputError, deliver,
     keys::{KeyBinding, KeyStroke, ModifierMask, key_combo_strokes},
 };
-use crate::config::schema::{NavDirection, SymbolicHotkeyId, SystemKey};
+use crate::config::schema::{NavDirection, NavStrategy, SymbolicHotkeyId, SystemKey};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HotkeyState {
@@ -33,20 +34,10 @@ pub struct Outputs {
     pub poster: Box<dyn EventPoster>,
     pub frontmost: Box<dyn FrontmostApp>,
     pub notices: Box<dyn NoticeObserver>,
+    pub nav: SharedNavOverrides,
 }
 
 const NO_KEY: u16 = 0xFFFF;
-
-/// Apps where Cmd+[ / Cmd+] means back / forward (spec §7.3). Xcode and
-/// Notes are left out: there Cmd+[ shifts or outdents the text.
-const APPLE_NAV_APPS: [&str; 6] = [
-    "com.apple.Safari",
-    "com.apple.finder",
-    "com.apple.Music",
-    "com.apple.AppStore",
-    "com.apple.systempreferences",
-    "com.apple.Preview",
-];
 
 /// Every hotkey the picker can offer, in picker order. Tests walk it so a
 /// new variant must get a table row.
@@ -168,19 +159,17 @@ fn symbolic_hotkey(id: SymbolicHotkeyId, out: &Outputs) -> Result<(), OutputErro
 }
 
 fn navigate(direction: NavDirection, out: &Outputs) -> Result<(), OutputError> {
-    let apple = out
-        .frontmost
-        .bundle_id()
-        .is_some_and(|id| APPLE_NAV_APPS.contains(&id.as_str()));
-    match (apple, direction) {
-        (true, NavDirection::Back) => post(
+    let bundle_id = out.frontmost.bundle_id();
+    let strategy = nav_strategy(&out.nav.load(), bundle_id.as_deref());
+    match (strategy, direction) {
+        (NavStrategy::CmdBracket, NavDirection::Back) => post(
             KeyBinding {
                 key_code: 0x21,
                 modifiers: ModifierMask::COMMAND,
             },
             out,
         ),
-        (true, NavDirection::Forward) => post(
+        (NavStrategy::CmdBracket, NavDirection::Forward) => post(
             KeyBinding {
                 key_code: 0x1E,
                 modifiers: ModifierMask::COMMAND,
@@ -188,8 +177,8 @@ fn navigate(direction: NavDirection, out: &Outputs) -> Result<(), OutputError> {
             out,
         ),
         // Mouse buttons 4 and 5 are CG buttons 3 and 4.
-        (false, NavDirection::Back) => out.poster.click(3, 1),
-        (false, NavDirection::Forward) => out.poster.click(4, 1),
+        (NavStrategy::MouseButtons, NavDirection::Back) => out.poster.click(3, 1),
+        (NavStrategy::MouseButtons, NavDirection::Forward) => out.poster.click(4, 1),
     }
 }
 
@@ -200,6 +189,8 @@ fn post(binding: KeyBinding, out: &Outputs) -> Result<(), OutputError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::actions::nav::shared_nav_overrides;
+    use crate::config::schema::Config;
     use crate::test_support::{FakeFrontmost, FakeHotkeys, FakeNotices, FakePoster, OutputLog};
 
     fn rig(hotkeys: Option<FakeHotkeys>, app: Option<&'static str>, log: &OutputLog) -> Outputs {
@@ -211,6 +202,17 @@ mod tests {
             }),
             frontmost: Box::new(FakeFrontmost(app)),
             notices: Box::new(FakeNotices(log.clone())),
+            nav: shared_nav_overrides(&Config::default()),
+        }
+    }
+    fn rig_with(nav: &[(&str, NavStrategy)], app: &'static str, log: &OutputLog) -> Outputs {
+        let mut config = Config::default();
+        for (id, strategy) in nav {
+            config.nav_overrides.insert((*id).to_owned(), *strategy);
+        }
+        Outputs {
+            nav: shared_nav_overrides(&config),
+            ..rig(None, Some(app), log)
         }
     }
     fn hotkeys(log: &OutputLog, state: Option<HotkeyState>) -> FakeHotkeys {
@@ -403,6 +405,44 @@ mod tests {
                 "key 0x37 up 0x0"
             ]
         );
+    }
+
+    #[test]
+    fn an_override_makes_back_a_key_combo_in_xcode() {
+        let log = OutputLog::default();
+        perform(
+            Job::Perform(CompiledAction::Navigate(NavDirection::Back)),
+            &rig_with(
+                &[("com.apple.dt.Xcode", NavStrategy::CmdBracket)],
+                "com.apple.dt.Xcode",
+                &log,
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            log.all(),
+            [
+                "key 0x37 down 0x100000",
+                "key 0x21 down 0x100000",
+                "key 0x21 up 0x100000",
+                "key 0x37 up 0x0"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_default_app_set_to_mouse_buttons_uses_the_buttons() {
+        let log = OutputLog::default();
+        perform(
+            Job::Perform(CompiledAction::Navigate(NavDirection::Back)),
+            &rig_with(
+                &[("com.apple.Safari", NavStrategy::MouseButtons)],
+                "com.apple.Safari",
+                &log,
+            ),
+        )
+        .unwrap();
+        assert_eq!(log.all(), ["click 3"]);
     }
 
     #[test]

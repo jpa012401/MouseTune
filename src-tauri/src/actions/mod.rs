@@ -3,6 +3,7 @@
 
 pub mod executor;
 pub mod keys;
+pub mod nav;
 pub mod perform;
 pub mod queue;
 
