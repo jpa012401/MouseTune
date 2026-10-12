@@ -196,7 +196,8 @@ impl FrameInner {
     /// repeat 120 times a second; the next tick asks again. A signal left
     /// over from before a stop, or a late CoreVideo callback, runs nothing.
     /// A display link that went silent is halted here and started again
-    /// below, so the next tick's frame revives the pacing.
+    /// below; the backstop timer (`arm_backstop`) makes sure a frame comes
+    /// even without another tick.
     fn frame(&self) {
         if !self.wanted.get() {
             self.halt();
@@ -220,8 +221,23 @@ impl FrameInner {
         }
         if self.wanted.get() {
             self.start();
+            self.arm_backstop();
         } else {
             self.halt();
+        }
+    }
+
+    /// While the display link paces, the timer waits just past `STALL` as a
+    /// backstop. Every link frame pushes it on; if the link goes silent
+    /// (display unplugged or asleep) it fires, `frame()` sees the stall and
+    /// restarts the pacing, so a coast ends without another wheel tick. Once
+    /// fired it repeats at `FRAME_SECS` until the next frame pushes it on
+    /// again, which is harmless: frames are time-based.
+    fn arm_backstop(&self) {
+        if self.running.get() == Some(Pacer::DisplayLink)
+            && let Some(timer) = self.timer.get()
+        {
+            timer.set_next_fire_date(CFAbsoluteTimeGetCurrent() + STALL.as_secs_f64() + FRAME_SECS);
         }
     }
 
@@ -249,6 +265,9 @@ impl FrameInner {
             Some(Pacer::DisplayLink) => {
                 if let Some(link) = self.link.get() {
                     link.stop();
+                }
+                if let Some(timer) = self.timer.get() {
+                    timer.set_next_fire_date(CFAbsoluteTimeGetCurrent() + NEVER_SECS);
                 }
             }
             Some(Pacer::Timer) => {
@@ -427,6 +446,37 @@ mod tests {
         assert_eq!(frames.get(), 1);
         assert_eq!(driver.inner.running.get(), Some(Pacer::DisplayLink));
         driver.stop();
+    }
+
+    #[test]
+    fn a_silent_display_link_is_revived_without_another_tick() {
+        let (frames, on_frame) = counting();
+        let mut driver = MacFrameDriver::with_timer_only(&run_loop(), Arc::default(), on_frame);
+        stalled_link(&driver, Duration::ZERO);
+        driver.request();
+        run_for(0.3);
+        // The tick's own frame (1). Then the backstop fires ~108 ms later,
+        // finds the link silent and restarts the pacing on the timer, which
+        // adds ~23 frames in the remaining ~190 ms. Without it: exactly 1.
+        let seen = frames.get();
+        assert!(seen >= 3, "{seen} frames: nothing noticed the silent link");
+        assert_eq!(driver.inner.running.get(), Some(Pacer::Timer));
+        driver.stop();
+    }
+
+    #[test]
+    fn stopping_a_display_link_parks_its_backstop() {
+        let (_, on_frame) = counting();
+        let mut driver = MacFrameDriver::with_timer_only(&run_loop(), Arc::default(), on_frame);
+        stalled_link(&driver, Duration::ZERO);
+        driver.request();
+        run_for(0.02);
+        driver.stop();
+        let timer = driver.inner.timer.get().expect("the timer exists");
+        assert!(
+            timer.next_fire_date() > CFAbsoluteTimeGetCurrent() + 1000.0,
+            "the backstop is still armed after stop"
+        );
     }
 
     #[test]
