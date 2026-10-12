@@ -475,6 +475,27 @@ mod tests {
     }
 
     #[test]
+    fn a_bad_hand_edited_binding_does_not_block_the_kill_switches() {
+        let file = FakeConfigFile::with(
+            r#"{ "version": 1, "buttons": { "drags": [
+                { "button": 4, "effect": { "type": "SpacesAndMissionControl" } },
+                { "button": 4, "effect": { "type": "ScrollSwipe" } } ] } }"#,
+        );
+        let mut store = ConfigStore::load(Box::new(file.clone()));
+        assert_eq!(store.current().buttons.drags.len(), 2, "it still loads");
+        assert!(store.recovery().is_none());
+
+        let mut next = store.current().clone();
+        next.general.buttons_enabled = false;
+        let saved = store.update(next).expect("the kill switch saves");
+
+        assert!(!saved.general.buttons_enabled);
+        assert_eq!(file.writes().len(), 1);
+        let written: Config = serde_json::from_str(&file.writes()[0]).unwrap();
+        assert_eq!(written.buttons.drags.len(), 2, "the file keeps both");
+    }
+
+    #[test]
     fn unchanged_settings_neither_write_nor_notify() {
         let file = FakeConfigFile::missing();
         let mut store = ConfigStore::load(Box::new(file.clone()));
