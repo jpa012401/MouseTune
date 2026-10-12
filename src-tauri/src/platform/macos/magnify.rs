@@ -1,4 +1,4 @@
-//! Zoom steps (Phase 6 design §3, plan Tasks 10–11) through the
+//! Zoom steps (Phase 6 design §3) through the
 //! `MagnifyOutput` port: +1 zooms in, −1 zooms out.
 //!
 //! # Switched off until verified
@@ -112,10 +112,10 @@ use crate::{
 /// 1. This line becomes `&[27]`.
 /// 2. `platform::macos::tests::magnify_stays_off_everywhere_until_a_version_is_verified`
 ///    pins today's state and fails by design: make it "27 on, 26 off".
-/// 3. Rename the probe `magnify_probe` → `magnify_zooms_preview` (Task 11 A2).
+/// 3. Rename the probe `magnify_probe` → `magnify_zooms_preview`.
 /// 4. Spec §8.5 Zoom note: replace the Status line with the result, the
 ///    build it was seen on, and any `STEP_SCALE` change; §3.4 Zoom row, 27
-///    cell: "magnify gesture (verified 27.x)"; tick §12 when Task 14 lands.
+///    cell: "magnify gesture (verified 27.x)"; tick the zoom item in §12.
 /// 5. README Phase 6 acceptance: zoom by gesture in Preview/Maps/Safari.
 /// 6. `pnpm tauri dev`, then a hardware check with a real wheel.
 pub const VERIFIED_ON: &[u32] = &[];
@@ -388,7 +388,7 @@ mod tests {
     }
 }
 
-/// The maintainer's hardware probe (plan Task 10). Every event comes from
+/// The maintainer's hardware probe. Every event comes from
 /// the adapter's own `build` (and, in the ticks mode, `choose`), and all of
 /// them are built before any is posted.
 #[cfg(test)]

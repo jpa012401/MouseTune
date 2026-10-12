@@ -17,7 +17,7 @@ use crate::input::remaps::OutputSupport;
 
 /// Private outputs verified on this macOS (Phase 6 design §3). Each flips
 /// to `true` only for the versions its spike verified; see
-/// `dock_swipe::VERIFIED_ON` and `magnify::VERIFIED_ON` (Tasks 9 and 11).
+/// `dock_swipe::VERIFIED_ON` and `magnify::VERIFIED_ON`.
 /// A verified dock swipe whose private symbols don't resolve stays off, so
 /// `SpacesAndMissionControl` compiles to its Discrete fallback. The load is
 /// done once and cached (`dock_swipe::api`), so this answer and whether

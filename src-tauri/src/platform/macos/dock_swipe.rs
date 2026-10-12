@@ -1,4 +1,4 @@
-//! Interactive dock swipes (Phase 6 design §3, plan Tasks 8–9): Spaces and
+//! Interactive dock swipes (Phase 6 design §3): Spaces and
 //! Mission Control following the drag, through the `SwipeOutput` port.
 //!
 //! # Switched off until verified
@@ -68,8 +68,8 @@
 //! `Api::build`, and re-posts the same closing event at +200/+500 ms, so a
 //! "worked" result from that mode verifies the shipped encoding. Two
 //! diagnostic modes do not, and can't justify adding to `VERIFIED_ON`:
-//! - `MOUSETUNE_PROBE_ENCODING=fixed-mask` sends Task 8's encoding, with
-//!   the direction's mask on every step, including Began.
+//! - `MOUSETUNE_PROBE_ENCODING=fixed-mask` sends the earlier fixed-mask
+//!   encoding: the direction's mask on every step, including Began.
 //! - `MOUSETUNE_PROBE_ENCODING=legacy-mix` does the same and also writes
 //!   the values into the legacy gesture fields of the type-30 `CGEvent`
 //!   (table below), attaching the HID event last so it is the
@@ -1075,10 +1075,10 @@ mod read_back {
     }
 }
 
-/// The maintainer's hardware probe (plan Tasks 8–9). Its default mode
+/// The maintainer's hardware probe. Its default mode
 /// drives the adapter's own `Sequencer`, `pick` and `Api::build`, so a
 /// "worked" result verifies what `MacDockSwipe` sends. Two diagnostic
-/// modes keep the Task 8 encoding: a fixed mask per direction, optionally
+/// modes keep the earlier encoding: a fixed mask per direction, optionally
 /// with the legacy gesture fields.
 #[cfg(test)]
 mod probe {
@@ -1106,7 +1106,7 @@ mod probe {
     enum Mode {
         /// What `MacDockSwipe` sends. The default.
         Sequencer,
-        /// Task 8's encoding: the direction's mask on every step.
+        /// The earlier encoding: the direction's mask on every step.
         FixedMask,
         /// `FixedMask` plus the legacy gesture fields.
         LegacyMix,
@@ -1219,7 +1219,7 @@ mod probe {
         Ok(planned)
     }
 
-    /// The Task 8 step: the adapter's fields with the direction's mask on
+    /// A fixed-mask step: the adapter's fields with the direction's mask on
     /// every phase.
     fn fixed_mask_fields(
         direction: Direction,
@@ -1259,7 +1259,7 @@ mod probe {
         })
     }
 
-    /// The diagnostic modes: Task 8's plan, built before anything is posted.
+    /// The diagnostic modes' plan, built before anything is posted.
     fn plan_fixed_mask(
         api: &Api,
         direction: Direction,
@@ -1283,7 +1283,7 @@ mod probe {
             let progress = sign * f64::from(i) / f64::from(STEPS);
             add(SWIPE_TIME / STEPS, Phase::Changed, progress, None, "")?;
         }
-        // An end without velocity beats a swipe left open (Task 8 fix round 1).
+        // An end without velocity beats a swipe left open.
         let mut velocity = Some(sign * END_SPEED);
         let end = fixed_mask_fields(direction, Phase::Ended, sign, velocity);
         if build_fixed(api, &end, legacy).is_none() {
@@ -1343,7 +1343,7 @@ mod probe {
             "Encoding: {}.",
             match mode {
                 Mode::Sequencer => "sequencer (what MouseTune ships; the run that verifies it)",
-                Mode::FixedMask => "fixed-mask (diagnostic: Task 8's mask per direction)",
+                Mode::FixedMask => "fixed-mask (diagnostic: a fixed mask per direction)",
                 Mode::LegacyMix => "legacy-mix (diagnostic: fixed mask + legacy gesture fields)",
             }
         );
