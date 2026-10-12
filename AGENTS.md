@@ -175,7 +175,7 @@ If you can't name the requirement a pattern serves, don't add it. **DRY is about
 
 ## Current state
 
-- **Merged on `main`:** Phase 0 (scaffold), Phase 1 (Accessibility onboarding, permission monitor, tray status, settings shell), Phase 2 (input thread, event taps, HID mouse tracking, General page) and Phase 3 (config store with two kill switches, typed config commands and event, tray switches, recovery notice). Phases 2–3 are **pending manual hardware acceptance** (README); events are still passed through unchanged.
+- **Merged on `main`:** Phase 0 (scaffold), Phase 1 (Accessibility onboarding, permission monitor, tray status, settings shell), Phase 2 (input thread, event taps, HID mouse tracking, General page) and Phase 3 (config store with two kill switches, typed config commands and event, tray switches, recovery notice). Phases 2–3 are **pending manual hardware acceptance** (README); the scroll path still passes every event through unchanged.
 - **Implemented on `phase-4a-button-engine`, not yet merged:** Phase 4a (click cycle, router, `mt-exec` executor with `Navigate` and symbolic hotkeys, read-only Buttons page). **Pending manual hardware acceptance** (README); the button tap now swallows routed events.
 - **Next:** Phase 4b (capture mode, Buttons editor).
 - **Known gaps:**
@@ -193,13 +193,11 @@ If you can't name the requirement a pattern serves, don't add it. **DRY is about
 - **Tailwind 3.4, not 4**: v4 needs Safari 16.4 and Monterey ships Safari 15 (§3.4).
 - **Name MouseTune, bundle ID `com.johnpaulalabe.mousetune`, macOS 12–27.**
 - **Tray toggles moved to Phase 3**: they need the config store.
-- **Config v1 is kill switches only**; the loader deep-merges the file over the defaults so it grows additively, and IPC types stay strict; no `ArcSwap` until Phase 4 (Phase 3 design doc).
+- **Config v1 is kill switches only**; the loader deep-merges the file over the defaults so it grows additively, and IPC types stay strict.
 - **Phase 4 is split into 4a (button engine) and 4b (capture mode, editor).** **B3 click default = Mission Control.**
 - **The engine owns `CompiledRemaps`**, delivered by `Control::SetRemaps`; no `ArcSwap`.
-- **Click-cycle timers** are two reusable repeating `CFRunLoopTimer`s; a fire with nothing armed is ignored.
-- **A failed symbolic-hotkey read** falls back to the macOS default shortcut instead of installing the unreachable binding.
-- **Swallowed-down bits are per CG button**, not per mouse; a down that passes clears its button's bit.
-- **Phase 2 passes every event through**; since Phase 3 the tap demand follows the config. **The watchdog runs on `mt-input`**, not the main thread. **One `input-status-changed` event** replaces `devices-changed`/`status-changed` (Phase 2 plan).
+- Click-cycle, suppression and hotkey-fallback details: `input/{click_cycle,router}.rs` and `actions/` docs and tests.
+- **Phase 2 passed every event through**; since Phase 3 the tap demand follows the config. **The watchdog runs on `mt-input`**, not the main thread. **One `input-status-changed` event** replaces `devices-changed`/`status-changed` (Phase 2 plan).
 
 **Open, for the maintainer. Do not decide these in code:**
 - Personal use or public distribution. This decides notarization and the licence review.

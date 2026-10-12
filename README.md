@@ -43,7 +43,7 @@ MouseTune needs Accessibility access to intercept mouse input.
 
 ### Verifying the input engine (Phase 2)
 
-Taps pass every event through unchanged in this phase. To check the scroll filter:
+Taps pass every event through unchanged in this phase (since Phase 4a the button tap swallows events for bound buttons; see the Phase 4a section below). To check the scroll filter:
 
 1. Grant Accessibility (see above) and connect a mouse.
 2. Open Settings → General. "Connected mice" lists the mouse; Input engine shows Buttons, Scroll and Modifier keys as **On**.
