@@ -78,12 +78,16 @@ impl ConfigStore {
                 expected: CURRENT_VERSION,
             });
         }
-        validate_remaps(&new.buttons.remaps).map_err(|(index, reason)| {
-            ConfigError::InvalidRemap {
-                index: index as u32,
-                reason,
-            }
-        })?;
+        // Only a changed list is checked: a bad hand-edited remap still loads
+        // (design §1), and it must not stop the kill switches from saving.
+        if new.buttons.remaps != self.current.buttons.remaps {
+            validate_remaps(&new.buttons.remaps).map_err(|(index, reason)| {
+                ConfigError::InvalidRemap {
+                    index: index as u32,
+                    reason,
+                }
+            })?;
+        }
         if new == self.current {
             return Ok(new);
         }
@@ -305,6 +309,26 @@ mod tests {
         let store = ConfigStore::load(Box::new(file));
         assert_eq!(store.current().buttons.remaps.len(), 1);
         assert!(store.recovery().is_none());
+    }
+
+    #[test]
+    fn a_bad_hand_edited_remap_does_not_block_the_kill_switches() {
+        let file = FakeConfigFile::with(
+            r#"{ "version": 1, "general": { "buttons_enabled": true, "scroll_enabled": true },
+            "buttons": { "remaps": [ { "trigger": { "button": 1, "level": 1, "duration": "click" },
+                                       "effect": { "action": { "type": "Navigate", "direction": "Back" } } } ] } }"#,
+        );
+        let mut store = ConfigStore::load(Box::new(file.clone()));
+
+        let saved = store
+            .update_general(|g| g.buttons_enabled = false)
+            .expect("the kill switch saves");
+
+        assert!(!saved.general.buttons_enabled);
+        assert_eq!(file.writes().len(), 1);
+        let written: Config = serde_json::from_str(&file.writes()[0]).unwrap();
+        assert!(!written.general.buttons_enabled);
+        assert_eq!(written.buttons.remaps[0].trigger.button, 1);
     }
 
     #[test]
