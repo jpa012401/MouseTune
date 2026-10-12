@@ -219,4 +219,26 @@ mod tests {
             Some(MC)
         );
     }
+
+    #[test]
+    fn triple_click_and_triple_hold_are_supported() {
+        let compiled = compile(&with(vec![
+            remap(3, 3, TriggerDuration::Click, MC),
+            remap(3, 3, TriggerDuration::Hold, DESKTOP),
+        ]));
+        let b = compiled.button(2);
+        assert_eq!(b.action(3, TriggerDuration::Click), Some(MC));
+        assert_eq!(b.action(3, TriggerDuration::Hold), Some(DESKTOP));
+        assert_eq!(b.max_click_level(), 3);
+        assert!(!b.has_higher_level(3));
+        assert!(b.has_higher_level(2));
+    }
+
+    #[test]
+    fn a_hold_only_at_level_2_makes_level_1_wait() {
+        let compiled = compile(&with(vec![remap(3, 2, TriggerDuration::Hold, DESKTOP)]));
+        let b = compiled.button(2);
+        assert_eq!(b.max_click_level(), 2);
+        assert!(b.has_higher_level(1));
+    }
 }
