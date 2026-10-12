@@ -43,7 +43,7 @@ MouseTune needs Accessibility access to intercept mouse input.
 
 ### Verifying the input engine (Phase 2)
 
-Taps pass every event through unchanged in this phase (since Phase 4a the button tap swallows events for bound buttons; see the Phase 4a section below). To check the scroll filter:
+Taps pass every event through unchanged in this phase (since Phase 4a the button tap swallows events for bound buttons, and since Phase 5a the scroll tap swallows mouse-wheel ticks while smoothing is on; see those sections below). To check the scroll filter:
 
 1. Grant Accessibility (see above) and connect a mouse.
 2. Open Settings → General. "Connected mice" lists the mouse; Input engine shows Buttons, Scroll and Modifier keys as **On**.
@@ -73,6 +73,20 @@ Taps pass every event through unchanged in this phase (since Phase 4a the button
 6. Start mouse capture (+ Add remap), then close the Settings window: B3 still opens Mission Control.
 7. Note whether macOS asked for Input Monitoring the first time you recorded a shortcut, and report it. It is assumed that Accessibility is enough; this step checks that.
 8. Record ⌃→ for B4 · Click. Pressing B4 moves one Space right.
+
+### Verifying smooth scrolling (Phase 5a acceptance, any wheel mouse)
+
+1. Scroll a long page in Safari: it moves smoothly, eases out, and coasts briefly after the last tick.
+2. Scroll to the top of a Safari page and keep going: it rubber-bands and springs back.
+3. Spin the wheel fast, then slowly: fast spins travel much further per tick.
+4. With the mouse connected, the built-in trackpad, a Magic Trackpad and a Magic Mouse (if you have one) scroll exactly as before.
+5. Tray → Smooth scrolling off: plain notched scrolling again. Tray → Invert vertical scrolling on: the direction flips, with smoothing on and off.
+6. If Accessibility Zoom is on, Ctrl + scroll still zooms the screen. Cmd + scroll in a browser behaves as it does without MouseTune.
+7. Tray → Enable scrolling off in the middle of a coast: scrolling stops cleanly, and the next tick is plain.
+8. Unplug the mouse in the middle of a coast: nothing keeps scrolling.
+9. If a 60 Hz external display is connected, scroll on each screen: both are smooth.
+
+Report how the scroll feels (too short a coast, too fast, too slow). The curve's constants are tuning knobs (spec §8.2, §8.3).
 
 ## Building
 
