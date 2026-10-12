@@ -12,6 +12,7 @@ use arc_swap::ArcSwap;
 use crossbeam_channel::Sender;
 
 use crate::{
+    actions::{ActionCounters, ActionSink},
     config::{
         schema::{Config, tap_demand},
         store::ConfigObserver,
@@ -54,6 +55,8 @@ pub struct InputShared {
     pub snapshot: ArcSwap<EngineSnapshot>,
     pub counters: Arc<ScrollCounters>,
     pub degraded: Arc<AtomicBool>,
+    /// Bumped by the engine (dropped jobs) and by `mt-exec` (performed, failed).
+    pub actions: Arc<ActionCounters>,
 }
 
 pub struct InputHandle {
@@ -156,9 +159,13 @@ impl EngineObserver for StoreSnapshot {
 }
 
 /// Starts `mt-input` and returns once its run loop is ready for messages.
+/// `remaps` are the saved bindings at startup; `sink` is where fired
+/// actions go (the only sender of `mt-exec`'s queue).
 pub fn spawn(
     trusted: bool,
     demand: TapDemand,
+    remaps: CompiledRemaps,
+    sink: Box<dyn ActionSink + Send>,
     ui: Box<dyn EngineObserver + Send>,
 ) -> Arc<InputHandle> {
     let (tx, rx) = crossbeam_channel::unbounded();
@@ -167,7 +174,15 @@ pub fn spawn(
         shared: Arc::clone(&shared),
         ui,
     });
-    let (join, waker) = input_loop::start(trusted, demand, observer, rx, Arc::clone(&shared));
+    let (join, waker) = input_loop::start(
+        trusted,
+        demand,
+        remaps,
+        sink,
+        observer,
+        rx,
+        Arc::clone(&shared),
+    );
     Arc::new(InputHandle::new(tx, waker, shared, Some(join)))
 }
 
@@ -351,7 +366,13 @@ mod tests {
         impl EngineObserver for Ignore2 {
             fn snapshot_changed(&self, _: &EngineSnapshot) {}
         }
-        let handle = spawn(false, TapDemand::ALL, Box::new(Ignore2));
+        let handle = spawn(
+            false,
+            TapDemand::ALL,
+            CompiledRemaps::empty(),
+            Box::new(crate::actions::queue::queue().0),
+            Box::new(Ignore2),
+        );
         assert!(!handle.shared().snapshot.load().trusted);
         let started = std::time::Instant::now();
         handle.shutdown();

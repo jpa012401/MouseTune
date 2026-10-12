@@ -6,8 +6,6 @@
 compile_error!("MouseTune only supports macOS.");
 
 mod accessibility;
-// Wired up in Phase 4a Task 8.
-#[allow(dead_code)]
 mod actions;
 mod config;
 mod events;
@@ -21,11 +19,17 @@ mod test_support;
 mod tray;
 mod window;
 
-use std::sync::{Arc, Mutex};
+use std::{
+    sync::{Arc, Mutex, PoisonError},
+    thread::JoinHandle,
+};
 
 use accessibility::{Accessibility, SystemAccessibility};
 use permission_monitor::PermissionMonitor;
 use tauri::{Manager, RunEvent};
+
+/// The `mt-exec` thread, joined on exit after `mt-input` has stopped.
+struct ExecThread(Mutex<Option<JoinHandle<()>>>);
 
 /// Single registry of IPC commands and events. Shared by the app and the
 /// bindings-export test so `src/bindings.ts` can't drift from the backend.
@@ -82,16 +86,31 @@ pub fn run() {
                 config::system_file::SystemConfigFile::new(config_path),
             ));
             let general = store.current().general.clone();
+            let remap_count = store.current().buttons.remaps.len();
 
             // Read once so the engine and the tray start from the same value.
             // PermissionMonitor reads trust itself and converges on its next poll.
             let trusted = accessibility.is_trusted();
+            let (sink, jobs) = actions::queue::queue();
             let input = input::thread::spawn(
                 trusted,
                 config::schema::tap_demand(store.current()),
+                input::remaps::compile(store.current()),
+                Box::new(sink),
                 Box::new(events::EmitInputStatus(app.handle().clone())),
             );
             app.manage(Arc::clone(&input));
+            let exec = actions::executor::spawn(
+                jobs,
+                actions::perform::Outputs {
+                    hotkeys: platform::symbolic_hotkeys::MacSymbolicHotkeys::load()
+                        .map(|h| Box::new(h) as Box<dyn actions::perform::SymbolicHotkeys>),
+                    poster: Box::new(platform::event_poster::MacEventPoster),
+                    frontmost: Box::new(platform::frontmost_app::MacFrontmostApp),
+                },
+                Arc::clone(&input.shared().actions),
+            );
+            app.manage(ExecThread(Mutex::new(Some(exec))));
 
             tray::build(app.handle(), trusted, &general)?;
             store.subscribe(Box::new(input::thread::InputConfigBridge(Arc::clone(
@@ -117,6 +136,7 @@ pub fn run() {
                 accessibility = trusted,
                 buttons_enabled = general.buttons_enabled,
                 scroll_enabled = general.scroll_enabled,
+                remaps = remap_count,
                 "MouseTune started"
             );
 
@@ -138,6 +158,16 @@ pub fn run() {
         RunEvent::Exit => {
             if let Some(input) = app.try_state::<Arc<input::thread::InputHandle>>() {
                 input.shutdown();
+            }
+            // Only after `mt-input` stopped: its engine owned the queue's only
+            // sender, so `mt-exec` now drains what's left and returns.
+            if let Some(exec) = app.try_state::<ExecThread>() {
+                let join = exec.0.lock().unwrap_or_else(PoisonError::into_inner).take();
+                if let Some(join) = join
+                    && join.join().is_err()
+                {
+                    tracing::error!("action thread panicked");
+                }
             }
         }
         _ => {}

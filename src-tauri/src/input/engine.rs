@@ -72,7 +72,6 @@ pub trait EngineObserver {
 pub trait TapHandler {
     fn on_scroll(&mut self, fields: &ScrollFields);
     fn on_button(&mut self, event: &ButtonEvent) -> Verdict;
-    #[allow(dead_code)] // Called by the click-timer adapter from Phase 4a Task 8.
     fn on_click_timer(&mut self, kind: TimerKind);
     fn on_tap_disabled(&mut self, kind: TapKind, reason: DisabledReason);
 }

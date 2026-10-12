@@ -19,16 +19,16 @@ use objc2_core_foundation::{
 };
 
 use crate::{
-    actions::{ActionSink, Job},
+    actions::ActionSink,
     input::{
         engine::{ButtonSetup, EngineObserver, InputEngine, TapHandler},
         guard::guarded,
         remaps::CompiledRemaps,
-        router::{ClickTimers, TimerKind},
         taps::TapDemand,
         thread::{Control, Flow, InputShared, Waker, handle_control},
     },
     platform::{
+        click_timers::MacClickTimers,
         event_tap::{MacTapController, TapContext},
         hid::DeviceMonitor,
     },
@@ -41,18 +41,28 @@ const QOS_CLASS_USER_INTERACTIVE: u32 = 0x21;
 
 /// Spawns `mt-input` and waits until its run loop can take messages.
 /// `observer` receives every engine snapshot; `rx` carries control messages,
-/// which are applied after the returned waker is woken.
+/// which are applied after the returned waker is woken. The engine owns
+/// `sink`, so `mt-exec`'s queue closes when this thread stops.
 pub fn start(
     trusted: bool,
     demand: TapDemand,
+    remaps: CompiledRemaps,
+    sink: Box<dyn ActionSink + Send>,
     observer: Box<dyn EngineObserver + Send>,
     rx: Receiver<Control>,
     shared: Arc<InputShared>,
 ) -> (JoinHandle<()>, Arc<dyn Waker>) {
     let (waker_tx, waker_rx) = mpsc::sync_channel::<Arc<dyn Waker>>(1);
+    let setup = StartSetup {
+        trusted,
+        demand,
+        remaps,
+        sink,
+        observer,
+    };
     let join = thread::Builder::new()
         .name("mt-input".into())
-        .spawn(move || run_input_thread(trusted, demand, observer, rx, shared, waker_tx))
+        .spawn(move || run_input_thread(setup, rx, shared, waker_tx))
         .expect("failed to spawn the mt-input thread");
     let waker = waker_rx
         .recv_timeout(Duration::from_secs(2))
@@ -62,19 +72,13 @@ pub fn start(
 
 type Engine = Rc<RefCell<InputEngine<MacTapController>>>;
 
-// Replaced in Phase 4a Task 8.
-struct NoTimers;
-impl ClickTimers for NoTimers {
-    fn arm(&mut self, _: TimerKind, _: Duration) {}
-    fn disarm(&mut self, _: TimerKind) {}
-}
-
-// Replaced in Phase 4a Task 8.
-struct NoSink;
-impl ActionSink for NoSink {
-    fn submit(&self, _: Job) -> bool {
-        false
-    }
+/// What the engine starts from, moved onto `mt-input`.
+struct StartSetup {
+    trusted: bool,
+    demand: TapDemand,
+    remaps: CompiledRemaps,
+    sink: Box<dyn ActionSink + Send>,
+    observer: Box<dyn EngineObserver + Send>,
 }
 
 /// What the control source and watchdog timer callbacks reach through their
@@ -121,9 +125,7 @@ fn set_user_interactive_qos() {
 }
 
 fn run_input_thread(
-    trusted: bool,
-    demand: TapDemand,
-    observer: Box<dyn EngineObserver + Send>,
+    setup: StartSetup,
     rx: Receiver<Control>,
     shared: Arc<InputShared>,
     waker_tx: mpsc::SyncSender<Arc<dyn Waker>>,
@@ -136,19 +138,21 @@ fn run_input_thread(
         degraded: Arc::clone(&shared.degraded),
     });
     let controller = MacTapController::new(Rc::as_ptr(&context), run_loop.clone());
+    // The engine owns the click timers, so they are invalidated when it drops,
+    // before `context` (their `info`) is freed below.
+    let timers = MacClickTimers::new(Rc::as_ptr(&context), &run_loop);
     let engine: Engine = Rc::new(RefCell::new(InputEngine::new(
         controller,
-        trusted,
-        demand,
+        setup.trusted,
+        setup.demand,
         Arc::clone(&shared.counters),
-        // Replaced in Phase 4a Task 8.
         ButtonSetup {
-            remaps: CompiledRemaps::empty(),
-            timers: Box::new(NoTimers),
-            sink: Box::new(NoSink),
-            counters: Arc::default(),
+            remaps: setup.remaps,
+            timers: Box::new(timers),
+            sink: setup.sink,
+            counters: Arc::clone(&shared.actions),
         },
-        observer,
+        setup.observer,
     )));
     let handler: Rc<RefCell<dyn TapHandler>> = engine.clone();
     if context.handler.set(handler).is_err() {
@@ -234,13 +238,15 @@ fn run_input_thread(
     drop(unsafe { Box::from_raw(state) });
     // 2. The device monitor and its clone of the engine.
     drop(devices);
-    // 3. The engine, which drops `MacTapController` and tears down the taps.
-    //    The context's handler holds the last reference.
+    // 3. The engine, which drops `MacTapController` (tearing down the taps),
+    //    `MacClickTimers` (invalidating both click timers) and the action
+    //    sink (closing `mt-exec`'s queue). The context's handler holds the
+    //    last reference.
     drop(engine);
     let handler = Rc::get_mut(&mut context).and_then(|context| context.handler.take());
     debug_assert!(handler.is_some(), "the tap context is uniquely owned");
     drop(handler);
-    // 4. Only now the context the taps pointed to.
+    // 4. Only now the context the taps and click timers pointed to.
     drop(context);
     tracing::info!("input thread stopped");
 }
