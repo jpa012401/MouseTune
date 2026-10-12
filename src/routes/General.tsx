@@ -1,52 +1,17 @@
 import { useEffect } from "react";
 import type { Device } from "../bindings";
+import { listClass, muted, rowClass } from "../components/rowStyles";
+import { SwitchRow } from "../components/SwitchRow";
 import { useConfigStore } from "../store/config";
 import { useStatusStore } from "../store/status";
 
 const POLL_MS = 1000;
-
-const listClass = "mb-6 divide-y divide-black/10 text-sm dark:divide-white/10";
-const rowClass = "flex items-center justify-between py-2";
-const muted = "text-neutral-500";
 
 function TapRow({ label, on }: { label: string; on: boolean }) {
   return (
     <li className={rowClass}>
       <span>{label}</span>
       <span className={on ? "text-green-600 dark:text-green-400" : muted}>{on ? "On" : "Off"}</span>
-    </li>
-  );
-}
-
-function SwitchRow({
-  label,
-  help,
-  on,
-  onToggle,
-}: {
-  label: string;
-  help: string;
-  on: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <li className={rowClass}>
-      <div>
-        <div>{label}</div>
-        <div className={`${muted} text-xs`}>{help}</div>
-      </div>
-      <button
-        type="button"
-        role="switch"
-        aria-checked={on}
-        aria-label={label}
-        onClick={onToggle}
-        className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${on ? "bg-green-600 dark:bg-green-500" : "bg-neutral-300 dark:bg-neutral-600"}`}
-      >
-        <span
-          className={`absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white transition-transform ${on ? "translate-x-4" : ""}`}
-        />
-      </button>
     </li>
   );
 }
