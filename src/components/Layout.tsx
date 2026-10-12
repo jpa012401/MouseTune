@@ -1,4 +1,7 @@
+import { useEffect } from "react";
 import { NavLink, Outlet } from "react-router";
+import { startConfigSync } from "../store/config";
+import { RecoveryNotice } from "./RecoveryNotice";
 
 const NAV = [
   { to: "/buttons", label: "Buttons" },
@@ -8,6 +11,9 @@ const NAV = [
 ] as const;
 
 export function Layout() {
+  // Synced here rather than on a page, so the recovery notice shows on whichever page opens first.
+  useEffect(() => startConfigSync(), []);
+
   return (
     <div className="flex h-full">
       <nav
@@ -28,6 +34,7 @@ export function Layout() {
         ))}
       </nav>
       <main className="flex-1 overflow-y-auto px-8 pb-8 pt-12">
+        <RecoveryNotice />
         <Outlet />
       </main>
     </div>

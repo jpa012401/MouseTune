@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import type { Device } from "../bindings";
-import { startConfigSync, useConfigStore } from "../store/config";
+import { useConfigStore } from "../store/config";
 import { useStatusStore } from "../store/status";
 
 const POLL_MS = 1000;
@@ -71,9 +71,7 @@ export function General() {
   const input = useStatusStore((s) => s.status?.input);
   const view = useConfigStore((s) => s.view);
   const saveError = useConfigStore((s) => s.error);
-  const { setGeneral, dismissRecovery } = useConfigStore.getState();
-
-  useEffect(() => startConfigSync(), []);
+  const { setGeneral } = useConfigStore.getState();
 
   // The engine pushes taps and devices as events, but scroll counters change
   // on every wheel tick, so they are polled instead.
@@ -85,20 +83,6 @@ export function General() {
   return (
     <>
       <h1 className="mb-4 text-xl font-semibold">General</h1>
-
-      {view?.recovery && (
-        <div role="alert" className="mb-6 flex items-start justify-between gap-4 text-sm text-amber-700 dark:text-amber-400">
-          <p>
-            Your settings file couldn’t be read, so MouseTune started with default settings.{" "}
-            {view.recovery.backup_file
-              ? `The old file was kept as ${view.recovery.backup_file}.`
-              : "The old file couldn’t be backed up and was left in place."}
-          </p>
-          <button type="button" onClick={() => void dismissRecovery()} className="shrink-0 underline">
-            Dismiss
-          </button>
-        </div>
-      )}
 
       {input?.degraded && (
         <p role="alert" className="mb-6 text-sm text-red-600">

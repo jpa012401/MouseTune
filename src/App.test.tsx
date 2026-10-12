@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { emit } from "@tauri-apps/api/event";
 import App from "./App";
-import { mockBackend, status } from "./test/backend";
+import { configView, mockBackend, status } from "./test/backend";
 
 const untrusted = () => status({ accessibility_trusted: false });
 
@@ -11,6 +11,20 @@ describe("App", () => {
     mockBackend({ get_status: () => status() });
     render(<App />);
     expect(await screen.findByRole("heading", { name: "Buttons" })).toBeTruthy();
+  });
+
+  it("shows the settings recovery notice on the page Settings opens on", async () => {
+    const calls = mockBackend({
+      get_status: () => status(),
+      get_config: () => configView({ recovery: { backup_file: "config.1760000000.bak.json" } }),
+      dismiss_config_recovery: () => null,
+    });
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Buttons" })).toBeTruthy();
+    expect((await screen.findByText(/kept as config\.1760000000\.bak\.json/)).closest("[role=alert]")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    await waitFor(() => expect(screen.queryByText(/kept as/)).toBeNull());
+    expect(calls).toContain("dismiss_config_recovery");
   });
 
   it("navigates between sections", async () => {
