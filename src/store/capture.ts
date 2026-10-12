@@ -40,7 +40,12 @@ function stopCommand(phase: CaptureState["phase"]) {
 
 export const useCaptureStore = create<CaptureState>((set, get) => {
   async function begin(phase: "capturing" | "recording", start: () => Promise<void>, failure: string) {
+    const replaced = get().phase;
     endCurrent();
+    // Rust runs button capture and key recording independently, so the one being replaced must be
+    // stopped or it keeps swallowing real input. Fire-and-forget: the new start must not wait on it,
+    // and Rust's own deadline ends that capture if the stop fails.
+    if (replaced !== "idle" && replaced !== phase) void Promise.resolve(stopCommand(replaced)).catch(() => {});
     const mine = token;
     set({ ...CLEARED, phase });
     // Armed before awaiting, so an event or cancel during the await can retire it.

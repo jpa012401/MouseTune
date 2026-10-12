@@ -21,14 +21,17 @@ export function ActionPicker({ value, onChange, label = "Action" }: Props) {
   const [keysChosen, setKeysChosen] = useState(value?.type === "KeyCombo");
   // True only while a recording this picker started is running, so another picker's recording is ignored.
   const [listening, setListening] = useState(false);
+  // Only an error from this picker's own recording is shown; the store's error may belong to a button capture.
+  const [ownError, setOwnError] = useState<string | null>(null);
   const listeningRef = useRef(false);
   listeningRef.current = listening;
 
   useEffect(() => {
     if (!listening || phase === "recording") return;
     setListening(false);
+    setOwnError(error);
     if (combo) onChange({ type: "KeyCombo", ...combo });
-  }, [listening, phase, combo, onChange]);
+  }, [listening, phase, combo, error, onChange]);
 
   useEffect(
     () => () => {
@@ -39,6 +42,7 @@ export function ActionPicker({ value, onChange, label = "Action" }: Props) {
   );
 
   function record() {
+    setOwnError(null);
     void useCaptureStore.getState().startRecording();
     setListening(true);
   }
@@ -95,9 +99,9 @@ export function ActionPicker({ value, onChange, label = "Action" }: Props) {
             <button type="button" className={buttonClass} onClick={record}>
               Record again
             </button>
-            {error && (
+            {ownError && (
               <span role="alert" className="text-sm text-red-600">
-                {error}
+                {ownError}
               </span>
             )}
           </>

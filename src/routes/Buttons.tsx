@@ -37,9 +37,16 @@ export function Buttons() {
 
   const { setRemaps } = useConfigStore.getState();
 
+  // Adding and changing share one capture store, so only one of them is ever open.
   function startChange(index: number) {
+    setAdding(false);
     setEditing(index);
     setDraft(remaps[index]!.effect.action);
+  }
+
+  function toggleAdding() {
+    setEditing(null);
+    setAdding(!adding);
   }
 
   async function saveChange(index: number) {
@@ -124,7 +131,7 @@ export function Buttons() {
           {adding && <AddRemapPanel remaps={remaps} onDone={() => setAdding(false)} />}
 
           <div className="flex gap-2">
-            <button type="button" className={buttonClass} aria-expanded={adding} onClick={() => setAdding(!adding)}>
+            <button type="button" className={buttonClass} aria-expanded={adding} onClick={toggleAdding}>
               + Add remap
             </button>
             <button type="button" className={buttonClass} onClick={() => void restoreDefaults()}>

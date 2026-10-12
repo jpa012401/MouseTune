@@ -184,4 +184,27 @@ describe("useCaptureStore", () => {
     await starting;
     expect(useCaptureStore.getState().error).toBeNull();
   });
+
+  it("starting a recording while capturing a button stops the button capture", async () => {
+    const calls = mockBackend({ start_capture: () => null, stop_capture: () => null, start_key_capture: () => null, stop_key_capture: () => null });
+    await useCaptureStore.getState().startCapture();
+    await useCaptureStore.getState().startRecording();
+    expect(calls).toEqual(["start_capture", "stop_capture", "start_key_capture"]);
+    expect(useCaptureStore.getState().phase).toBe("recording");
+  });
+
+  it("starting a button capture while recording stops the recording, even if the stop fails", async () => {
+    const calls = mockBackend({
+      start_capture: () => null,
+      start_key_capture: () => null,
+      stop_key_capture: () => {
+        throw "gone";
+      },
+    });
+    await useCaptureStore.getState().startRecording();
+    await useCaptureStore.getState().startCapture();
+    await act(async () => {});
+    expect(calls).toEqual(["start_key_capture", "stop_key_capture", "start_capture"]);
+    expect(useCaptureStore.getState()).toMatchObject({ phase: "capturing", error: null });
+  });
 });
