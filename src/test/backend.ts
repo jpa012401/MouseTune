@@ -10,6 +10,7 @@ export function inputStatus(overrides: Partial<InputStatus> = {}): InputStatus {
     taps: { buttons: false, scroll: false, flags: false },
     devices: [],
     scroll_stats: { mouse_wheel: 0, passed_through: 0 },
+    actions: { performed: 0, dropped: 0, failed: 0 },
     degraded: false,
     ...overrides,
   };

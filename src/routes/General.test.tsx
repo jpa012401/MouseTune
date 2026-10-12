@@ -235,4 +235,13 @@ describe("General page — Input switches", () => {
     renderGeneral();
     expect(await screen.findByText(/couldn’t be backed up and was left in place/)).toBeTruthy();
   });
+
+  it("shows the button action counters", async () => {
+    mockBackend({ get_status: () => status({ input: inputStatus({ actions: { performed: 7, dropped: 1, failed: 2 } }) }) });
+    renderGeneral();
+    const list = await screen.findByRole("list", { name: "Button actions" });
+    expect(within(list).getByText("Performed").parentElement!.textContent).toContain("7");
+    expect(within(list).getByText("Dropped").parentElement!.textContent).toContain("1");
+    expect(within(list).getByText("Failed").parentElement!.textContent).toContain("2");
+  });
 });

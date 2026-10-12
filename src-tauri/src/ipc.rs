@@ -11,6 +11,7 @@ use tauri::{AppHandle, State};
 
 use crate::{
     accessibility::{self, Accessibility},
+    actions::ActionStats,
     config::{
         schema::Config,
         store::{ConfigError, ConfigStore, Recovery},
@@ -52,6 +53,7 @@ pub fn get_status(
         input: input_status(
             &shared.snapshot.load(),
             shared.counters.stats(),
+            shared.actions.stats(),
             shared.degraded.load(Ordering::Relaxed),
         ),
     }
@@ -73,10 +75,16 @@ pub struct InputStatus {
     pub taps: TapSet,
     pub devices: Vec<Device>,
     pub scroll_stats: ScrollStats,
+    pub actions: ActionStats,
     pub degraded: bool,
 }
 
-pub fn input_status(snapshot: &EngineSnapshot, stats: ScrollStats, degraded: bool) -> InputStatus {
+pub fn input_status(
+    snapshot: &EngineSnapshot,
+    stats: ScrollStats,
+    actions: ActionStats,
+    degraded: bool,
+) -> InputStatus {
     InputStatus {
         taps: snapshot.taps,
         devices: snapshot
@@ -91,6 +99,7 @@ pub fn input_status(snapshot: &EngineSnapshot, stats: ScrollStats, degraded: boo
             })
             .collect(),
         scroll_stats: stats,
+        actions,
         degraded,
     }
 }
@@ -211,6 +220,22 @@ mod tests {
     }
 
     #[test]
+    fn input_status_carries_the_action_counters() {
+        let stats = ActionStats {
+            performed: 3,
+            dropped: 1,
+            failed: 2,
+        };
+        let status = input_status(
+            &EngineSnapshot::default(),
+            ScrollStats::default(),
+            stats,
+            false,
+        );
+        assert_eq!(status.actions, stats);
+    }
+
+    #[test]
     fn input_status_exposes_devices_without_internal_ids() {
         let snapshot = EngineSnapshot {
             trusted: true,
@@ -227,6 +252,7 @@ mod tests {
                 mouse_wheel: 3,
                 passed_through: 9,
             },
+            ActionStats::default(),
             true,
         );
         assert_eq!(

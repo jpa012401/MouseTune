@@ -27,7 +27,6 @@ pub trait ActionSink {
     fn submit(&self, job: Job) -> bool;
 }
 
-#[allow(dead_code)] // Read by `get_status` from Phase 4a Task 9.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Type)]
 pub struct ActionStats {
     pub performed: u32,
@@ -59,7 +58,6 @@ impl ActionCounters {
     pub fn record_failed(&self) {
         bump(&self.failed);
     }
-    #[allow(dead_code)] // Read by `get_status` from Phase 4a Task 9.
     pub fn stats(&self) -> ActionStats {
         ActionStats {
             performed: self.performed.load(Ordering::Relaxed),

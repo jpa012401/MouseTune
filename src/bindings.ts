@@ -31,6 +31,12 @@ export const events = {
 /**  What a remap does. Phase 4b adds the rest of spec §7.1. */
 export type Action = { type: "SymbolicHotkey"; id: SymbolicHotkeyId } | { type: "Navigate"; direction: NavDirection };
 
+export type ActionStats = {
+	performed: number,
+	dropped: number,
+	failed: number,
+};
+
 /**
  *  Button remaps (design §1). Button numbers are 1-based as users count
  *  them: 3 is the middle button. `input::remaps::compile` turns this into
@@ -89,6 +95,7 @@ export type InputStatus = {
 	taps: TapSet,
 	devices: Device[],
 	scroll_stats: ScrollStats,
+	actions: ActionStats,
 	degraded: boolean,
 };
 
