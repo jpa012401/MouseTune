@@ -163,7 +163,7 @@ pub fn step_fields(amount: f64) -> [MagnifyFields; 3] {
 
 /// What one step posts.
 #[derive(Debug, PartialEq)]
-pub enum Step<B> {
+pub(crate) enum Step<B> {
     Gesture([B; 3]),
     Keys([KeyStroke; 2]),
 }
@@ -171,7 +171,7 @@ pub enum Step<B> {
 /// The gesture triple if `gesture` is on and all three events build, else
 /// the key fallback. All three are built before anything is posted, so a
 /// Began never goes out without its Ended.
-pub fn choose<B>(
+pub(crate) fn choose<B>(
     gesture: bool,
     amount: f64,
     build: impl FnMut(&MagnifyFields) -> Option<B>,
@@ -187,7 +187,7 @@ pub fn choose<B>(
 }
 
 /// One magnify event, built but not posted.
-pub fn build(f: &MagnifyFields) -> Option<CFRetained<CGEvent>> {
+pub(crate) fn build(f: &MagnifyFields) -> Option<CFRetained<CGEvent>> {
     let event = CGEvent::new(None)?;
     let set = |field: u32, value: i64| {
         CGEvent::set_integer_value_field(Some(&event), CGEventField(field), value)

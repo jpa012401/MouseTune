@@ -195,7 +195,7 @@ const PHASE_SHIFT: u32 = 24;
 const CG_DOCK_CONTROL: u32 = 30;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Phase {
+pub(crate) enum Phase {
     Began,
     Changed,
     Ended,
@@ -204,14 +204,14 @@ pub enum Phase {
 
 /// A velocity child event: which field, and its value.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct VelocityField {
+pub(crate) struct VelocityField {
     pub field: u32,
     pub value: f64,
 }
 
 /// Every value one dock-swipe step writes into its HID event.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct SwipeFields {
+pub(crate) struct SwipeFields {
     pub motion: isize,
     pub mask: isize,
     pub flavor: isize,
@@ -222,7 +222,12 @@ pub struct SwipeFields {
 }
 
 /// The field values for one step (module doc, "How the adapter fills it in").
-pub fn fields(axis: DragAxis, phase: Phase, progress: f64, velocity: Option<f64>) -> SwipeFields {
+pub(crate) fn fields(
+    axis: DragAxis,
+    phase: Phase,
+    progress: f64,
+    velocity: Option<f64>,
+) -> SwipeFields {
     let (motion, back, forward, velocity_field) = match axis {
         DragAxis::Horizontal => (MOTION_HORIZONTAL, MASK_LEFT, MASK_RIGHT, VELOCITY_X),
         DragAxis::Vertical => (MOTION_VERTICAL, MASK_UP, MASK_DOWN, VELOCITY_Y),
@@ -254,7 +259,7 @@ pub fn fields(axis: DragAxis, phase: Phase, progress: f64, velocity: Option<f64>
 }
 
 /// When an Ended or Cancelled is re-sent, in `CFAbsoluteTime` seconds.
-pub struct ResendSchedule;
+pub(crate) struct ResendSchedule;
 
 impl ResendSchedule {
     /// Re-sends for an end (or cancel) posted at `end`: +200 ms and +500 ms.
@@ -265,7 +270,7 @@ impl ResendSchedule {
 
 /// What the adapter does for one `SwipeOutput` call.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Plan {
+pub(crate) struct Plan {
     /// Withdraw the re-sends of an earlier end.
     pub disarm: bool,
     /// Tried in order; the first that builds is posted (`pick`).
@@ -299,7 +304,7 @@ impl Plan {
 /// What a plan posts: the first try that `build` can build, else, for a
 /// closing plan, `closer` (the end built at begin). So a begun swipe gets a
 /// closing event whenever anything at all could be built.
-pub fn pick<B>(
+pub(crate) fn pick<B>(
     plan: &Plan,
     build: impl FnMut(&SwipeFields) -> Option<B>,
     closer: Option<B>,
@@ -310,7 +315,7 @@ pub fn pick<B>(
 
 /// The swipe in progress, as the Dock has been told it. Pure.
 #[derive(Debug, Default)]
-pub struct Sequencer {
+pub(crate) struct Sequencer {
     active: Option<(DragAxis, f64)>,
 }
 
@@ -395,7 +400,7 @@ const SELECTORS: [&CStr; 5] = [
 
 /// The private symbols, loaded on first use and cached for the process:
 /// `output_support` and `MacDockSwipe::new` both read this one answer.
-pub fn api() -> Option<&'static Api> {
+pub(crate) fn api() -> Option<&'static Api> {
     static API: OnceLock<Option<Api>> = OnceLock::new();
     API.get_or_init(|| {
         Api::load()
@@ -413,7 +418,7 @@ pub fn loads() -> bool {
 /// One built, unposted dock-swipe step. The HID event is kept alive next
 /// to the CGEvent until both drop, after posting, so the step stays valid
 /// whether or not the setter retains it (unknown).
-pub struct Built {
+pub(crate) struct Built {
     event: CFRetained<CGEvent>,
     _hid: Retained<AnyObject>,
 }
@@ -426,7 +431,7 @@ impl Built {
 
 /// The private class and function dock swipes need, resolved at runtime so
 /// a missing symbol is an error, not a link failure.
-pub struct Api {
+pub(crate) struct Api {
     hid_event: &'static AnyClass,
     set_hid_event: SetHidEvent,
 }
