@@ -101,6 +101,16 @@ Report how the scroll feels (too short a coast, too fast, too slow). The curve's
 8. Toggle *Smooth scrolling* in the tray: the Scroll screen follows, and the other way round.
 9. Unplug or sleep the external display in the middle of a coast: scrolling stops cleanly without another tick.
 
+### Verifying remaps beyond hotkeys (Phase 4c acceptance, 5-button mouse)
+
+1. Settings → Buttons: change B4 · Click to *Middle click*. B4 on a link in Safari opens it in a new tab.
+2. Add B5 · Click → *Double left click*. B5 on a word selects it.
+3. Add B3 · Hold → *Play/Pause*. Holding B3 plays or pauses Music.
+4. Try *Volume up* and *Brightness down*: the system HUD appears and the level changes.
+5. Quit MouseTune, add `"com.apple.dt.Xcode": "CmdBracket"` to `nav_overrides` in `~/Library/Application Support/com.johnpaulalabe.mousetune/config.json`, start it again: B4 in Xcode now goes back in the editor's history. Remove the entry afterwards. Type the value exactly: anything other than `"CmdBracket"` or `"MouseButtons"` makes the whole settings file fall back to the defaults, with a recovery notice.
+6. Set *Hold delay* to 500 ms, including releasing the drag off the slider: a hold needs a visibly longer press. Click *Restore timing defaults*.
+7. Set *Double-click speed* to 400 ms: the double-click hint says 400 ms, and slow double clicks on a button with a double-click action register.
+
 ## Building
 
 ```sh

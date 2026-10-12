@@ -69,6 +69,9 @@ mod tests {
             }),
             frontmost: Box::new(FakeFrontmost(None)),
             notices: Box::new(FakeNotices(log.clone())),
+            nav: crate::actions::nav::shared_nav_overrides(
+                &crate::config::schema::Config::default(),
+            ),
         }
     }
 
@@ -119,6 +122,9 @@ mod tests {
             }),
             frontmost: Box::new(FakeFrontmost(None)),
             notices: Box::new(FakeNotices(log.clone())),
+            nav: crate::actions::nav::shared_nav_overrides(
+                &crate::config::schema::Config::default(),
+            ),
         };
         let counters = Arc::new(ActionCounters::default());
         run(rx, out, Arc::clone(&counters));

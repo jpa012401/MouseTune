@@ -3,6 +3,7 @@
 
 pub mod executor;
 pub mod keys;
+pub mod nav;
 pub mod perform;
 pub mod queue;
 
@@ -12,7 +13,7 @@ use serde::Serialize;
 use specta::Type;
 
 use self::keys::{KeyBinding, ModifierMask};
-use crate::config::schema::{Action, KeyModifier, NavDirection, SymbolicHotkeyId};
+use crate::config::schema::{Action, KeyModifier, NavDirection, SymbolicHotkeyId, SystemKey};
 
 /// The engine's copy of an action: plain data the tap callback can copy
 /// without touching the heap. Built by `input::remaps::compile`.
@@ -21,6 +22,12 @@ pub enum CompiledAction {
     SymbolicHotkey(SymbolicHotkeyId),
     Navigate(NavDirection),
     KeyCombo(KeyBinding),
+    /// A full click of a CG button, 1 or 2 clicks.
+    MouseClick {
+        cg_button: u8,
+        clicks: u8,
+    },
+    SystemKey(SystemKey),
 }
 
 impl From<&Action> for CompiledAction {
@@ -36,6 +43,11 @@ impl From<&Action> for CompiledAction {
                 key_code: *key_code,
                 modifiers: modifier_mask(modifiers),
             }),
+            Action::MouseClick { button, clicks } => Self::MouseClick {
+                cg_button: button.cg_button(),
+                clicks: *clicks,
+            },
+            Action::SystemKey { key } => Self::SystemKey(*key),
         }
     }
 }

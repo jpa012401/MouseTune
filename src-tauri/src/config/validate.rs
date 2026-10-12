@@ -7,7 +7,9 @@ use specta::Type;
 
 use crate::{
     actions::keys::is_modifier_key,
-    config::schema::{Action, KeyModifier, Remap, ScrollModifiers, TriggerDuration},
+    config::schema::{
+        Action, KeyModifier, Remap, ScrollModifiers, TIMING_MS, Timing, TriggerDuration,
+    },
     input::remaps::{MAX_BUTTONS, MAX_LEVEL},
 };
 
@@ -29,6 +31,7 @@ pub enum RemapProblem {
     ButtonOutOfRange,
     LevelOutOfRange,
     EmptyKeyCombo,
+    ClicksOutOfRange,
 }
 
 /// The per-entry rules shared with `compile` (which skips what fails).
@@ -47,6 +50,36 @@ pub fn check_remap(remap: &Remap) -> Result<(), RemapProblem> {
         && (is_modifier_key(key_code) || key_code >= 128)
     {
         return Err(RemapProblem::EmptyKeyCombo);
+    }
+    if let Action::MouseClick { clicks, .. } = remap.effect.action
+        && !(1..=2).contains(&clicks)
+    {
+        return Err(RemapProblem::ClicksOutOfRange);
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub enum TimingField {
+    Hold,
+    DoubleClick,
+}
+
+/// The first value that differs from `old` and lies outside `TIMING_MS`, if
+/// any (Phase 4c design §1). An unchanged value isn't checked, so a
+/// hand-edited out-of-range one doesn't block saving the other.
+pub fn check_timing(new: &Timing, old: &Timing) -> Result<(), (TimingField, u32)> {
+    for (field, ms, was) in [
+        (TimingField::Hold, new.hold_ms, old.hold_ms),
+        (
+            TimingField::DoubleClick,
+            new.double_click_ms,
+            old.double_click_ms,
+        ),
+    ] {
+        if ms != was && !TIMING_MS.contains(&ms) {
+            return Err((field, ms));
+        }
     }
     Ok(())
 }
@@ -122,6 +155,80 @@ mod tests {
                 },
             },
         }
+    }
+
+    #[test]
+    fn a_mouse_click_of_three_clicks_is_invalid() {
+        use crate::config::schema::MouseButton;
+        let mut r = remap(5, 1, TriggerDuration::Click);
+        r.effect.action = Action::MouseClick {
+            button: MouseButton::Left,
+            clicks: 3,
+        };
+        assert_eq!(check_remap(&r), Err(RemapProblem::ClicksOutOfRange));
+        r.effect.action = Action::MouseClick {
+            button: MouseButton::Left,
+            clicks: 2,
+        };
+        assert_eq!(check_remap(&r), Ok(()));
+    }
+
+    #[test]
+    fn timing_outside_150_to_600_ms_is_named() {
+        use crate::config::schema::Timing;
+        let defaults = Timing {
+            hold_ms: 250,
+            double_click_ms: 260,
+        };
+        assert_eq!(
+            check_timing(
+                &Timing {
+                    hold_ms: 150,
+                    double_click_ms: 600
+                },
+                &defaults
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            check_timing(
+                &Timing {
+                    hold_ms: 149,
+                    double_click_ms: 260
+                },
+                &defaults
+            ),
+            Err((TimingField::Hold, 149))
+        );
+        assert_eq!(
+            check_timing(
+                &Timing {
+                    hold_ms: 250,
+                    double_click_ms: 601
+                },
+                &defaults
+            ),
+            Err((TimingField::DoubleClick, 601))
+        );
+    }
+
+    #[test]
+    fn an_unchanged_out_of_range_timing_is_not_checked() {
+        use crate::config::schema::Timing;
+        let hand_edited = Timing {
+            hold_ms: 50,
+            double_click_ms: 260,
+        };
+        assert_eq!(
+            check_timing(
+                &Timing {
+                    hold_ms: 50,
+                    double_click_ms: 300
+                },
+                &hand_edited
+            ),
+            Ok(())
+        );
     }
 
     #[test]

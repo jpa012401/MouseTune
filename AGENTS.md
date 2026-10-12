@@ -177,14 +177,15 @@ If you can't name the requirement a pattern serves, don't add it. **DRY is about
 ## Current state
 
 - **Merged on `main`:** Phase 0 (scaffold), Phase 1 (Accessibility onboarding, permission monitor, tray status, settings shell), Phase 2 (input thread, event taps, HID mouse tracking, General page), Phase 3 (config store with two kill switches, typed config commands and event, tray switches, recovery notice), Phase 4a (click cycle, router, `mt-exec` executor with `Navigate` and symbolic hotkeys), Phase 4b (capture mode, key recorder, editable Buttons screen, the full hotkey table, `KeyCombo`), Phase 5a (scroll config section, acceleration/curve/animator core, CVDisplayLink frame driver with timer fallback, scroll poster, in-place inversion, tray toggles) and Phase 5b (display-link backstop, scroll modifier keys, precise setting, swipe swift, Scroll screen with curve plot). Phases 2–5b are **pending manual hardware acceptance** (README). The scroll tap swallows plain mouse-wheel ticks while smoothing is on; the button tap swallows routed events.
-- **Next:** Phase 4c (mouse-click remaps, SystemKey media keys, nav_overrides, configurable timing), then Phase 6 (buttons as modifiers, drag, zoom).
+- **Implemented on phase-4c-remaps-beyond-hotkeys, not yet merged:** Phase 4c (mouse-click and media-key remaps, nav_overrides, configurable timing). **Pending manual hardware acceptance** (README).
+- **Next:** Phase 6 (buttons as modifiers, drag, zoom).
 - **Known gaps:**
-  - Config holds the two kill switches, `buttons.remaps` (editable in the UI since Phase 4b) and the scroll section (editable on the Scroll screen since Phase 5b); later phases add their sections.
+  - Config holds the two kill switches, `buttons.remaps` (editable in the UI since Phase 4b), timing (sliders since Phase 4c), nav_overrides (file-only) and the scroll section (editable on the Scroll screen since Phase 5b); later phases add their sections.
   - The Accessibility commands still return `Result<(), String>`; config commands use the typed `ConfigError`.
   - Parked UI edge cases (bridge-failure-only): a failed Dismiss or config load is only reported on the General page; brief stale switch if a tray change races the initial load.
   - Any config save (even a remap edit) closes a scroll gesture in flight (clean Ended).
   - Deferred: a shutdown join timeout (also for `mt-exec` on quit; the 7 px drag cancel waits for Phase 6), a tap-timeout counter, a degraded indicator in the tray, and moving `spawn` out of `input/`.
-- **Never exercised for real:** the Accessibility prompt and settings-pane flow; the tray icon rendering; a bundled or signed build; CI on GitHub (no remote yet); macOS 12–26; Intel; an external mouse through the HID adapter; tap teardown on quit with real taps; tray switch checkmarks; a kill switch turning a real tap off; the watchdog's tap rebuild (`revive`); the CGS install path (unreachable binding); posting key combos and clicks; the click timers on real input; the B3/B4/B5 defaults on a real mouse; button-tap swallowing with real taps; the Keys tap under Accessibility; button capture on hardware; whether macOS asks for Input Monitoring; the new hotkeys' CGS IDs and default-shortcut fallbacks; recording ⌘Q / ⌘Tab / ⌘Space; smooth scrolling on real hardware (the animator's feel, Safari rubber-banding, momentum); CVDisplayLink on macOS 12–26 and with mixed 60/120 Hz displays; the 120 Hz timer fallback outside tests; in-place inversion on a real wheel; scroll modifier keys and swipe swift on real hardware; the display-link backstop with a real unplugged display. *Exercised:* reading hotkey 32 (enabled, Ctrl+Up) and the frontmost bundle ID on macOS 27.
+- **Never exercised for real:** the Accessibility prompt and settings-pane flow; the tray icon rendering; a bundled or signed build; CI on GitHub (no remote yet); macOS 12–26; Intel; an external mouse through the HID adapter; tap teardown on quit with real taps; tray switch checkmarks; a kill switch turning a real tap off; the watchdog's tap rebuild (`revive`); the CGS install path (unreachable binding); posting key combos and clicks; the click timers on real input; the B3/B4/B5 defaults on a real mouse; button-tap swallowing with real taps; the Keys tap under Accessibility; button capture on hardware; whether macOS asks for Input Monitoring; the new hotkeys' CGS IDs and default-shortcut fallbacks; recording ⌘Q / ⌘Tab / ⌘Space; smooth scrolling on real hardware (the animator's feel, Safari rubber-banding, momentum); CVDisplayLink on macOS 12–26 and with mixed 60/120 Hz displays; the 120 Hz timer fallback outside tests; in-place inversion on a real wheel; scroll modifier keys and swipe swift on real hardware; the display-link backstop with a real unplugged display; mouse-click remaps and their click state; media keys (system-defined NSEvent created on mt-exec); nav_overrides edits; configurable timing on a real mouse. *Exercised:* reading hotkey 32 (enabled, Ctrl+Up) and the frontmost bundle ID on macOS 27.
 
 ## Settled decisions and open questions
 
@@ -196,6 +197,7 @@ If you can't name the requirement a pattern serves, don't add it. **DRY is about
 - **Tray toggles moved to Phase 3**: they need the config store.
 - **Config v1 holds the kill switches and button remaps**, and grows a section per phase; the loader deep-merges the file over the defaults so it grows additively, and IPC types stay strict.
 - **Phase 4 is split into 4a (button engine) and 4b (capture mode, editor); 4c holds mouse-click remaps, media keys, `nav_overrides` and timing.** **B3 click default = Mission Control.**
+- **Phase 4c: a MouseClick remap is a full click, not hold-through (that's Phase 6). nav_overrides is file-only and merges over the Apple defaults; mt-exec reads it through an ArcSwap, never the job queue. Timing is 150–600 ms, clamped on compile.**
 - **Phase 5 is split into 5a (engine, tray toggles) and 5b (modifiers, Scroll screen); Cmd + scroll = zoom moves to Phase 6.** **Frames come from CVDisplayLink on every macOS version**, with a 120 Hz timer fallback, because NSScreen.displayLink is main-thread AppKit. **In 5a a tick with a modifier key held isn't smoothed.** Inversion is relative to the delivered deltas (Phase 5a design).
 - **Scroll modifiers (Phase 5b): one key per effect, each key at most once; defaults Shift = horizontal, Option = precise, swift unbound, so ⌃ + scroll stays with Accessibility Zoom. Unbound keys pass through. Screen-size scaling was dropped.**
 - **The engine owns `CompiledRemaps`**, delivered by `Control::SetRemaps`; no `ArcSwap`.
@@ -220,9 +222,9 @@ Spec amendments go in the commit that proves the spec wrong.
 | Tray, window, agent behaviour | §2.1, §3.2 | `tray.rs`, `window.rs` |
 | macOS version differences | §3.4 | `platform/macos/os_version.rs` |
 | Event taps, filtering, devices, threading | §4 | `input/`, Phase 2 plan |
-| Buttons and gestures | §5 | `input/{remaps,click_cycle,router,capture,key_recorder}.rs`, `config/validate.rs`, `actions/` |
+| Buttons and gestures | §5 | `input/{remaps,click_cycle,router,capture,key_recorder}.rs`, `config/validate.rs`, `actions/`, `actions/nav.rs` |
 | Drag, dock swipe | §6 | — (Phase 6) |
-| Actions, symbolic hotkeys | §7 | `actions/`, `platform/macos/{symbolic_hotkeys,event_poster,frontmost_app}.rs` |
+| Actions, symbolic hotkeys | §7 | `actions/`, `platform/macos/{symbolic_hotkeys,frontmost_app}.rs`, `platform/macos/event_poster.rs` (clicks, system keys) |
 | Smooth scrolling | §8 | `input/scroll/` (incl. `modifiers.rs`, `preview.rs`), `platform/macos/{display_link,scroll_poster}.rs`, `src/routes/Scroll.tsx`, Phase 5a and 5b designs |
 | Config schema | §9 | `config/` |
 | IPC contract | §10 | `ipc.rs`, `events.rs`, `src/bindings.ts` |

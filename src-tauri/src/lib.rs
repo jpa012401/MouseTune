@@ -109,6 +109,7 @@ pub fn run() {
                 Box::new(events::EmitInputStatus(app.handle().clone())),
             );
             app.manage(Arc::clone(&input));
+            let nav = actions::nav::shared_nav_overrides(store.current());
             let exec = actions::executor::spawn(
                 jobs,
                 actions::perform::Outputs {
@@ -117,6 +118,7 @@ pub fn run() {
                     poster: Box::new(platform::event_poster::MacEventPoster),
                     frontmost: Box::new(platform::frontmost_app::MacFrontmostApp),
                     notices: Box::new(events::EmitNotices(app.handle().clone())),
+                    nav: Arc::clone(&nav),
                 },
                 Arc::clone(&input.shared().actions),
             );
@@ -126,6 +128,7 @@ pub fn run() {
             store.subscribe(Box::new(input::thread::InputConfigBridge(Arc::clone(
                 &input,
             ))));
+            store.subscribe(Box::new(actions::nav::NavOverridesBridge(nav)));
             store.subscribe(Box::new(tray::TrayConfigStatus(app.handle().clone())));
             store.subscribe(Box::new(events::EmitConfigChanged(app.handle().clone())));
             app.manage(Mutex::new(store));

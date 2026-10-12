@@ -45,7 +45,9 @@ export const events = {
 /**  What a remap does (spec §7.1, §9.2). */
 export type Action = { type: "SymbolicHotkey"; id: SymbolicHotkeyId } | { type: "Navigate"; direction: NavDirection } | 
 /**  A keyboard shortcut to post. `key_label` is only for display. */
-{ type: "KeyCombo"; key_code: number; modifiers: KeyModifier[]; key_label: string };
+{ type: "KeyCombo"; key_code: number; modifiers: KeyModifier[]; key_label: string } | 
+/**  A full click of another button, 1 or 2 clicks. */
+{ type: "MouseClick"; button: MouseButton; clicks: number } | { type: "SystemKey"; key: SystemKey };
 
 export type ActionStats = {
 	performed: number,
@@ -79,11 +81,14 @@ export type Config = {
 	general: General,
 	buttons: Buttons,
 	scroll: Scroll,
+	timing: Timing,
+	/**  Per-app Back/Forward strategy, keyed by bundle ID (spec §7.3). */
+	nav_overrides: { [key in string]: NavStrategy },
 };
 
 export type ConfigChanged = Config;
 
-export type ConfigError = { kind: "Io"; message: string } | { kind: "UnsupportedVersion"; found: number; expected: number } | { kind: "InvalidRemap"; index: number; reason: RemapProblem } | { kind: "DuplicateScrollModifier"; key: KeyModifier };
+export type ConfigError = { kind: "Io"; message: string } | { kind: "UnsupportedVersion"; found: number; expected: number } | { kind: "InvalidRemap"; index: number; reason: RemapProblem } | { kind: "DuplicateScrollModifier"; key: KeyModifier } | { kind: "TimingOutOfRange"; field: TimingField; ms: number };
 
 /**  Settings plus any startup recovery the UI should mention. */
 export type ConfigView = {
@@ -145,7 +150,24 @@ export type KeyCaptured = {
 
 export type KeyModifier = "Command" | "Shift" | "Option" | "Control";
 
+/**
+ *  Clicks a remap can post (Phase 4c design §1). Named, not numbered, so the
+ *  file reads clearly.
+ */
+export type MouseButton = "Left" | "Right" | "Middle" | 
+/**  Button 4. */
+"Back" | 
+/**  Button 5. */
+"Forward";
+
 export type NavDirection = "Back" | "Forward";
+
+/**  How Back/Forward reach an app (spec §7.3). */
+export type NavStrategy = 
+/**  ⌘[ / ⌘]. */
+"CmdBracket" | 
+/**  Synthesized buttons 4 / 5. */
+"MouseButtons";
 
 export type OsVersion = {
 	major: number,
@@ -168,7 +190,7 @@ export type Remap = {
 	effect: Effect,
 };
 
-export type RemapProblem = "DuplicateTrigger" | "ButtonNotRemappable" | "ButtonOutOfRange" | "LevelOutOfRange" | "EmptyKeyCombo";
+export type RemapProblem = "DuplicateTrigger" | "ButtonNotRemappable" | "ButtonOutOfRange" | "LevelOutOfRange" | "EmptyKeyCombo" | "ClicksOutOfRange";
 
 /**
  *  Smooth scrolling (Phase 5a design §1). Every field is `Copy`, so the
@@ -223,12 +245,25 @@ export type Status = {
 
 export type SymbolicHotkeyId = "MissionControl" | "AppExpose" | "ShowDesktop" | "Launchpad" | "LookUp" | "Spotlight" | "NotificationCenter" | "SpaceLeft" | "SpaceRight" | "Desktop1" | "Desktop2" | "Desktop3" | "Desktop4" | "Desktop5" | "Desktop6" | "Desktop7" | "Desktop8" | "Desktop9" | "Desktop10" | "Desktop11" | "Desktop12" | "Desktop13" | "Desktop14" | "Desktop15" | "Desktop16";
 
+/**  Media and brightness keys (spec §7.4). */
+export type SystemKey = "PlayPause" | "Next" | "Previous" | "VolumeUp" | "VolumeDown" | "Mute" | "BrightnessUp" | "BrightnessDown";
+
 export type TapSet = {
 	buttons: boolean,
 	scroll: boolean,
 	flags: boolean,
 	keys: boolean,
 };
+
+/**  The click-cycle timers (spec §5.1). Both within `TIMING_MS`. */
+export type Timing = {
+	/**  How long a press must last to fire a Hold action. */
+	hold_ms: number,
+	/**  How soon the next press must come to count as a double or triple click. */
+	double_click_ms: number,
+};
+
+export type TimingField = "Hold" | "DoubleClick";
 
 export type TriggerDuration = "click" | "hold";
 

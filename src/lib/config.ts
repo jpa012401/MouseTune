@@ -8,7 +8,8 @@ function isConfigError(error: unknown): error is ConfigError {
     error.kind === "Io" ||
     error.kind === "UnsupportedVersion" ||
     error.kind === "InvalidRemap" ||
-    error.kind === "DuplicateScrollModifier"
+    error.kind === "DuplicateScrollModifier" ||
+    error.kind === "TimingOutOfRange"
   );
 }
 
@@ -24,6 +25,8 @@ function remapProblemMessage(reason: RemapProblem, row: Remap | undefined): stri
       return "only single, double and triple clicks are supported.";
     case "EmptyKeyCombo":
       return "that shortcut has no key.";
+    case "ClicksOutOfRange":
+      return "a mouse click can only be single or double.";
   }
 }
 
@@ -37,6 +40,8 @@ export function configErrorMessage(error: unknown, remaps: Remap[] = []): string
         ? `settings version ${error.found} isn’t supported (expected ${error.expected})`
         : error.kind === "DuplicateScrollModifier"
           ? `${modifierKeyLabel(error.key)} is already used for another scroll modifier.`
-          : remapProblemMessage(error.reason, remaps[error.index]);
+          : error.kind === "TimingOutOfRange"
+            ? `${error.field === "Hold" ? "Hold delay" : "Double-click speed"} must be between 150 and 600 ms.`
+            : remapProblemMessage(error.reason, remaps[error.index]);
   return `Couldn’t save your settings: ${reason}`;
 }

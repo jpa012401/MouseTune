@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { emit } from "@tauri-apps/api/event";
 import App from "../App";
 import type { Config } from "../bindings";
-import { config, configView, defaultRemaps, inputStatus, mockBackend, status } from "../test/backend";
+import { config, configView, defaultRemaps, inputStatus, mockBackend, status, timingConfig } from "../test/backend";
 
 /** Capture only sees presses through the buttons tap, so most tests need it on. */
 function tapsOn() {
@@ -141,6 +141,40 @@ describe("Buttons page", () => {
     fireEvent.click(within(row).getByRole("button", { name: "Save" }));
     await waitFor(() => expect(saved!.buttons.remaps[0]!.effect.action).toEqual({ type: "SymbolicHotkey", id: "AppExpose" }));
     expect(saved!.buttons.remaps.slice(1)).toEqual(defaultRemaps.slice(1));
+  });
+
+  it("remaps a row to a middle click", async () => {
+    let saved: Config | undefined;
+    mockBackend({ get_status: tapsOn, set_config: (a) => (saved = (a as { config: Config }).config) });
+    renderButtons();
+    const row = (await screen.findAllByRole("listitem"))[0]!;
+    fireEvent.click(within(row).getByRole("button", { name: "Change" }));
+    fireEvent.change(within(row).getByLabelText("Action"), { target: { value: "click:Middle:1" } });
+    fireEvent.click(within(row).getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(saved!.buttons.remaps[0]!.effect.action).toEqual({ type: "MouseClick", button: "Middle", clicks: 1 }),
+    );
+  });
+
+  it("lists media-key and click remaps by name", async () => {
+    mockBackend({
+      get_status: tapsOn,
+      get_config: () =>
+        configView({
+          config: {
+            ...config(),
+            buttons: {
+              remaps: [
+                { trigger: { button: 4, level: 1, duration: "click" }, effect: { action: { type: "SystemKey", key: "PlayPause" } } },
+                { trigger: { button: 5, level: 1, duration: "click" }, effect: { action: { type: "MouseClick", button: "Left", clicks: 2 } } },
+              ],
+            },
+          },
+        }),
+    });
+    renderButtons();
+    expect(await screen.findByText("Play/Pause")).toBeTruthy();
+    expect(screen.getByText("Double left click")).toBeTruthy();
   });
 
   it("deletes a row", async () => {
@@ -282,5 +316,86 @@ describe("Buttons page", () => {
     fireEvent.click(screen.getByRole("button", { name: "+ Add remap" }));
     expect(screen.getByText("Press the mouse button you want to remap…")).toBeTruthy();
     expect(screen.queryByRole("radio", { name: "Click" })).toBeNull();
+  });
+
+  it("shows the timing sliders with their values", async () => {
+    mockBackend({ get_status: tapsOn, get_config: () => configView({ config: timingConfig({ hold_ms: 400, double_click_ms: 300 }) }) });
+    renderButtons();
+    const hold = await screen.findByRole("slider", { name: "Hold delay" });
+    expect((hold as HTMLInputElement).value).toBe("400");
+    expect(screen.getByText("400 ms")).toBeTruthy();
+    expect(screen.getByText("300 ms")).toBeTruthy();
+    expect((screen.getByRole("slider", { name: "Double-click speed" }) as HTMLInputElement).min).toBe("150");
+  });
+
+  it("dragging a slider saves only when released", async () => {
+    const saved: Config[] = [];
+    mockBackend({ get_status: tapsOn, set_config: (a) => { const c = (a as { config: Config }).config; saved.push(c); return c; } });
+    renderButtons();
+    const hold = await screen.findByRole("slider", { name: "Hold delay" });
+    fireEvent.input(hold, { target: { value: "300" } });
+    fireEvent.input(hold, { target: { value: "400" } });
+    expect(screen.getByText("400 ms")).toBeTruthy();
+    expect(saved).toEqual([]);
+    // The native change event: WebKit fires it once, on release.
+    fireEvent.change(hold);
+    await waitFor(() => expect(saved).toEqual([timingConfig({ hold_ms: 400, double_click_ms: 260 })]));
+  });
+
+  it("a committed change to a slider saves it", async () => {
+    const saved: Config[] = [];
+    mockBackend({ get_status: tapsOn, set_config: (a) => { const c = (a as { config: Config }).config; saved.push(c); return c; } });
+    renderButtons();
+    const speed = await screen.findByRole("slider", { name: "Double-click speed" });
+    fireEvent.change(speed, { target: { value: "270" } });
+    await waitFor(() => expect(saved).toEqual([timingConfig({ hold_ms: 250, double_click_ms: 270 })]));
+  });
+
+  it("restore timing defaults resets only the timing", async () => {
+    let saved: Config | undefined;
+    mockBackend({
+      get_status: tapsOn,
+      get_config: () => configView({ config: timingConfig({ hold_ms: 500, double_click_ms: 400 }) }),
+      set_config: (a) => (saved = (a as { config: Config }).config),
+    });
+    renderButtons();
+    fireEvent.click(await screen.findByRole("button", { name: "Restore timing defaults" }));
+    await waitFor(() => expect(saved!.timing).toEqual({ hold_ms: 250, double_click_ms: 260 }));
+    expect(saved!.buttons.remaps).toEqual(defaultRemaps);
+  });
+
+  it("the double-click hint uses the configured window", async () => {
+    mockBackend({ get_status: tapsOn, get_config: () => configView({ config: { ...timingConfig({ hold_ms: 250, double_click_ms: 400 }), buttons: { remaps: [
+      defaultRemaps[2]!, { trigger: { button: 4, level: 2, duration: "click" }, effect: { action: { type: "SymbolicHotkey", id: "Spotlight" } } },
+    ] } } }) });
+    renderButtons();
+    expect(await screen.findByText("Single clicks on this button will wait up to 400 ms.")).toBeTruthy();
+  });
+
+  it("an out-of-range timing from Rust shows its message", async () => {
+    mockBackend({ get_status: tapsOn, set_config: () => { throw { kind: "TimingOutOfRange", field: "Hold", ms: 700 }; } });
+    renderButtons();
+    const hold = await screen.findByRole("slider", { name: "Hold delay" });
+    fireEvent.change(hold, { target: { value: "600" } });
+    expect((await screen.findByText("Couldn’t save your settings: Hold delay must be between 150 and 600 ms.")).getAttribute("role")).toBe("alert");
+  });
+
+  it("a rejected save puts the slider back to the saved value", async () => {
+    mockBackend({ get_status: tapsOn, set_config: () => { throw { kind: "TimingOutOfRange", field: "Hold", ms: 600 }; } });
+    renderButtons();
+    const hold = await screen.findByRole("slider", { name: "Hold delay" });
+    fireEvent.input(hold, { target: { value: "600" } });
+    fireEvent.change(hold);
+    await screen.findByRole("alert");
+    await waitFor(() => expect(screen.getByText("250 ms")).toBeTruthy());
+    expect((hold as HTMLInputElement).value).toBe("250");
+  });
+
+  it("a hand-edited timing outside 150–600 ms shows the value in use", async () => {
+    mockBackend({ get_status: tapsOn, get_config: () => configView({ config: timingConfig({ hold_ms: 50, double_click_ms: 260 }) }) });
+    renderButtons();
+    const hold = await screen.findByRole("slider", { name: "Hold delay" });
+    expect(screen.getByText("150 ms")).toBeTruthy();
+    expect((hold as HTMLInputElement).value).toBe("150");
   });
 });
