@@ -136,7 +136,8 @@ impl Outcomes {
     };
 
     fn push(&mut self, outcome: Outcome) {
-        // Capacity covers the worst case (8); never panic on the hot path.
+        // Capacity covers the worst case (10, from `release_all`); never panic
+        // on the hot path.
         if let Some(slot) = self.items.get_mut(self.len) {
             *slot = Some(outcome);
             self.len += 1;
