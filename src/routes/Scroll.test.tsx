@@ -102,6 +102,17 @@ describe("Scroll page", () => {
     expect((screen.getByRole("switch", { name: "Invert vertical" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it("with scrolling off but smoothing on, the hint is about unassigned keys", async () => {
+    // config({ scroll_enabled: false }) keeps smooth: true.
+    mockBackend({ get_status: () => status(), get_config: () => configView({ config: config({ scroll_enabled: false }) }) });
+    renderScroll();
+    expect(
+      await screen.findByText("Keys you don’t assign pass through, so ⌃ + scroll still zooms the screen if Accessibility Zoom is on."),
+    ).toBeTruthy();
+    expect(screen.queryByText("Modifiers need smooth scrolling.")).toBeNull();
+    expect((screen.getByRole("combobox", { name: "Scroll precisely" }) as HTMLSelectElement).disabled).toBe(true);
+  });
+
   it("plots the curve with a readable summary", async () => {
     mockBackend({ get_status: () => status() });
     renderScroll();

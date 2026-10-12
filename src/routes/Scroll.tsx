@@ -240,7 +240,7 @@ export function Scroll() {
         ))}
       </ul>
       <p className={`${muted} mb-6 mt-2 text-xs`}>
-        {smoothOn
+        {scroll.smooth
           ? "Keys you don’t assign pass through, so ⌃ + scroll still zooms the screen if Accessibility Zoom is on."
           : "Modifiers need smooth scrolling."}
       </p>
