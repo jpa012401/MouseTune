@@ -96,24 +96,18 @@ impl TickRate {
 /// Precise key: this range whatever the speed (Phase 5b design §3).
 const PRECISE_PX: (f64, f64) = (1.0, 20.0);
 /// A run of this many ticks, each ≤ `MAX_GAP` apart, is a swipe.
-#[allow(dead_code)] // Used by the animator from Phase 5b Task 4.
 const SWIPE_TICKS: u32 = 3;
 /// Swipes no further apart than this form a streak.
-#[allow(dead_code)] // Used by the animator from Phase 5b Task 4.
 const STREAK_GAP: Duration = Duration::from_millis(600);
 /// Each further swipe in a streak multiplies the distance by this…
-#[allow(dead_code)] // Used by the animator from Phase 5b Task 4.
 const SWIPE_GROWTH: f64 = 1.33;
 /// …up to this.
-#[allow(dead_code)] // Used by the animator from Phase 5b Task 4.
 const MAX_SWIFT: f64 = 4.0;
 /// A held swift key gives at least this.
-#[allow(dead_code)] // Used by the animator from Phase 5b Task 4.
 const SWIFT_KEY_FACTOR: f64 = 2.0;
 
 impl Tick {
     /// The same tick on the other axis (the horizontal-scroll key).
-    #[allow(dead_code)] // Used by the engine from Phase 5b Task 4.
     pub fn swapped(self) -> Self {
         let axis = match self.axis {
             Axis::Vertical => Axis::Horizontal,
@@ -149,14 +143,12 @@ pub fn tick_px(speed: ScrollSpeed, precise_setting: bool, x: f64, tick: &Tick) -
 /// keeps the streak but doesn't add to it). A reversal, an axis change or a
 /// longer pause ends it.
 #[derive(Debug, Default)]
-#[allow(dead_code)] // Used by the animator from Phase 5b Task 4.
 pub struct SwipeTracker {
     last: Option<(Instant, Axis, i8)>,
     run: u32,
     swipes: u32,
 }
 
-#[allow(dead_code)] // Used by the animator from Phase 5b Task 4.
 impl SwipeTracker {
     /// Swipes completed earlier in this streak, before this tick's run.
     pub fn observe(&mut self, tick: &Tick, now: Instant) -> u32 {
@@ -186,7 +178,6 @@ impl SwipeTracker {
 }
 
 /// The distance multiplier for a tick after `swipes` swipes in its streak.
-#[allow(dead_code)] // Used by the animator from Phase 5b Task 4.
 pub fn swift_factor(swipes: u32, tick: &Tick) -> f64 {
     if tick.precise {
         return 1.0;

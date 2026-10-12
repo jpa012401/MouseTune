@@ -6,17 +6,17 @@
 pub mod acceleration;
 pub mod animator;
 pub mod curves;
+pub mod modifiers;
 
 use std::time::Instant;
 
 use acceleration::Tick;
 use animator::{Animator, FrameOut, ScrollOut};
+use modifiers::ModifierKeys;
 
 use crate::{config::schema::Scroll, input::filter::ScrollFields};
 
-/// Shift, Control, Option and Command in `CGEventFlags`. A tick with any of
-/// them held isn't smoothed in Phase 5a: Ctrl+scroll is Accessibility Zoom,
-/// and the others mean something in many apps (design, Decisions).
+/// Shift, Control, Option and Command in `CGEventFlags`. A held key that isn't bound to a scroll effect passes the tick through (Phase 5b design §2).
 pub const MODIFIER_FLAGS: u64 = 0x0002_0000 | 0x0004_0000 | 0x0008_0000 | 0x0010_0000;
 
 /// What the scroll tap does with a wheel event.
@@ -46,6 +46,7 @@ pub trait ScrollPoster {
 pub struct ScrollEngine {
     settings: Scroll,
     animator: Animator,
+    keys: ModifierKeys,
     frames: Box<dyn FrameDriver>,
     poster: Box<dyn ScrollPoster>,
 }
@@ -59,26 +60,35 @@ impl ScrollEngine {
         Self {
             settings,
             animator: Animator::new(settings),
+            keys: ModifierKeys::compile(&settings.keyboard_modifiers),
             frames,
             poster,
         }
     }
 
     /// A tick `classify_scroll` called a mouse wheel. Hot path: O(1), no
-    /// allocation, nothing posted (design §2).
+    /// allocation, nothing posted (Phase 5b design §2).
     pub fn on_wheel(&mut self, fields: &ScrollFields, now: Instant) -> ScrollVerdict {
-        if fields.flags & MODIFIER_FLAGS != 0 {
+        if !self.settings.smooth {
+            return self.inverted_in_place();
+        }
+        let held = fields.flags & MODIFIER_FLAGS;
+        if held & !self.keys.bound != 0 {
+            // A key with no scroll effect: leave the tick to macOS and apps
+            // (⌃ + scroll is Accessibility Zoom).
             if self.animator.end() {
                 self.frames.request();
             }
             return self.inverted_in_place();
         }
-        if !self.settings.smooth {
-            return self.inverted_in_place();
-        }
-        let Some(tick) = Tick::from_fields(fields) else {
+        let Some(mut tick) = Tick::from_fields(fields) else {
             return ScrollVerdict::Pass;
         };
+        if held & self.keys.horizontal != 0 {
+            tick = tick.swapped();
+        }
+        tick.precise = held & self.keys.precise != 0;
+        tick.swift = held & self.keys.swift != 0;
         self.animator.tick(tick, now);
         self.frames.request();
         ScrollVerdict::Swallow
@@ -108,6 +118,7 @@ impl ScrollEngine {
         self.cancel();
         self.settings = settings;
         self.animator.set_settings(settings);
+        self.keys = ModifierKeys::compile(&settings.keyboard_modifiers);
     }
 
     fn inverted_in_place(&self) -> ScrollVerdict {
@@ -140,6 +151,130 @@ mod tests {
     };
 
     const CONTROL: u64 = 0x0004_0000;
+
+    const SHIFT: u64 = 0x2_0000;
+    const OPTION: u64 = 0x8_0000;
+
+    fn held(flags: u64) -> ScrollFields {
+        ScrollFields { flags, ..wheel(1) }
+    }
+
+    fn after_one_tick(r: &mut Rig, fields: ScrollFields) -> Vec<String> {
+        assert_eq!(r.scroll.on_wheel(&fields, r.ms(0)), ScrollVerdict::Swallow);
+        r.scroll.on_frame(r.ms(0));
+        r.scroll.on_frame(r.ms(90));
+        r.posted.log()
+    }
+
+    #[test]
+    fn shift_scrolls_horizontally_and_obeys_invert_horizontal() {
+        let mut r = rig(Scroll {
+            invert_horizontal: true,
+            ..low()
+        });
+        assert_eq!(
+            after_one_tick(&mut r, held(SHIFT)),
+            ["Began", "Changed dx -90", "Ended"]
+        );
+    }
+
+    #[test]
+    fn shift_and_option_combine_horizontal_and_precise() {
+        // A first tick is the slowest (x = 0): precise 1 + 19·0 = 1 px.
+        let mut r = rig(low());
+        assert_eq!(
+            after_one_tick(&mut r, held(SHIFT | OPTION)),
+            ["Began", "Changed dx 1", "Ended"]
+        );
+    }
+
+    #[test]
+    fn an_unbound_key_passes_even_with_bound_keys_held() {
+        let mut r = rig(low());
+        assert_eq!(
+            r.scroll.on_wheel(&held(SHIFT | CONTROL), r.ms(0)),
+            ScrollVerdict::Pass
+        );
+        assert!(r.frames.calls().is_empty());
+    }
+
+    #[test]
+    fn with_smoothing_off_modifiers_do_nothing() {
+        let mut r = rig(Scroll {
+            smooth: false,
+            ..low()
+        });
+        assert_eq!(
+            r.scroll.on_wheel(&held(SHIFT), r.ms(0)),
+            ScrollVerdict::Pass
+        );
+        let mut r = rig(Scroll {
+            smooth: false,
+            invert_vertical: true,
+            ..low()
+        });
+        assert_eq!(
+            r.scroll.on_wheel(&held(SHIFT), r.ms(0)),
+            ScrollVerdict::Invert {
+                vertical: true,
+                horizontal: false
+            },
+            "inverted as delivered, not swapped"
+        );
+    }
+
+    #[test]
+    fn a_bound_swift_key_doubles_the_distance() {
+        // 90 px × max(2.0, 1.0) = 180
+        let mut s = low();
+        s.keyboard_modifiers.swift = Some(crate::config::schema::KeyModifier::Control);
+        let mut r = rig(s);
+        assert_eq!(
+            after_one_tick(&mut r, held(CONTROL)),
+            ["Began", "Changed dy 180", "Ended"]
+        );
+    }
+
+    #[test]
+    fn the_precise_setting_makes_a_slow_tick_fine() {
+        // 1 + (180 − 1)·0² = 1 px
+        let mut r = rig(Scroll {
+            precise: true,
+            ..low()
+        });
+        assert_eq!(
+            after_one_tick(&mut r, wheel(1)),
+            ["Began", "Changed dy 1", "Ended"]
+        );
+    }
+
+    #[test]
+    fn pressing_shift_mid_gesture_closes_it_and_begins_a_horizontal_one() {
+        // The axis change starts over at 90 px; 10 ms into the new curve:
+        // 90·(1 − (8/9)³) = 26.79 → 27.
+        let mut r = rig(low());
+        r.scroll.on_wheel(&wheel(1), r.ms(0));
+        r.scroll.on_frame(r.ms(0));
+        assert_eq!(
+            r.scroll.on_wheel(&held(SHIFT), r.ms(20)),
+            ScrollVerdict::Swallow
+        );
+        r.scroll.on_frame(r.ms(30));
+        assert_eq!(r.posted.log(), ["Began", "Ended", "Began dx 27"]);
+    }
+
+    #[test]
+    fn new_settings_rebind_the_keys() {
+        let mut r = rig(low());
+        let mut s = low();
+        s.keyboard_modifiers.horizontal = None;
+        r.scroll.set_settings(s);
+        assert_eq!(
+            r.scroll.on_wheel(&held(SHIFT), r.ms(0)),
+            ScrollVerdict::Pass,
+            "Shift is unbound now, so it passes"
+        );
+    }
 
     struct Rig {
         scroll: ScrollEngine,
