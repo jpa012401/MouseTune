@@ -65,13 +65,19 @@ pub enum TimingField {
     DoubleClick,
 }
 
-/// The first timing value outside `TIMING_MS`, if any (Phase 4c design §1).
-pub fn check_timing(t: &Timing) -> Result<(), (TimingField, u32)> {
-    for (field, ms) in [
-        (TimingField::Hold, t.hold_ms),
-        (TimingField::DoubleClick, t.double_click_ms),
+/// The first value that differs from `old` and lies outside `TIMING_MS`, if
+/// any (Phase 4c design §1). An unchanged value isn't checked, so a
+/// hand-edited out-of-range one doesn't block saving the other.
+pub fn check_timing(new: &Timing, old: &Timing) -> Result<(), (TimingField, u32)> {
+    for (field, ms, was) in [
+        (TimingField::Hold, new.hold_ms, old.hold_ms),
+        (
+            TimingField::DoubleClick,
+            new.double_click_ms,
+            old.double_click_ms,
+        ),
     ] {
-        if !TIMING_MS.contains(&ms) {
+        if ms != was && !TIMING_MS.contains(&ms) {
             return Err((field, ms));
         }
     }
@@ -170,26 +176,58 @@ mod tests {
     #[test]
     fn timing_outside_150_to_600_ms_is_named() {
         use crate::config::schema::Timing;
+        let defaults = Timing {
+            hold_ms: 250,
+            double_click_ms: 260,
+        };
         assert_eq!(
-            check_timing(&Timing {
-                hold_ms: 150,
-                double_click_ms: 600
-            }),
+            check_timing(
+                &Timing {
+                    hold_ms: 150,
+                    double_click_ms: 600
+                },
+                &defaults
+            ),
             Ok(())
         );
         assert_eq!(
-            check_timing(&Timing {
-                hold_ms: 149,
-                double_click_ms: 260
-            }),
+            check_timing(
+                &Timing {
+                    hold_ms: 149,
+                    double_click_ms: 260
+                },
+                &defaults
+            ),
             Err((TimingField::Hold, 149))
         );
         assert_eq!(
-            check_timing(&Timing {
-                hold_ms: 250,
-                double_click_ms: 601
-            }),
+            check_timing(
+                &Timing {
+                    hold_ms: 250,
+                    double_click_ms: 601
+                },
+                &defaults
+            ),
             Err((TimingField::DoubleClick, 601))
+        );
+    }
+
+    #[test]
+    fn an_unchanged_out_of_range_timing_is_not_checked() {
+        use crate::config::schema::Timing;
+        let hand_edited = Timing {
+            hold_ms: 50,
+            double_click_ms: 260,
+        };
+        assert_eq!(
+            check_timing(
+                &Timing {
+                    hold_ms: 50,
+                    double_click_ms: 300
+                },
+                &hand_edited
+            ),
+            Ok(())
         );
     }
 

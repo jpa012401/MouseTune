@@ -102,9 +102,7 @@ impl ConfigStore {
             return Err(ConfigError::DuplicateScrollModifier { key });
         }
         // Only a changed value is checked, so a bad hand-edited one still loads.
-        if new.timing != self.current.timing
-            && let Err((field, ms)) = check_timing(&new.timing)
-        {
+        if let Err((field, ms)) = check_timing(&new.timing, &self.current.timing) {
             return Err(ConfigError::TimingOutOfRange { field, ms });
         }
         if new == self.current {
@@ -376,6 +374,30 @@ mod tests {
         assert!(
             store.update(next).is_ok(),
             "unchanged timing isn't re-checked"
+        );
+        assert_eq!(file.writes().len(), 1);
+    }
+
+    #[test]
+    fn only_the_changed_timing_value_is_checked() {
+        let file = FakeConfigFile::with(
+            r#"{ "version": 1, "timing": { "hold_ms": 50, "double_click_ms": 260 } }"#,
+        );
+        let mut store = ConfigStore::load(Box::new(file.clone()));
+        let mut next = store.current().clone();
+        next.timing.double_click_ms = 300;
+        assert!(
+            store.update(next).is_ok(),
+            "the hand-edited hold delay doesn't block the double-click speed"
+        );
+        let mut next = store.current().clone();
+        next.timing.hold_ms = 700;
+        assert_eq!(
+            store.update(next),
+            Err(ConfigError::TimingOutOfRange {
+                field: TimingField::Hold,
+                ms: 700
+            })
         );
         assert_eq!(file.writes().len(), 1);
     }
