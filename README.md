@@ -52,6 +52,16 @@ Taps pass every event through unchanged in this phase. To check the scroll filte
 5. Unplug the mouse: the list empties and the taps switch **Off**.
 6. Turn off Settings → General → Scrolling (or the tray's Enable scrolling): Input engine → Scroll shows **Off**. Turn it back on.
 
+### Verifying the button engine (Phase 4a acceptance, 5-button mouse)
+
+1. Click the middle button (B3): Mission Control opens.
+2. Hold B3 for 250 ms or more: the desktop is shown.
+3. B4 and B5 go Back and Forward in Safari (`Cmd+[`) and in Chrome.
+4. Left and right clicks are unaffected.
+5. Trackpad clicks and scrolling are unaffected.
+6. Turn off Settings → General → Mouse buttons (or the tray's Enable buttons): B3 does a plain middle click again.
+7. Disable Mission Control's keyboard shortcut in System Settings, then click B3: Mission Control still opens (unreachable binding). This changes WindowServer hotkey state; restore your shortcut in System Settings afterwards if you changed it. Run it only with the maintainer's go-ahead.
+
 ## Building
 
 ```sh
