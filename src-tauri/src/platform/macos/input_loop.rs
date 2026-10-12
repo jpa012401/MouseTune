@@ -270,7 +270,11 @@ fn run_input_thread(
 
     let devices = DeviceMonitor::start(&run_loop, {
         let engine = engine.clone();
-        move |event| engine.borrow_mut().apply_device_event(event)
+        move |event| {
+            // The monitor catches a panic; the pointer is released first.
+            let _release = OnUnwind(pointer::release);
+            engine.borrow_mut().apply_device_event(event)
+        }
     });
 
     engine.borrow_mut().start();
@@ -320,6 +324,7 @@ unsafe extern "C-unwind" fn perform_control(info: *mut c_void) {
     // it's freed only after the source is invalidated.
     let state = unsafe { &*info.cast_const().cast::<LoopState>() };
     guarded(&state.degraded, (), || {
+        let _release = OnUnwind(pointer::release);
         for msg in state.rx.try_iter() {
             if handle_control(&mut state.engine.borrow_mut(), msg) == Flow::Stop {
                 state.run_loop.stop();
@@ -369,5 +374,8 @@ unsafe extern "C-unwind" fn perform_intents(info: *mut c_void) {
 unsafe extern "C-unwind" fn watchdog_tick(_timer: *mut CFRunLoopTimer, info: *mut c_void) {
     // SAFETY: as in `perform_control`; the timer is invalidated before `info` is freed.
     let state = unsafe { &*info.cast_const().cast::<LoopState>() };
-    guarded(&state.degraded, (), || state.engine.borrow_mut().watchdog());
+    guarded(&state.degraded, (), || {
+        let _release = OnUnwind(pointer::release);
+        state.engine.borrow_mut().watchdog()
+    });
 }

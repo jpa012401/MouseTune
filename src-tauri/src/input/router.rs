@@ -383,6 +383,19 @@ impl ButtonRouter {
             .is_some_and(|c| c.down && self.remaps.button(c.press.button).drag.is_some())
     }
 
+    /// Ends a drag in flight and nothing else, for a Drag tap that went off
+    /// (it missed only movement). The press, its click cycle and any
+    /// hold-through stay as they are; `acted` stays set, so the release
+    /// clicks nothing. Further movement starts a fresh drag.
+    pub fn end_drag(&mut self) -> Decision {
+        let mut d = Decision::pass();
+        if self.track.axis.is_some() {
+            d.outcomes.push(Outcome::DragEnd);
+        }
+        self.track = DragTrack::default();
+        d
+    }
+
     pub fn freeze_pointer(&self) -> bool {
         self.remaps.freeze_pointer
     }
@@ -1292,6 +1305,46 @@ mod tests {
             outcomes(r.release_all()),
             vec![Outcome::Disarm(TimerKind::Expiry)],
             "the drag is already over; only B4's expiry timer is left"
+        );
+    }
+
+    #[test]
+    fn ending_only_the_drag_keeps_the_press_and_its_hold_through() {
+        let mut r = router_with(
+            |b| {
+                b.drags = vec![DragBinding {
+                    button: 3,
+                    effect: DragEffect::SpacesAndMissionControl,
+                }];
+                b.hold_through = vec![crate::config::schema::HoldThrough {
+                    button: 6,
+                    acts_as: crate::config::schema::MouseButton::Middle,
+                }];
+            },
+            OutputSupport {
+                dock_swipe: true,
+                magnify: false,
+            },
+        );
+        down(&mut r, 5);
+        down(&mut r, MIDDLE);
+        r.on_motion(9, 0);
+        assert_eq!(outcomes(r.end_drag()), vec![Outcome::DragEnd]);
+        assert_eq!(outcomes(r.end_drag()), vec![], "already ended");
+        assert!(r.wants_motion(), "the drag button is still down");
+        let (verdict, released) = up(&mut r, MIDDLE);
+        assert_eq!(verdict, Verdict::Swallow);
+        assert!(!released.contains(&Outcome::DragEnd), "{released:?}");
+        assert!(
+            !released.iter().any(|o| matches!(o, Outcome::Fire(_))),
+            "a press that dragged doesn't click: {released:?}"
+        );
+        assert_eq!(
+            up(&mut r, 5).1,
+            vec![Outcome::HoldThrough {
+                cg_button: 2,
+                down: false
+            }]
         );
     }
 

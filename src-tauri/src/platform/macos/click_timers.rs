@@ -16,7 +16,7 @@ use crate::{
         guard::guarded,
         router::{ClickTimers, TimerKind},
     },
-    platform::event_tap::TapContext,
+    platform::event_tap::{OnUnwind, TapContext},
 };
 
 /// "Not armed": a fire date about 31 years away, also used as the repeat
@@ -119,6 +119,7 @@ fn fire(info: *mut c_void, kind: TimerKind) {
     // before the context is freed.
     let context = unsafe { &*info.cast_const().cast::<TapContext>() };
     guarded(&context.degraded, (), || {
+        let _release = OnUnwind(context.on_panic);
         let Some(handler) = context.handler.get() else {
             return;
         };
@@ -178,6 +179,52 @@ mod tests {
         // SAFETY: reading an immutable CoreFoundation constant.
         let mode = unsafe { kCFRunLoopDefaultMode };
         CFRunLoop::run_in_mode(mode, secs, false);
+    }
+
+    /// Panics on every timer, like a router bug would.
+    struct Panicker;
+    impl TapHandler for Panicker {
+        fn on_scroll(&mut self, _: &ScrollFields) -> ScrollVerdict {
+            ScrollVerdict::Pass
+        }
+        fn on_button(&mut self, _: &ButtonEvent) -> Verdict {
+            Verdict::Pass
+        }
+        fn on_click_timer(&mut self, _: TimerKind) {
+            panic!("router bug");
+        }
+        fn on_key(&mut self, _: &KeyEvent) -> Verdict {
+            Verdict::Pass
+        }
+        fn on_tap_disabled(&mut self, _: TapKind, _: DisabledReason) {}
+        fn on_frame(&mut self) {}
+        fn on_motion(&mut self, _: &crate::input::router::MotionEvent) {}
+        fn on_intents(&mut self) {}
+    }
+
+    static TIMER_RELEASES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+    #[test]
+    fn a_panicking_timer_releases_the_pointer_and_marks_degraded() {
+        let context = TapContext {
+            handler: OnceCell::new(),
+            degraded: Arc::new(AtomicBool::new(false)),
+            on_panic: || {
+                TIMER_RELEASES.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            },
+        };
+        let handler: Rc<RefCell<dyn TapHandler>> = Rc::new(RefCell::new(Panicker));
+        assert!(context.handler.set(handler).is_ok());
+        let run_loop = CFRunLoop::current().expect("test thread has a run loop");
+        let mut timers = MacClickTimers::new(&context, &run_loop);
+
+        timers.arm(TimerKind::Hold, Duration::from_millis(10));
+        run_for(0.1);
+
+        assert_eq!(TIMER_RELEASES.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert!(context.degraded.load(std::sync::atomic::Ordering::SeqCst));
+        timers.disarm(TimerKind::Hold);
+        drop(timers); // invalidates both before `context` goes
     }
 
     #[test]

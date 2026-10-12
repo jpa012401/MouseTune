@@ -323,6 +323,8 @@ impl<C: TapController> InputEngine<C> {
         }
     }
 
+    /// A caught panic's `pointer::release()` can leave `frozen` stale at
+    /// true; that fails safe: at worst one drag goes unfrozen, never stuck.
     fn set_frozen(&mut self, frozen: bool) {
         if self.frozen != frozen {
             self.frozen = frozen;
@@ -445,7 +447,7 @@ impl<C: TapController> TapHandler for InputEngine<C> {
     /// held hold-through buttons get their ups once `on_intents` runs.
     fn on_tap_disabled(&mut self, kind: TapKind, reason: DisabledReason) {
         match kind {
-            TapKind::Buttons | TapKind::Drag => {
+            TapKind::Buttons => {
                 loop {
                     let d = self.router.release_all();
                     if d.outcomes.iter().next().is_none() {
@@ -454,11 +456,15 @@ impl<C: TapController> TapHandler for InputEngine<C> {
                     self.apply(d);
                 }
                 // A drag that was in flight ends via the queued DragEnd.
-                if kind == TapKind::Buttons {
-                    let reset = self.router.reset();
-                    self.apply(reset);
-                    self.router.forget_swallowed();
-                }
+                let reset = self.router.reset();
+                self.apply(reset);
+                self.router.forget_swallowed();
+            }
+            TapKind::Drag => {
+                // Listen-only: it missed movement, not buttons. End the drag
+                // (queued DragEnd unfreezes); presses and hold-throughs stay.
+                let d = self.router.end_drag();
+                self.apply(d);
             }
             TapKind::Keys => {
                 self.recorder.forget_swallowed();
@@ -891,15 +897,41 @@ mod tests {
             buttons: phase4_buttons(),
             ..Config::default()
         };
-        c.buttons.hold_through = vec![crate::config::schema::HoldThrough {
-            button: 6,
-            acts_as: crate::config::schema::MouseButton::Middle,
-        }];
+        // The new bindings drop B6's hold-through: the press in flight keeps it.
+        c.buttons.hold_through = vec![];
         r.engine.set_remaps(compile(&c));
         assert_eq!(r.poster.log(), ["down 2"], "still held");
         assert_eq!(button(&mut r, ButtonKind::Up, 5, 10), Verdict::Swallow);
         r.engine.on_intents();
         assert_eq!(r.poster.log(), ["down 2", "up 2"]);
+    }
+
+    #[test]
+    fn drag_tap_disabled_ends_the_drag_but_keeps_a_hold_through() {
+        let mut r = rig(true);
+        r.engine.apply_device_event(DeviceEvent::Added(mouse(1)));
+        let mut c = Config {
+            buttons: phase4_buttons(),
+            ..Config::default()
+        };
+        c.buttons.drags = vec![crate::config::schema::DragBinding {
+            button: 3,
+            effect: crate::config::schema::DragEffect::ScrollSwipe,
+        }];
+        c.buttons.hold_through = vec![crate::config::schema::HoldThrough {
+            button: 6,
+            acts_as: crate::config::schema::MouseButton::Middle,
+        }];
+        r.engine.set_remaps(compile(&c));
+        button(&mut r, ButtonKind::Down, 5, 10);
+        r.engine.on_intents();
+        press_and_drag(&mut r);
+        assert_eq!(r.freeze.calls(), ["freeze"]);
+        r.engine
+            .on_tap_disabled(TapKind::Drag, DisabledReason::Timeout);
+        r.engine.on_intents();
+        assert_eq!(r.freeze.calls(), ["freeze", "unfreeze"]);
+        assert_eq!(r.poster.log(), ["down 2"]);
     }
 
     #[test]
