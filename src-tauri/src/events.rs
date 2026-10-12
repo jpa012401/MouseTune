@@ -6,6 +6,7 @@ use tauri::AppHandle;
 use tauri_specta::Event;
 
 use crate::{
+    config::{schema::Config, store::ConfigObserver},
     input::{
         engine::{EngineObserver, EngineSnapshot, ScrollStats},
         taps::TapSet,
@@ -51,6 +52,20 @@ impl EngineObserver for EmitInputStatus {
         };
         if let Err(err) = event.emit(&self.0) {
             tracing::warn!(%err, "failed to emit input-status-changed");
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type, Event)]
+pub struct ConfigChanged(pub Config);
+
+/// Forwards saved settings to the UI.
+pub struct EmitConfigChanged(pub AppHandle);
+
+impl ConfigObserver for EmitConfigChanged {
+    fn config_changed(&self, config: &Config) {
+        if let Err(err) = ConfigChanged(config.clone()).emit(&self.0) {
+            tracing::warn!(%err, "failed to emit config-changed");
         }
     }
 }

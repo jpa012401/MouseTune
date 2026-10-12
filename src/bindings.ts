@@ -11,15 +11,38 @@ export const commands = {
 	requestAccessibility: () => typedError<null, string>(__TAURI_INVOKE("request_accessibility")),
 	/**  Clears a stale TCC entry, then asks again. */
 	resetAccessibility: () => typedError<null, string>(__TAURI_INVOKE("reset_accessibility")),
+	getConfig: () => __TAURI_INVOKE<ConfigView>("get_config"),
+	/**  Saves the settings and returns what was saved. */
+	setConfig: (config: Config) => typedError<Config, ConfigError>(__TAURI_INVOKE("set_config", { config })),
+	/**  Saves the default settings and returns them. */
+	resetConfig: () => typedError<Config, ConfigError>(__TAURI_INVOKE("reset_config")),
+	/**  The user has seen the startup recovery notice. */
+	dismissConfigRecovery: () => __TAURI_INVOKE<void>("dismiss_config_recovery"),
 };
 
 /** Events */
 export const events = {
+	configChanged: makeEvent<ConfigChanged>("config-changed"),
 	inputStatusChanged: makeEvent<InputStatusChanged>("input-status-changed"),
 	permissionChanged: makeEvent<PermissionChanged>("permission-changed"),
 };
 
 /* Types */
+export type Config = {
+	version: number,
+	general?: General,
+};
+
+export type ConfigChanged = Config;
+
+export type ConfigError = { kind: "Io"; message: string } | { kind: "UnsupportedVersion"; found: number; expected: number };
+
+/**  Settings plus any startup recovery the UI should mention. */
+export type ConfigView = {
+	config: Config,
+	recovery: RecoveryNotice | null,
+};
+
 /**  A tracked mouse as the UI sees it. */
 export type Device = {
 	/**  IORegistry entry ID in hex; stable while the device stays connected. */
@@ -28,6 +51,13 @@ export type Device = {
 	manufacturer: string,
 	button_count: number,
 	has_wheel: boolean,
+};
+
+export type General = {
+	/**  Kill switch for button features. */
+	buttons_enabled?: boolean,
+	/**  Kill switch for scroll features. */
+	scroll_enabled?: boolean,
 };
 
 export type InputStatus = {
@@ -50,6 +80,12 @@ export type OsVersion = {
 
 export type PermissionChanged = {
 	accessibility_trusted: boolean,
+};
+
+/**  The settings file was unusable at startup and defaults were loaded. */
+export type RecoveryNotice = {
+	/**  File name of the kept copy of the unusable file; absent when no copy could be kept. */
+	backup_file: string | null,
 };
 
 export type ScrollStats = {

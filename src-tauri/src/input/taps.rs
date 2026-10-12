@@ -48,8 +48,7 @@ impl TapSet {
     }
 }
 
-/// What the configuration needs. Until the config store exists (Phase 3)
-/// the app asks for everything (`TapDemand::ALL`).
+/// What the configuration needs (`config::schema::tap_demand`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TapDemand {
     pub buttons: bool,
@@ -57,6 +56,7 @@ pub struct TapDemand {
     pub flags: bool,
 }
 
+#[cfg(test)]
 impl TapDemand {
     pub const ALL: TapDemand = TapDemand {
         buttons: true,

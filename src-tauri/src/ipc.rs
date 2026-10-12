@@ -3,7 +3,7 @@
 //! Commands are thin adapters: they pull dependencies from managed state and
 //! delegate to tested use cases.
 
-use std::sync::{Arc, atomic::Ordering};
+use std::sync::{Arc, Mutex, PoisonError, atomic::Ordering};
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -11,6 +11,10 @@ use tauri::{AppHandle, State};
 
 use crate::{
     accessibility::{self, Accessibility},
+    config::{
+        schema::Config,
+        store::{ConfigError, ConfigStore, Recovery},
+    },
     input::{
         engine::{EngineSnapshot, ScrollStats},
         taps::TapSet,
@@ -20,6 +24,7 @@ use crate::{
 };
 
 type AccessibilityState<'a> = State<'a, Arc<dyn Accessibility>>;
+type ConfigState<'a> = State<'a, Mutex<ConfigStore>>;
 
 #[derive(Debug, Clone, Serialize, Type)]
 pub struct Status {
@@ -87,6 +92,66 @@ pub fn input_status(snapshot: &EngineSnapshot, stats: ScrollStats, degraded: boo
     }
 }
 
+/// Settings plus any startup recovery the UI should mention.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+pub struct ConfigView {
+    pub config: Config,
+    pub recovery: Option<RecoveryNotice>,
+}
+
+/// The settings file was unusable at startup and defaults were loaded.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+pub struct RecoveryNotice {
+    /// File name of the kept copy of the unusable file; absent when no copy could be kept.
+    pub backup_file: Option<String>,
+}
+
+pub fn config_view(config: &Config, recovery: Option<&Recovery>) -> ConfigView {
+    ConfigView {
+        config: config.clone(),
+        recovery: recovery.map(|r| RecoveryNotice {
+            backup_file: match r {
+                Recovery::BackedUp { file_name } => Some(file_name.clone()),
+                Recovery::BackupFailed => None,
+            },
+        }),
+    }
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn get_config(store: ConfigState<'_>) -> ConfigView {
+    let store = store.lock().unwrap_or_else(PoisonError::into_inner);
+    config_view(store.current(), store.recovery())
+}
+
+/// Saves the settings and returns what was saved.
+#[tauri::command]
+#[specta::specta]
+pub fn set_config(store: ConfigState<'_>, config: Config) -> Result<Config, ConfigError> {
+    store
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .update(config)
+}
+
+/// Saves the default settings and returns them.
+#[tauri::command]
+#[specta::specta]
+pub fn reset_config(store: ConfigState<'_>) -> Result<Config, ConfigError> {
+    store.lock().unwrap_or_else(PoisonError::into_inner).reset()
+}
+
+/// The user has seen the startup recovery notice.
+#[tauri::command]
+#[specta::specta]
+pub fn dismiss_config_recovery(store: ConfigState<'_>) {
+    store
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .dismiss_recovery();
+}
+
 /// Shows the system prompt (first time only) and opens the Accessibility pane.
 #[tauri::command]
 #[specta::specta]
@@ -113,6 +178,34 @@ mod tests {
         },
         test_support::mouse,
     };
+
+    #[test]
+    fn config_view_reports_a_kept_backup() {
+        let view = config_view(
+            &Config::default(),
+            Some(&Recovery::BackedUp {
+                file_name: "config.1.bak.json".into(),
+            }),
+        );
+        assert_eq!(
+            view.recovery,
+            Some(RecoveryNotice {
+                backup_file: Some("config.1.bak.json".into())
+            })
+        );
+        assert_eq!(view.config, Config::default());
+    }
+
+    #[test]
+    fn config_view_reports_a_failed_backup() {
+        let view = config_view(&Config::default(), Some(&Recovery::BackupFailed));
+        assert_eq!(view.recovery, Some(RecoveryNotice { backup_file: None }));
+    }
+
+    #[test]
+    fn config_view_without_recovery_has_no_notice() {
+        assert_eq!(config_view(&Config::default(), None).recovery, None);
+    }
 
     #[test]
     fn input_status_exposes_devices_without_internal_ids() {

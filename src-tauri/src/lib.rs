@@ -18,7 +18,7 @@ mod test_support;
 mod tray;
 mod window;
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use accessibility::{Accessibility, SystemAccessibility};
 use permission_monitor::PermissionMonitor;
@@ -32,10 +32,15 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             ipc::get_status,
             ipc::request_accessibility,
             ipc::reset_accessibility,
+            ipc::get_config,
+            ipc::set_config,
+            ipc::reset_config,
+            ipc::dismiss_config_recovery,
         ])
         .events(tauri_specta::collect_events![
             events::PermissionChanged,
             events::InputStatusChanged,
+            events::ConfigChanged,
         ])
 }
 
@@ -69,17 +74,30 @@ pub fn run() {
             let accessibility: Arc<dyn Accessibility> = Arc::new(SystemAccessibility);
             app.manage(Arc::clone(&accessibility));
 
+            let config_path = app.path().app_config_dir()?.join("config.json");
+            let mut store = config::store::ConfigStore::load(Box::new(
+                config::system_file::SystemConfigFile::new(config_path),
+            ));
+            let general = store.current().general.clone();
+
             // Read once so the engine and the tray start from the same value.
             // PermissionMonitor reads trust itself and converges on its next poll.
             let trusted = accessibility.is_trusted();
             let input = input::thread::spawn(
                 trusted,
-                input::taps::TapDemand::ALL,
+                config::schema::tap_demand(store.current()),
                 Box::new(events::EmitInputStatus(app.handle().clone())),
             );
             app.manage(Arc::clone(&input));
 
-            tray::build(app.handle(), trusted)?;
+            tray::build(app.handle(), trusted, &general)?;
+            store.subscribe(Box::new(input::thread::InputConfigBridge(Arc::clone(
+                &input,
+            ))));
+            store.subscribe(Box::new(tray::TrayConfigStatus(app.handle().clone())));
+            store.subscribe(Box::new(events::EmitConfigChanged(app.handle().clone())));
+            app.manage(Mutex::new(store));
+
             PermissionMonitor::new(
                 Arc::clone(&accessibility),
                 vec![
@@ -94,6 +112,8 @@ pub fn run() {
                 version = app.package_info().version.to_string(),
                 os = %platform::os_version::current(),
                 accessibility = trusted,
+                buttons_enabled = general.buttons_enabled,
+                scroll_enabled = general.scroll_enabled,
                 "MouseTune started"
             );
 
