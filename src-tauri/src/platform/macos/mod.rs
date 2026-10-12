@@ -6,4 +6,6 @@ pub mod hid;
 pub mod input_loop;
 pub mod os_version;
 pub mod permissions;
+#[allow(dead_code)] // Wired into the engine in Phase 5a Task 8.
+pub mod scroll_poster;
 pub mod symbolic_hotkeys;

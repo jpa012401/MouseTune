@@ -64,6 +64,40 @@ pub fn scroll_fields(event: &CGEvent) -> ScrollFields {
     }
 }
 
+/// Negates the chosen axes' line, fixed-point and point deltas on the event
+/// itself (Phase 5a design §2). Allocation-free and panic-free: runs in the
+/// scroll tap callback.
+#[allow(dead_code)] // Wired into the engine in Phase 5a Task 8.
+pub fn invert_scroll(event: &CGEvent, vertical: bool, horizontal: bool) {
+    let axes = [
+        (
+            vertical,
+            CGEventField::ScrollWheelEventDeltaAxis1,
+            CGEventField::ScrollWheelEventFixedPtDeltaAxis1,
+            CGEventField::ScrollWheelEventPointDeltaAxis1,
+        ),
+        (
+            horizontal,
+            CGEventField::ScrollWheelEventDeltaAxis2,
+            CGEventField::ScrollWheelEventFixedPtDeltaAxis2,
+            CGEventField::ScrollWheelEventPointDeltaAxis2,
+        ),
+    ];
+    for (flip, line, fixed, point) in axes {
+        if !flip {
+            continue;
+        }
+        // CoreGraphics rewrites the sibling fields when one is set, so read
+        // all three before writing any, then write line, fixed, point.
+        let get = |field| CGEvent::integer_value_field(Some(event), field);
+        let (line_value, point_value) = (get(line), get(point));
+        let fine = CGEvent::double_value_field(Some(event), fixed);
+        CGEvent::set_integer_value_field(Some(event), line, line_value.wrapping_neg());
+        CGEvent::set_double_value_field(Some(event), fixed, -fine);
+        CGEvent::set_integer_value_field(Some(event), point, point_value.wrapping_neg());
+    }
+}
+
 /// Copies a button tap event's fields. A button number that doesn't fit a
 /// `u8` saturates to 255, which the router passes as out of range.
 pub fn button_event(event_type: CGEventType, event: &CGEvent) -> ButtonEvent {
@@ -652,6 +686,46 @@ mod tests {
         assert_eq!(tap_options(TapKind::Flags), CGEventTapOptions::ListenOnly);
         assert_eq!(tap_options(TapKind::Buttons), CGEventTapOptions::Default);
         assert_eq!(tap_options(TapKind::Scroll), CGEventTapOptions::Default);
+    }
+
+    #[test]
+    fn inverting_vertical_negates_only_axis_1_in_place() {
+        let event =
+            CGEvent::new_scroll_wheel_event2(None, CGScrollEventUnit::Line, 2, -3, 1, 0).unwrap();
+        CGEvent::set_double_value_field(
+            Some(&event),
+            CGEventField::ScrollWheelEventFixedPtDeltaAxis1,
+            -30.5,
+        );
+        CGEvent::set_integer_value_field(
+            Some(&event),
+            CGEventField::ScrollWheelEventPointDeltaAxis1,
+            -30,
+        );
+        CGEvent::set_integer_value_field(
+            Some(&event),
+            CGEventField::ScrollWheelEventPointDeltaAxis2,
+            10,
+        );
+        invert_scroll(&event, true, false);
+        let int = |f| CGEvent::integer_value_field(Some(&event), f);
+        assert_eq!(int(CGEventField::ScrollWheelEventDeltaAxis1), 3);
+        assert_eq!(int(CGEventField::ScrollWheelEventPointDeltaAxis1), 30);
+        let fine = CGEvent::double_value_field(
+            Some(&event),
+            CGEventField::ScrollWheelEventFixedPtDeltaAxis1,
+        );
+        assert!((fine - 30.5).abs() < 1e-3, "{fine}");
+        assert_eq!(
+            int(CGEventField::ScrollWheelEventDeltaAxis2),
+            1,
+            "axis 2 untouched"
+        );
+        assert_eq!(
+            int(CGEventField::ScrollWheelEventPointDeltaAxis2),
+            10,
+            "axis 2 untouched"
+        );
     }
 
     #[test]
