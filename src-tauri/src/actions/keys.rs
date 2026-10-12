@@ -84,9 +84,20 @@ pub fn key_combo_strokes(binding: KeyBinding) -> Vec<KeyStroke> {
     strokes
 }
 
+/// The label the UI shows for a captured key: the typed characters,
+/// upper-cased.
+pub fn key_label(_key_code: u16, chars: &[u16]) -> String {
+    String::from_utf16_lossy(chars).trim().to_uppercase()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_printable_key_is_labelled_by_its_upper_cased_character() {
+        assert_eq!(key_label(1, &[0x73]), "S");
+    }
 
     #[test]
     fn modifier_key_codes_are_recognised() {

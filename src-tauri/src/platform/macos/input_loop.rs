@@ -21,6 +21,7 @@ use objc2_core_foundation::{
 use crate::{
     actions::ActionSink,
     input::{
+        capture::SystemClock,
         engine::{ButtonSetup, EngineObserver, InputEngine, TapHandler},
         guard::guarded,
         remaps::CompiledRemaps,
@@ -151,6 +152,7 @@ fn run_input_thread(
             timers: Box::new(timers),
             sink: setup.sink,
             counters: Arc::clone(&shared.actions),
+            clock: Box::new(SystemClock),
         },
         setup.observer,
     )));

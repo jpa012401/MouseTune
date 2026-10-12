@@ -6,17 +6,21 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
+    time::Instant,
 };
 
 use crate::{
     accessibility::Accessibility,
     actions::{
-        ActionSink, CompiledAction, Job, OutputError,
+        ActionSink, CompiledAction, Job, KeyCapture, NoticeObserver, OutputError,
         keys::{KeyBinding, KeyStroke},
         perform::{EventPoster, FrontmostApp, HotkeyState, SymbolicHotkeys},
     },
     config::schema::Action,
-    input::router::{ClickTimers, TimerKind},
+    input::{
+        capture::Clock,
+        router::{ClickTimers, TimerKind},
+    },
 };
 
 /// The config form of a compiled action, for building `Remap`s in tests.
@@ -349,5 +353,39 @@ impl ClickTimers for FakeTimers {
     }
     fn disarm(&mut self, kind: TimerKind) {
         self.0.lock().unwrap().push(format!("disarm {kind:?}"));
+    }
+}
+
+/// A clock that moves only when told. Clones share the time.
+#[derive(Clone)]
+pub struct FakeClock(Arc<Mutex<Instant>>);
+impl FakeClock {
+    pub fn new() -> Self {
+        Self(Arc::new(Mutex::new(Instant::now())))
+    }
+    pub fn advance(&self, by: std::time::Duration) {
+        *self.0.lock().unwrap() += by;
+    }
+}
+impl Clock for FakeClock {
+    fn now(&self) -> Instant {
+        *self.0.lock().unwrap()
+    }
+}
+
+/// Logs each notice: "button 3", "key 1 [Shift, Command] S", "cancelled".
+pub struct FakeNotices(pub OutputLog);
+impl NoticeObserver for FakeNotices {
+    fn button_captured(&self, button: u8) {
+        self.0.push(format!("button {button}"));
+    }
+    fn key_captured(&self, c: KeyCapture) {
+        self.0.push(format!(
+            "key {} {:?} {}",
+            c.key_code, c.modifiers, c.key_label
+        ));
+    }
+    fn key_capture_cancelled(&self) {
+        self.0.push("cancelled".into());
     }
 }

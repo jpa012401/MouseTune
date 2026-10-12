@@ -1,5 +1,5 @@
 use super::{
-    CompiledAction, Job, OutputError,
+    CompiledAction, Job, NoticeObserver, OutputError, deliver,
     keys::{KeyBinding, KeyStroke, ModifierMask, key_combo_strokes},
 };
 use crate::config::schema::{NavDirection, SymbolicHotkeyId};
@@ -29,6 +29,7 @@ pub struct Outputs {
     pub hotkeys: Option<Box<dyn SymbolicHotkeys>>,
     pub poster: Box<dyn EventPoster>,
     pub frontmost: Box<dyn FrontmostApp>,
+    pub notices: Box<dyn NoticeObserver>,
 }
 
 const NO_KEY: u16 = 0xFFFF;
@@ -127,6 +128,10 @@ pub fn perform(job: Job, out: &Outputs) -> Result<(), OutputError> {
         Job::Perform(CompiledAction::SymbolicHotkey(id)) => symbolic_hotkey(id, out),
         Job::Perform(CompiledAction::Navigate(direction)) => navigate(direction, out),
         Job::Perform(CompiledAction::KeyCombo(binding)) => post(binding, out),
+        Job::Notice(notice) => {
+            deliver(notice, out.notices.as_ref());
+            Ok(())
+        }
     }
 }
 
@@ -188,7 +193,7 @@ fn post(binding: KeyBinding, out: &Outputs) -> Result<(), OutputError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{FakeFrontmost, FakeHotkeys, FakePoster, OutputLog};
+    use crate::test_support::{FakeFrontmost, FakeHotkeys, FakeNotices, FakePoster, OutputLog};
 
     fn rig(hotkeys: Option<FakeHotkeys>, app: Option<&'static str>, log: &OutputLog) -> Outputs {
         Outputs {
@@ -198,6 +203,7 @@ mod tests {
                 panics: false,
             }),
             frontmost: Box::new(FakeFrontmost(app)),
+            notices: Box::new(FakeNotices(log.clone())),
         }
     }
     fn hotkeys(log: &OutputLog, state: Option<HotkeyState>) -> FakeHotkeys {

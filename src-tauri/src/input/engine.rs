@@ -11,13 +11,19 @@ use serde::Serialize;
 use specta::Type;
 
 use crate::{
-    actions::{ActionCounters, ActionSink, Job},
+    actions::{ActionCounters, ActionSink, Job, Notice},
     input::{
+        capture::{ButtonCapture, Clock},
         devices::{DeviceEvent, DeviceInfo, DeviceRegistry},
-        filter::{ScrollClass, ScrollFields, classify_scroll, is_foreign_button_down},
+        filter::{
+            MOUSETUNE_EVENT_TAG, ScrollClass, ScrollFields, classify_scroll, is_foreign_button_down,
+        },
         guard::{DisabledAction, DisabledReason, on_tap_disabled},
         remaps::CompiledRemaps,
-        router::{ButtonEvent, ButtonRouter, ClickTimers, Decision, Outcome, TimerKind, Verdict},
+        router::{
+            ButtonEvent, ButtonKind, ButtonRouter, ClickTimers, Decision, Outcome, TimerKind,
+            Verdict,
+        },
         taps::{TapController, TapDemand, TapKind, TapManager, TapSet, desired_taps},
     },
 };
@@ -77,12 +83,14 @@ pub trait TapHandler {
 }
 
 /// What the engine needs to route buttons: the compiled bindings, the click
-/// timers it arms, and where fired actions go.
+/// timers it arms, where fired actions go, and the clock capture mode's
+/// deadline is checked against.
 pub struct ButtonSetup {
     pub remaps: CompiledRemaps,
     pub timers: Box<dyn ClickTimers>,
     pub sink: Box<dyn ActionSink>,
     pub counters: Arc<ActionCounters>,
+    pub clock: Box<dyn Clock>,
 }
 
 pub struct InputEngine<C: TapController> {
@@ -95,6 +103,8 @@ pub struct InputEngine<C: TapController> {
     timers: Box<dyn ClickTimers>,
     sink: Box<dyn ActionSink>,
     actions: Arc<ActionCounters>,
+    capture: ButtonCapture,
+    clock: Box<dyn Clock>,
     observer: Box<dyn EngineObserver>,
     last_published: Option<EngineSnapshot>,
 }
@@ -118,6 +128,8 @@ impl<C: TapController> InputEngine<C> {
             timers: buttons.timers,
             sink: buttons.sink,
             actions: buttons.counters,
+            capture: ButtonCapture::default(),
+            clock: buttons.clock,
             observer,
             last_published: None,
         }
@@ -142,6 +154,16 @@ impl<C: TapController> InputEngine<C> {
     pub fn set_remaps(&mut self, remaps: CompiledRemaps) {
         let decision = self.router.set_remaps(remaps);
         self.apply(decision);
+    }
+
+    /// The next press of mouse button 3 or higher is reported as a
+    /// `ButtonCaptured` notice instead of acting, within `CAPTURE_TIMEOUT`.
+    pub fn start_capture(&mut self) {
+        self.capture.start(self.clock.now());
+    }
+
+    pub fn stop_capture(&mut self) {
+        self.capture.stop();
     }
 
     pub fn apply_device_event(&mut self, event: DeviceEvent) {
@@ -221,8 +243,18 @@ impl<C: TapController> TapHandler for InputEngine<C> {
     }
 
     fn on_button(&mut self, event: &ButtonEvent) -> Verdict {
+        // The clock is read only while capture is armed.
         let decision = if is_foreign_button_down(event, &self.devices) {
             self.router.on_foreign_down(event.button)
+        } else if event.kind == ButtonKind::Down
+            && event.user_data != MOUSETUNE_EVENT_TAG
+            && self.capture.is_armed()
+            && self.capture.take(event.button, self.clock.now())
+        {
+            self.submit(Job::Notice(Notice::ButtonCaptured {
+                button: event.button + 1,
+            }));
+            self.router.on_captured_down(event.button)
         } else {
             self.router.on_button(event)
         };
@@ -251,18 +283,14 @@ impl<C: TapController> TapHandler for InputEngine<C> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Mutex;
+    use std::{sync::Mutex, time::Duration};
 
     use super::*;
     use crate::{
-        actions::{CompiledAction, Job},
+        actions::CompiledAction,
         config::schema::{Config, NavDirection, SymbolicHotkeyId},
-        input::{
-            filter::{MOUSETUNE_EVENT_TAG, PassReason},
-            remaps::compile,
-            router::ButtonKind,
-        },
-        test_support::{FakeSink, FakeTapController, FakeTimers, apple_trackpad, mouse},
+        input::{filter::PassReason, remaps::compile},
+        test_support::{FakeClock, FakeSink, FakeTapController, FakeTimers, apple_trackpad, mouse},
     };
 
     const ALL_ON: TapSet = TapSet {
@@ -297,6 +325,7 @@ mod tests {
         timers: FakeTimers,
         sink: FakeSink,
         actions: Arc<ActionCounters>,
+        clock: FakeClock,
     }
 
     fn rig(trusted: bool) -> Rig {
@@ -306,6 +335,7 @@ mod tests {
         let timers = FakeTimers::default();
         let sink = FakeSink::default();
         let actions = Arc::new(ActionCounters::default());
+        let clock = FakeClock::new();
         let mut engine = InputEngine::new(
             taps.clone(),
             trusted,
@@ -316,6 +346,7 @@ mod tests {
                 timers: Box::new(timers.clone()),
                 sink: Box::new(sink.clone()),
                 counters: Arc::clone(&actions),
+                clock: Box::new(clock.clone()),
             },
             Box::new(published.clone()),
         );
@@ -328,7 +359,12 @@ mod tests {
             timers,
             sink,
             actions,
+            clock,
         }
+    }
+
+    fn jobs(r: &Rig) -> Vec<Job> {
+        r.sink.jobs.lock().unwrap().clone()
     }
 
     fn button(r: &mut Rig, kind: ButtonKind, button: u8, sender_id: u64) -> Verdict {
@@ -346,6 +382,67 @@ mod tests {
     const DESKTOP: Job = Job::Perform(CompiledAction::SymbolicHotkey(
         SymbolicHotkeyId::ShowDesktop,
     ));
+    const BACK: Job = Job::Perform(CompiledAction::Navigate(NavDirection::Back));
+    const CAPTURED_3: Job = Job::Notice(Notice::ButtonCaptured { button: 3 });
+
+    #[test]
+    fn a_captured_press_is_swallowed_reported_once_and_ends_capture() {
+        let mut r = rig(true);
+        r.engine.start_capture();
+        assert_eq!(button(&mut r, ButtonKind::Down, 2, 10), Verdict::Swallow);
+        assert_eq!(button(&mut r, ButtonKind::Up, 2, 10), Verdict::Swallow);
+        assert_eq!(jobs(&r), vec![CAPTURED_3]);
+        button(&mut r, ButtonKind::Down, 2, 10);
+        button(&mut r, ButtonKind::Up, 2, 10);
+        assert_eq!(jobs(&r).last(), Some(&MC));
+    }
+
+    #[test]
+    fn after_the_deadline_a_press_routes_normally() {
+        let mut r = rig(true);
+        r.engine.start_capture();
+        r.clock.advance(Duration::from_millis(10_001));
+        assert_eq!(button(&mut r, ButtonKind::Down, 3, 10), Verdict::Swallow);
+        assert_eq!(jobs(&r), vec![BACK]);
+    }
+
+    #[test]
+    fn foreign_and_tagged_presses_are_never_captured() {
+        let mut r = rig(true);
+        r.engine
+            .apply_device_event(DeviceEvent::Added(apple_trackpad(2)));
+        r.engine.start_capture();
+        assert_eq!(button(&mut r, ButtonKind::Down, 2, 20), Verdict::Pass);
+        let tagged = ButtonEvent {
+            kind: ButtonKind::Down,
+            button: 2,
+            sender_id: 10,
+            user_data: MOUSETUNE_EVENT_TAG,
+            mouse_subtype: 0,
+        };
+        assert_eq!(r.engine.on_button(&tagged), Verdict::Pass);
+        assert!(jobs(&r).is_empty());
+        button(&mut r, ButtonKind::Down, 2, 10);
+        assert_eq!(jobs(&r), vec![CAPTURED_3]);
+    }
+
+    #[test]
+    fn stop_capture_returns_the_button_to_its_remap() {
+        let mut r = rig(true);
+        r.engine.start_capture();
+        r.engine.stop_capture();
+        button(&mut r, ButtonKind::Down, 3, 10);
+        assert_eq!(jobs(&r), vec![BACK]);
+    }
+
+    #[test]
+    fn a_full_queue_drops_the_capture_result_but_still_swallows() {
+        let mut r = rig(true);
+        r.sink.full.store(true, Ordering::SeqCst);
+        r.engine.start_capture();
+        assert_eq!(button(&mut r, ButtonKind::Down, 2, 10), Verdict::Swallow);
+        assert_eq!(r.actions.stats().dropped, 1);
+    }
 
     #[test]
     fn a_middle_click_swallows_and_submits_mission_control() {

@@ -7,7 +7,7 @@ use std::{
 use crossbeam_channel::Receiver;
 
 use super::{
-    ActionCounters, Job,
+    ActionCounters, Job, deliver,
     perform::{Outputs, perform},
 };
 
@@ -18,6 +18,13 @@ pub fn run(jobs: Receiver<Job>, out: Outputs, counters: Arc<ActionCounters>) {
         tracing::warn!("symbolic hotkey functions unavailable; using default shortcuts (degraded)");
     }
     for job in jobs {
+        // Notices are UI results, not actions: delivered, never counted.
+        if let Job::Notice(notice) = job {
+            if catch_unwind(AssertUnwindSafe(|| deliver(notice, out.notices.as_ref()))).is_err() {
+                tracing::error!(?notice, "notice observer panicked");
+            }
+            continue;
+        }
         match catch_unwind(AssertUnwindSafe(|| perform(job, &out))) {
             Ok(Ok(())) => counters.record_performed(),
             Ok(Err(err)) => {
@@ -44,13 +51,13 @@ mod tests {
     use super::*;
     use crate::{
         actions::{
-            ActionSink, ActionStats, CompiledAction,
+            ActionSink, ActionStats, CompiledAction, Notice, RawKeyCapture,
             keys::{KeyBinding, ModifierMask},
             perform::HotkeyState,
             queue::queue,
         },
         config::schema::{NavDirection, SymbolicHotkeyId},
-        test_support::{FakeFrontmost, FakeHotkeys, FakePoster, OutputLog},
+        test_support::{FakeFrontmost, FakeHotkeys, FakeNotices, FakePoster, OutputLog},
     };
 
     fn outputs(log: &OutputLog, panics: bool) -> Outputs {
@@ -61,6 +68,7 @@ mod tests {
                 panics,
             }),
             frontmost: Box::new(FakeFrontmost(None)),
+            notices: Box::new(FakeNotices(log.clone())),
         }
     }
 
@@ -110,6 +118,7 @@ mod tests {
                 panics: false,
             }),
             frontmost: Box::new(FakeFrontmost(None)),
+            notices: Box::new(FakeNotices(log.clone())),
         };
         let counters = Arc::new(ActionCounters::default());
         run(rx, out, Arc::clone(&counters));
@@ -144,5 +153,27 @@ mod tests {
                 failed: 1
             }
         );
+    }
+
+    #[test]
+    fn notices_reach_the_observer_and_are_not_counted_as_actions() {
+        let log = OutputLog::default();
+        let (sink, rx) = queue();
+        sink.submit(Job::Notice(Notice::ButtonCaptured { button: 3 }));
+        sink.submit(Job::Notice(Notice::KeyCaptured(RawKeyCapture {
+            key_code: 1,
+            modifiers: ModifierMask(0x120000),
+            chars: [0x73, 0, 0, 0],
+            chars_len: 1,
+        })));
+        sink.submit(Job::Notice(Notice::KeyCaptureCancelled));
+        drop(sink);
+        let counters = Arc::new(ActionCounters::default());
+        run(rx, outputs(&log, false), Arc::clone(&counters));
+        assert_eq!(
+            log.all(),
+            ["button 3", "key 1 [Shift, Command] S", "cancelled"]
+        );
+        assert_eq!(counters.stats(), ActionStats::default());
     }
 }

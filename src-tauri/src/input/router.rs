@@ -176,6 +176,15 @@ impl ButtonRouter {
         Decision::pass()
     }
 
+    /// A down taken by capture mode: it ends any cycle without firing and
+    /// is swallowed, so its up is too. The caller guarantees `button < 32`.
+    pub fn on_captured_down(&mut self, button: u8) -> Decision {
+        let mut d = Decision::swallow();
+        self.end(&mut d.outcomes);
+        self.swallowed |= 1 << button;
+        d
+    }
+
     pub fn on_timer(&mut self, kind: TimerKind) -> Decision {
         let mut d = Decision::pass();
         let armed = match kind {
@@ -641,6 +650,34 @@ mod tests {
     fn an_out_of_range_foreign_down_passes() {
         let mut r = defaults();
         assert_eq!(split(r.on_foreign_down(40)), (Verdict::Pass, vec![]));
+    }
+
+    #[test]
+    fn a_captured_down_is_swallowed_and_so_is_its_up() {
+        let mut r = defaults();
+        assert_eq!(
+            split(r.on_captured_down(MIDDLE)),
+            (Verdict::Swallow, vec![])
+        );
+        assert_eq!(up(&mut r, MIDDLE), (Verdict::Swallow, vec![]));
+    }
+
+    #[test]
+    fn capturing_mid_cycle_ends_that_cycle_without_firing() {
+        let mut r = defaults();
+        down(&mut r, MIDDLE); // arms expiry + hold
+        assert_eq!(
+            split(r.on_captured_down(3)),
+            (
+                Verdict::Swallow,
+                vec![
+                    Outcome::Disarm(TimerKind::Hold),
+                    Outcome::Disarm(TimerKind::Expiry)
+                ]
+            )
+        );
+        assert_eq!(timer(&mut r, TimerKind::Hold), vec![]);
+        assert_eq!(up(&mut r, MIDDLE), (Verdict::Swallow, vec![]));
     }
 
     #[test]

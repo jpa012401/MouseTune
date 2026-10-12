@@ -31,6 +31,22 @@ use tauri::{Manager, RunEvent};
 /// The `mt-exec` thread, joined on exit after `mt-input` has stopped.
 struct ExecThread(Mutex<Option<JoinHandle<()>>>);
 
+/// Logs capture results until they become UI events.
+// Replaced in Phase 4b Task 7.
+struct LogNotices;
+
+impl actions::NoticeObserver for LogNotices {
+    fn button_captured(&self, button: u8) {
+        tracing::info!(button, "button captured");
+    }
+    fn key_captured(&self, capture: actions::KeyCapture) {
+        tracing::info!(?capture, "key captured");
+    }
+    fn key_capture_cancelled(&self) {
+        tracing::info!("key capture cancelled");
+    }
+}
+
 /// Single registry of IPC commands and events. Shared by the app and the
 /// bindings-export test so `src/bindings.ts` can't drift from the backend.
 fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
@@ -107,6 +123,7 @@ pub fn run() {
                         .map(|h| Box::new(h) as Box<dyn actions::perform::SymbolicHotkeys>),
                     poster: Box::new(platform::event_poster::MacEventPoster),
                     frontmost: Box::new(platform::frontmost_app::MacFrontmostApp),
+                    notices: Box::new(LogNotices),
                 },
                 Arc::clone(&input.shared().actions),
             );

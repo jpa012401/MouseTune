@@ -59,6 +59,84 @@ pub enum Job {
     Click {
         button: u8,
     },
+    /// A result for the settings UI, not an action.
+    Notice(Notice),
+}
+
+/// Results that leave the tap callbacks for the UI. Plain copies, so the
+/// hot path builds them without the heap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Notice {
+    /// 1-based, as the config and UI count buttons (3 = middle).
+    ButtonCaptured { button: u8 },
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the key recorder produces it in Phase 4b Task 5")
+    )]
+    KeyCaptured(RawKeyCapture),
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the key recorder produces it in Phase 4b Task 5")
+    )]
+    KeyCaptureCancelled,
+}
+
+/// A captured key as the key tap copies it out: the typed characters are
+/// UTF-16 units, `chars_len` of them valid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RawKeyCapture {
+    pub key_code: u16,
+    pub modifiers: ModifierMask,
+    pub chars: [u16; 4],
+    pub chars_len: u8,
+}
+
+/// A captured key as the UI shows it, built on `mt-exec`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyCapture {
+    pub key_code: u16,
+    pub modifiers: Vec<KeyModifier>,
+    pub key_label: String,
+}
+
+/// Port: where `mt-exec` hands notices (Tauri events, from Phase 4b Task 7).
+pub trait NoticeObserver: Send {
+    fn button_captured(&self, button: u8);
+    fn key_captured(&self, capture: KeyCapture);
+    fn key_capture_cancelled(&self);
+}
+
+/// Turns a notice into its observer call. Runs on `mt-exec`, so it may allocate.
+pub fn deliver(notice: Notice, observer: &dyn NoticeObserver) {
+    match notice {
+        Notice::ButtonCaptured { button } => observer.button_captured(button),
+        Notice::KeyCaptured(raw) => {
+            let chars = raw
+                .chars
+                .get(..usize::from(raw.chars_len))
+                .unwrap_or(&raw.chars);
+            observer.key_captured(KeyCapture {
+                key_code: raw.key_code,
+                modifiers: modifier_names(raw.modifiers),
+                key_label: keys::key_label(raw.key_code, chars),
+            });
+        }
+        Notice::KeyCaptureCancelled => observer.key_capture_cancelled(),
+    }
+}
+
+/// The modifier names in a mask, in display order (⌃⌥⇧⌘).
+fn modifier_names(mask: ModifierMask) -> Vec<KeyModifier> {
+    [
+        (ModifierMask::CONTROL, KeyModifier::Control),
+        (ModifierMask::OPTION, KeyModifier::Option),
+        (ModifierMask::SHIFT, KeyModifier::Shift),
+        (ModifierMask::COMMAND, KeyModifier::Command),
+    ]
+    .into_iter()
+    .filter(|(flag, _)| mask.contains(*flag))
+    .map(|(_, name)| name)
+    .collect()
 }
 
 /// Port the input engine submits through. `false` = dropped (queue full or closed).
