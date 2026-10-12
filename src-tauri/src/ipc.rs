@@ -24,6 +24,9 @@ use crate::{
 };
 
 type AccessibilityState<'a> = State<'a, Arc<dyn Accessibility>>;
+// Commands using this must stay synchronous: observers (tray `set_checked`,
+// `emit`) dispatch to the main thread while the store lock is held, which is
+// only safe because sync commands and menu events already run there.
 type ConfigState<'a> = State<'a, Mutex<ConfigStore>>;
 
 #[derive(Debug, Clone, Serialize, Type)]
