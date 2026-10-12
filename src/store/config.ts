@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { commands, events, type ConfigView, type General as GeneralSettings, type Config, type Remap } from "../bindings";
+import { commands, events, type ConfigView, type General as GeneralSettings, type Config, type Remap, type Scroll as ScrollSettings } from "../bindings";
 import { configErrorMessage } from "../lib/config";
 
 type ConfigState = {
@@ -10,6 +10,7 @@ type ConfigState = {
   loadError: string | null;
   load: () => Promise<void>;
   setGeneral: (patch: Partial<GeneralSettings>) => Promise<void>;
+  setScroll: (patch: Partial<ScrollSettings>) => Promise<void>;
   /** True when saved; otherwise `error` says why and the old list stays. */
   setRemaps: (remaps: Remap[]) => Promise<boolean>;
   dismissRecovery: () => Promise<void>;
@@ -51,6 +52,11 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
     const { view } = get();
     if (!view) return;
     await save(set, { ...view.config, general: { ...view.config.general, ...patch } });
+  },
+  setScroll: async (patch) => {
+    const { view } = get();
+    if (!view) return;
+    await save(set, { ...view.config, scroll: { ...view.config.scroll, ...patch } });
   },
   setRemaps: async (remaps) => {
     const { view } = get();
