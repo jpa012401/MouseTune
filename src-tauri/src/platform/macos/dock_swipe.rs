@@ -1,8 +1,22 @@
-//! Dock-swipe spike (Phase 6 design §3, plan Task 8). **Probe only**: nothing
-//! here is wired into the app. Task 9 builds the adapter, or ships the
-//! Discrete fallback, from what the maintainer sees when the probe runs.
+//! Interactive dock swipes (Phase 6 design §3, plan Tasks 8–9): Spaces and
+//! Mission Control following the drag, through the `SwipeOutput` port.
 //!
-//! # macOS 27 encoding (what the probe sends)
+//! # Switched off until verified
+//!
+//! `VERIFIED_ON` lists the macOS major versions where the maintainer saw
+//! the probe (`dock_swipe_moves_spaces`) move Spaces. It is empty, so
+//! `platform::output_support().dock_swipe` is false, `input_loop` passes
+//! `NoSwipe`, and `SpacesAndMissionControl` compiles to the Discrete
+//! fallback. `MacDockSwipe` is built and tested but never constructed in
+//! production until a version is added.
+//!
+//! The pure parts (`fields`, `Sequencer`, `ResendSchedule`) are CI-tested.
+//! Everything that touches the private APIs is resolved with `dlsym` and
+//! checked with `respondsToSelector:` (`Api::load`), so MouseTune links and
+//! launches on macOS 12–26, where these symbols may be missing; a failed
+//! load leaves dock swipes off.
+//!
+//! # macOS 27 encoding (what the adapter and the probe send)
 //!
 //! One `CGEvent` of type 30 per step, carrying an `IOHIDEvent` dock swipe.
 //!
@@ -23,33 +37,49 @@
 //! | `HIDEvent` *is* the `IOHIDEventRef` | `IOHIDEventRef` is `CF_BRIDGED_TYPE(id)`; `HIDEvent` holds the event struct as its ivar | [C] `IOKitSPIIOS.h`; [D] `HIDEventBase.h` |
 //! | Reading it back (tests) | `IOHIDEventType IOHIDEventGetType(IOHIDEventRef)` | [C] `IOKitSPIIOS.h` |
 //! | CGEvent type 30 | `kCGSEventDockControl` = **30** (29 = `kCGSEventGesture`) | [E] `CoreGraphicsTestSPI.h` |
-//! | Getter for a CGEvent's HID event | `IOHIDEventRef CGEventCopyIOHIDEvent(CGEventRef)` | [F] `CoreGraphicsSPI.h`; exported per the SDK's `CoreGraphics.tbd` |
+//! | Getter for a CGEvent's HID event (tests) | `IOHIDEventRef CGEventCopyIOHIDEvent(CGEventRef)` | [F] `CoreGraphicsSPI.h`; exported per the SDK's `CoreGraphics.tbd` |
 //! | Setter for a CGEvent's HID event | `SLEventSetIOHIDEvent` is exported by SkyLight; **there is no `CGEventSetHIDEvent`/`CGEventSetIOHIDEvent` export** on the macOS 27 SDK | SDK `SkyLight.tbd`, `CoreGraphics.tbd` |
 //! | Posting | `kCGSessionEventTap`, stamped with `MOUSETUNE_EVENT_TAG` like every other MouseTune event | AGENTS.md footgun 3 |
+//!
+//! How the adapter fills it in (`fields`):
+//! - **Progress** is `SwipeOutput`'s progress unchanged: swipe units along
+//!   the locked axis, screen-coordinate signs (right and down +, left and
+//!   up −), 1.0 = one Space or Mission Control fully open.
+//! - **Mask** follows the sign of the current progress (Left/Right or
+//!   Up/Down), and is 0 while the progress is 0, as at Began, when the
+//!   direction isn't known yet.
+//! - **Velocity** is `SwipeOutput::end`'s velocity in progress per second,
+//!   in one velocity child on the Ended event, on the locked axis.
+//! - **Ended is re-sent** at +200 ms and +500 ms (`ResendSchedule`), so a
+//!   dropped end can't leave Mission Control half open. A new Began or a
+//!   Cancelled withdraws pending re-sends.
+//! - **A Began is posted only if the matching Ended (with its velocity
+//!   child) also builds**, so the adapter never opens a gesture it can't
+//!   close.
+//! - **No `CGEventSource`**: the events are created exactly as the probe
+//!   creates them (`CGEventCreate(NULL)`), so what ships is what was seen.
 //!
 //! By default the probe sends only that. With
 //! `MOUSETUNE_PROBE_ENCODING=legacy-mix` it also writes the same values into
 //! the legacy gesture fields of the type-30 `CGEvent` (table below), and
-//! attaches the HID event last so it is the authoritative copy.
+//! attaches the HID event last so it is the authoritative copy. The probe
+//! keeps its own fixed mask per direction, including at Began.
 //!
-//! ## Unknown (no allowed source; the probe makes a documented guess)
+//! ## Unknown (no allowed source; documented guesses)
 //!
 //! - **`SLEventSetIOHIDEvent`'s signature.** Assumed
 //!   `void (CGEventRef, IOHIDEventRef)`, mirroring the sourced getter. The
-//!   non-posting, ignored test `attached_dock_swipe_reads_back` checks the
-//!   round trip (set, then `CGEventCopyIOHIDEvent`); it passes on macOS 27.0.1. That
-//!   proves the event carries the HID event, not that the Dock acts on it.
+//!   non-posting, ignored test `dock_swipe_events_read_back` checks the
+//!   round trip (set, then `CGEventCopyIOHIDEvent`); it passes on macOS
+//!   27.0.1. That proves the event carries the HID event, not that the
+//!   Dock acts on it.
 //! - **`IOHIDEventCreateDockSwipeEvent`'s signature.** It is exported by
-//!   IOKit (SDK `IOKit.tbd`), but no allowed source declares it, so the probe
-//!   creates the event generically with `initWithType:` instead.
-//! - **Progress sign and scale.** The probe uses screen-coordinate signs
-//!   (right +, up −, down +) and 1.0 = one full Space / a fully open Mission
-//!   Control. Which sign the Dock wants is what the run shows.
-//! - **Velocity units.** The probe sends progress per second (±2.0 for 1.0
-//!   over 0.5 s) in a velocity child event on the end event only.
-//! - **Whether the Dock needs the swipe mask, a `senderID`, or a type-29
-//!   companion event on macOS 27.** The probe sends the mask, sender 0, and
-//!   no companion.
+//!   IOKit (SDK `IOKit.tbd`), but no allowed source declares it, so the
+//!   events are created generically with `initWithType:` instead.
+//! - **Progress sign and scale, velocity units, and the mask at Began.**
+//!   As above; the probe run shows whether the Dock agrees.
+//! - **Whether the Dock needs a `senderID` or a type-29 companion event on
+//!   macOS 27.** Sender 0, no companion.
 //!
 //! # macOS 12–26 encoding (documentation only; not testable on this Mac)
 //!
@@ -75,7 +105,8 @@
 //! 29, 30 and 31, with the HID type in field 110. **Unknown:** what the
 //! type-29 half of the pair must contain, the value of field 110 on each
 //! half, and the field types of 124/129/130. The values in the table above
-//! carry over from the HID encoding but are unverified on hardware.
+//! carry over from the HID encoding but are unverified on hardware. Not
+//! implemented: on 12–26 `SpacesAndMissionControl` runs as Discrete.
 //!
 //! # Sources
 //!
@@ -94,266 +125,690 @@
 //!
 //! Upstream Mac Mouse Fix was not consulted (spec §13).
 
-#[cfg(test)]
-mod ffi {
-    use std::ffi::{CStr, c_char, c_int, c_void};
+use std::{
+    cell::RefCell,
+    ffi::{CStr, c_char, c_int, c_void},
+    sync::{Arc, atomic::AtomicBool},
+};
 
-    use objc2::{
-        msg_send,
-        rc::{Allocated, Retained},
-        runtime::{AnyClass, AnyObject, Sel},
+use objc2::{
+    msg_send,
+    rc::{Allocated, Retained},
+    runtime::{AnyClass, AnyObject, Sel},
+};
+use objc2_core_foundation::{CFAbsoluteTimeGetCurrent, CFRetained, CFRunLoop, CFRunLoopTimer};
+use objc2_core_graphics::{CGEvent, CGEventField, CGEventTapLocation, CGEventType};
+
+use crate::{
+    input::{drag::SwipeOutput, filter::MOUSETUNE_EVENT_TAG, guard::guarded, router::DragAxis},
+    platform::{
+        click_timers::{NEVER_SECS, parked_timer},
+        symbolic_hotkeys::resolve,
+    },
+};
+
+/// macOS major versions where the maintainer saw dock swipes work. Empty:
+/// the Task 8 probe's on-screen result isn't confirmed yet, so dock swipes
+/// stay off everywhere. **Turning them on for macOS 27 is this one line,
+/// `&[27]`**, plus the spec §3.4 and §6.1 wording.
+pub const VERIFIED_ON: &[u32] = &[];
+
+// ---- Encoding (pure) ----------------------------------------------------
+
+const fn field(hid_type: u32, index: u32) -> u32 {
+    (hid_type << 16) | index
+}
+
+const HID_TYPE_VELOCITY: u32 = 9;
+const HID_TYPE_DOCK_SWIPE: u32 = 23;
+const DOCK_SWIPE_MASK: u32 = field(HID_TYPE_DOCK_SWIPE, 0);
+const DOCK_SWIPE_MOTION: u32 = field(HID_TYPE_DOCK_SWIPE, 1);
+const DOCK_SWIPE_PROGRESS: u32 = field(HID_TYPE_DOCK_SWIPE, 2);
+const DOCK_SWIPE_FLAVOR: u32 = field(HID_TYPE_DOCK_SWIPE, 5);
+const VELOCITY_X: u32 = field(HID_TYPE_VELOCITY, 0);
+const VELOCITY_Y: u32 = field(HID_TYPE_VELOCITY, 1);
+const MOTION_HORIZONTAL: isize = 1;
+const MOTION_VERTICAL: isize = 2;
+const FLAVOR_DOCK_PRIMARY: isize = 3;
+const MASK_UP: isize = 1;
+const MASK_DOWN: isize = 2;
+const MASK_LEFT: isize = 4;
+const MASK_RIGHT: isize = 8;
+const PHASE_SHIFT: u32 = 24;
+const CG_DOCK_CONTROL: u32 = 30;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Phase {
+    Began,
+    Changed,
+    Ended,
+    Cancelled,
+}
+
+/// A velocity child event: which field, and its value.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VelocityField {
+    pub field: u32,
+    pub value: f64,
+}
+
+/// Every value one dock-swipe step writes into its HID event.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SwipeFields {
+    pub motion: isize,
+    pub mask: isize,
+    pub flavor: isize,
+    pub progress: f64,
+    /// The HID event's `options`: the phase in bits 24–31.
+    pub options: u32,
+    pub velocity: Option<VelocityField>,
+}
+
+/// The field values for one step (module doc, "How the adapter fills it in").
+pub fn fields(axis: DragAxis, phase: Phase, progress: f64, velocity: Option<f64>) -> SwipeFields {
+    let (motion, back, forward, velocity_field) = match axis {
+        DragAxis::Horizontal => (MOTION_HORIZONTAL, MASK_LEFT, MASK_RIGHT, VELOCITY_X),
+        DragAxis::Vertical => (MOTION_VERTICAL, MASK_UP, MASK_DOWN, VELOCITY_Y),
     };
-    use objc2_core_foundation::CFRetained;
-    use objc2_core_graphics::{CGEvent, CGEventField, CGEventTapLocation, CGEventType};
+    let mask = if progress < 0.0 {
+        back
+    } else if progress > 0.0 {
+        forward
+    } else {
+        0
+    };
+    let phase_bits: u32 = match phase {
+        Phase::Began => 1,
+        Phase::Changed => 2,
+        Phase::Ended => 4,
+        Phase::Cancelled => 8,
+    };
+    SwipeFields {
+        motion,
+        mask,
+        flavor: FLAVOR_DOCK_PRIMARY,
+        progress,
+        options: phase_bits << PHASE_SHIFT,
+        velocity: velocity.map(|value| VelocityField {
+            field: velocity_field,
+            value,
+        }),
+    }
+}
 
-    use crate::{input::filter::MOUSETUNE_EVENT_TAG, platform::symbolic_hotkeys::resolve};
+/// When an Ended is re-sent, in `CFAbsoluteTime` seconds.
+pub struct ResendSchedule;
 
-    const fn field(hid_type: u32, index: u32) -> u32 {
-        (hid_type << 16) | index
+impl ResendSchedule {
+    /// Re-sends for an end posted at `end`: +200 ms and +500 ms.
+    pub fn after_end(end: f64) -> [f64; 2] {
+        [end + 0.2, end + 0.5]
+    }
+}
+
+/// What the adapter does for one `SwipeOutput` call.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Plan {
+    /// Withdraw the re-sends of an earlier end.
+    pub disarm: bool,
+    pub post: Option<SwipeFields>,
+    /// `post` goes out only if this builds too: the end a begin will need.
+    pub needs: Option<SwipeFields>,
+    /// Re-send `post` at these `CFAbsoluteTime`s.
+    pub resend_at: Option<[f64; 2]>,
+}
+
+impl Plan {
+    pub const NOTHING: Self = Self {
+        disarm: false,
+        post: None,
+        needs: None,
+        resend_at: None,
+    };
+}
+
+/// The swipe in progress, as the Dock has been told it. Pure.
+#[derive(Debug, Default)]
+pub struct Sequencer {
+    active: Option<(DragAxis, f64)>,
+}
+
+impl Sequencer {
+    pub fn begin(&mut self, axis: DragAxis) -> Plan {
+        self.active = Some((axis, 0.0));
+        Plan {
+            disarm: true,
+            post: Some(fields(axis, Phase::Began, 0.0, None)),
+            needs: Some(fields(axis, Phase::Ended, 0.0, Some(0.0))),
+            resend_at: None,
+        }
     }
 
-    pub const HID_TYPE_VELOCITY: u32 = 9;
-    pub const HID_TYPE_DOCK_SWIPE: u32 = 23;
-    pub const DOCK_SWIPE_MASK: u32 = field(HID_TYPE_DOCK_SWIPE, 0);
-    pub const DOCK_SWIPE_MOTION: u32 = field(HID_TYPE_DOCK_SWIPE, 1);
-    pub const DOCK_SWIPE_PROGRESS: u32 = field(HID_TYPE_DOCK_SWIPE, 2);
-    pub const DOCK_SWIPE_FLAVOR: u32 = field(HID_TYPE_DOCK_SWIPE, 5);
-    pub const VELOCITY_X: u32 = field(HID_TYPE_VELOCITY, 0);
-    pub const VELOCITY_Y: u32 = field(HID_TYPE_VELOCITY, 1);
-    pub const FLAVOR_DOCK_PRIMARY: isize = 3;
-    pub const PHASE_SHIFT: u32 = 24;
-
-    pub const CG_DOCK_CONTROL: u32 = 30;
-    const CG_GESTURE_HID_TYPE: u32 = 110;
-    const CG_SWIPE_MOTION: u32 = 123;
-    const CG_SWIPE_PROGRESS: u32 = 124;
-    const CG_SWIPE_VELOCITY_X: u32 = 129;
-    const CG_SWIPE_VELOCITY_Y: u32 = 130;
-    const CG_GESTURE_PHASE: u32 = 132;
-    const CG_SWIPE_MASK: u32 = 134;
-    const CG_GESTURE_FLAVOR: u32 = 138;
-
-    const RTLD_LAZY: c_int = 1;
-    const HID_FRAMEWORK: &CStr = c"/System/Library/PrivateFrameworks/HID.framework/Versions/A/HID";
-    const SKYLIGHT: &CStr =
-        c"/System/Library/PrivateFrameworks/SkyLight.framework/Versions/A/SkyLight";
-
-    unsafe extern "C" {
-        fn dlopen(path: *const c_char, mode: c_int) -> *mut c_void;
-        fn mach_absolute_time() -> u64;
-        fn CFRelease(cf: *const c_void);
+    pub fn change(&mut self, progress: f64) -> Plan {
+        let Some((axis, last)) = self.active.as_mut() else {
+            return Plan::NOTHING;
+        };
+        *last = progress;
+        Plan {
+            post: Some(fields(*axis, Phase::Changed, progress, None)),
+            ..Plan::NOTHING
+        }
     }
 
-    type SetHidEvent = unsafe extern "C" fn(*mut c_void, *mut c_void);
+    /// `now` is the `CFAbsoluteTime` the end is posted at.
+    pub fn end(&mut self, velocity: f64, now: f64) -> Plan {
+        let Some((axis, progress)) = self.active.take() else {
+            return Plan::NOTHING;
+        };
+        Plan {
+            post: Some(fields(axis, Phase::Ended, progress, Some(velocity))),
+            resend_at: Some(ResendSchedule::after_end(now)),
+            ..Plan::NOTHING
+        }
+    }
+
+    pub fn cancel(&mut self) -> Plan {
+        let Some((axis, progress)) = self.active.take() else {
+            return Plan::NOTHING;
+        };
+        Plan {
+            disarm: true,
+            post: Some(fields(axis, Phase::Cancelled, progress, None)),
+            ..Plan::NOTHING
+        }
+    }
+
+    /// The begin couldn't be posted: the Dock knows of no swipe.
+    pub fn abandon(&mut self) {
+        self.active = None;
+    }
+}
+
+// ---- Private API (humble) -----------------------------------------------
+
+const RTLD_LAZY: c_int = 1;
+const HID_FRAMEWORK: &CStr = c"/System/Library/PrivateFrameworks/HID.framework/Versions/A/HID";
+const SKYLIGHT: &CStr = c"/System/Library/PrivateFrameworks/SkyLight.framework/Versions/A/SkyLight";
+
+unsafe extern "C" {
+    fn dlopen(path: *const c_char, mode: c_int) -> *mut c_void;
+    fn mach_absolute_time() -> u64;
+}
+
+type SetHidEvent = unsafe extern "C" fn(*mut c_void, *mut c_void);
+
+/// Every selector `Api::build` sends to a `HIDEvent` ([B]). `Api::load`
+/// refuses to start unless the class answers all of them, so a missing
+/// method fails at startup instead of raising an Objective-C exception
+/// mid-gesture.
+const SELECTORS: [&CStr; 5] = [
+    c"initWithType:timestamp:senderID:",
+    c"setIntegerValue:forField:",
+    c"setDoubleValue:forField:",
+    c"setOptions:",
+    c"appendEvent:",
+];
+
+/// Whether the private symbols dock swipes need resolve on this macOS.
+pub fn loads() -> bool {
+    Api::load().is_ok()
+}
+
+/// One built, unposted dock-swipe step. The HID event is kept alive next
+/// to the CGEvent until both drop, after posting, so the step stays valid
+/// whether or not the setter retains it (unknown).
+pub struct Built {
+    event: CFRetained<CGEvent>,
+    _hid: Retained<AnyObject>,
+}
+
+impl Built {
+    fn post(&self) {
+        CGEvent::post(CGEventTapLocation::SessionEventTap, Some(&self.event));
+    }
+}
+
+/// The private class and function dock swipes need, resolved at runtime so
+/// a missing symbol is an error, not a link failure.
+pub struct Api {
+    hid_event: &'static AnyClass,
+    set_hid_event: SetHidEvent,
+}
+
+impl Api {
+    pub fn load() -> Result<Self, String> {
+        for path in [HID_FRAMEWORK, SKYLIGHT] {
+            // SAFETY: dlopen with a NUL-terminated path; a null result only
+            // means the framework isn't there, reported by the lookups below.
+            unsafe { dlopen(path.as_ptr(), RTLD_LAZY) };
+        }
+        let hid_event = AnyClass::get(c"HIDEvent").ok_or("class HIDEvent not found")?;
+        for name in SELECTORS {
+            if !hid_event.responds_to(Sel::register(name)) {
+                return Err(format!("HIDEvent doesn't respond to {name:?}"));
+            }
+        }
+        Ok(Self {
+            hid_event,
+            // SAFETY: the alias is the assumed signature (module doc,
+            // "Unknown"); `dock_swipe_events_read_back` checks it.
+            set_hid_event: unsafe { resolve::<SetHidEvent>(c"SLEventSetIOHIDEvent") }
+                .ok_or("SLEventSetIOHIDEvent not found")?,
+        })
+    }
+
+    fn new_hid_event(&self, hid_type: u32) -> Option<Retained<AnyObject>> {
+        // SAFETY: `HIDEvent` is an NSObject subclass; `alloc` takes no arguments.
+        let alloc: Allocated<AnyObject> = unsafe { msg_send![self.hid_event, alloc] };
+        // SAFETY: selector and argument types from Apple's HIDEvent.h
+        // (module doc [B]): IOHIDEventType is uint32_t, the rest uint64_t.
+        // `load` checked the class responds to it.
+        unsafe {
+            msg_send![alloc, initWithType: hid_type, timestamp: mach_absolute_time(), senderID: 0u64]
+        }
+    }
+
+    /// One dock-swipe step as a type-30 CGEvent, built but not posted.
+    pub fn build(&self, f: &SwipeFields) -> Option<Built> {
+        self.build_with(f, |_| {})
+    }
+
+    /// As `build`, with `extra` writing more CGEvent fields before the HID
+    /// event is attached (the probe's legacy-mix encoding).
+    fn build_with(&self, f: &SwipeFields, extra: impl FnOnce(&CGEvent)) -> Option<Built> {
+        // Every selector below was checked by `load`.
+        let swipe = self.new_hid_event(HID_TYPE_DOCK_SWIPE)?;
+        let set_int = |event: &AnyObject, value: isize, field: u32| {
+            // SAFETY: `-setIntegerValue:(NSInteger)forField:(IOHIDEventField)`, [B].
+            let _: () = unsafe { msg_send![event, setIntegerValue: value, forField: field] };
+        };
+        let set_double = |event: &AnyObject, value: f64, field: u32| {
+            // SAFETY: `-setDoubleValue:(double)forField:(IOHIDEventField)`, [B].
+            let _: () = unsafe { msg_send![event, setDoubleValue: value, forField: field] };
+        };
+        set_int(&swipe, f.motion, DOCK_SWIPE_MOTION);
+        set_int(&swipe, f.flavor, DOCK_SWIPE_FLAVOR);
+        set_int(&swipe, f.mask, DOCK_SWIPE_MASK);
+        set_double(&swipe, f.progress, DOCK_SWIPE_PROGRESS);
+        // SAFETY: `@property uint32_t options`, [B].
+        let _: () = unsafe { msg_send![&*swipe, setOptions: f.options] };
+        if let Some(v) = f.velocity {
+            let child = self.new_hid_event(HID_TYPE_VELOCITY)?;
+            set_double(&child, v.value, v.field);
+            // SAFETY: `-appendEvent:(HIDEvent *)`, [B]; `child` is a live HIDEvent.
+            let _: () = unsafe { msg_send![&*swipe, appendEvent: &*child] };
+        }
+
+        let event = CGEvent::new(None)?;
+        CGEvent::set_type(Some(&event), CGEventType(CG_DOCK_CONTROL));
+        CGEvent::set_integer_value_field(
+            Some(&event),
+            CGEventField::EventSourceUserData,
+            MOUSETUNE_EVENT_TAG,
+        );
+        extra(&event);
+        let cg_ptr = CFRetained::as_ptr(&event).as_ptr().cast::<c_void>();
+        let hid_ptr = Retained::as_ptr(&swipe).cast_mut().cast::<c_void>();
+        // SAFETY: both pointers are live objects held by the returned
+        // `Built`, so they outlive the call and the post that follows.
+        // The signature `void (CGEventRef, IOHIDEventRef)` is an
+        // assumption (module doc, "Unknown"), checked by the read-back
+        // test. Whether the setter retains or copies the HID event is
+        // unknown; `Built` keeps our reference either way.
+        unsafe { (self.set_hid_event)(cg_ptr, hid_ptr) };
+        Some(Built { event, _hid: swipe })
+    }
+}
+
+// ---- Adapter ------------------------------------------------------------
+
+/// The two prebuilt Ended re-sends, reached by the re-send timers through
+/// their `info` pointer. Each is posted at most once.
+struct Resends {
+    ends: RefCell<[Option<Built>; 2]>,
+    degraded: Arc<AtomicBool>,
+}
+
+/// `SwipeOutput` on macOS 27. Its methods run from `run_intents` on
+/// `mt-input`, never inside a tap callout; the re-send timers fire on the
+/// same run loop. Never panics: anything that fails to build is not posted.
+pub struct MacDockSwipe {
+    api: Api,
+    sequencer: Sequencer,
+    /// Boxed so the timers' `info` pointer stays put when `self` moves.
+    resends: Box<Resends>,
+    timers: [CFRetained<CFRunLoopTimer>; 2],
+}
+
+impl MacDockSwipe {
+    /// `Err` when the private symbols don't resolve or a timer can't be
+    /// created; the caller then uses `NoSwipe`.
+    pub fn new(run_loop: &CFRunLoop, degraded: Arc<AtomicBool>) -> Result<Self, String> {
+        let api = Api::load()?;
+        let resends = Box::new(Resends {
+            ends: RefCell::new([None, None]),
+            degraded,
+        });
+        let info = (&*resends as *const Resends).cast_mut().cast::<c_void>();
+        let timer = |callback| {
+            parked_timer(info, run_loop, callback).ok_or("couldn't create a re-send timer")
+        };
+        let first = timer(first_resend_fired)?;
+        let second = match timer(second_resend_fired) {
+            Ok(second) => second,
+            Err(why) => {
+                first.invalidate();
+                return Err(why.into());
+            }
+        };
+        Ok(Self {
+            api,
+            sequencer: Sequencer::default(),
+            resends,
+            timers: [first, second],
+        })
+    }
+
+    fn disarm(&mut self) {
+        for timer in &self.timers {
+            timer.set_next_fire_date(CFAbsoluteTimeGetCurrent() + NEVER_SECS);
+        }
+        if let Ok(mut ends) = self.resends.ends.try_borrow_mut() {
+            *ends = [None, None];
+        }
+    }
+
+    /// Carries out a plan. No decisions beyond "did it build".
+    fn run(&mut self, plan: Plan) {
+        if plan.disarm {
+            self.disarm();
+        }
+        let Some(post) = plan.post else {
+            return;
+        };
+        let needed = plan.needs.is_none_or(|f| self.api.build(&f).is_some());
+        let Some(built) = self.api.build(&post).filter(|_| needed) else {
+            if plan.needs.is_some() {
+                self.sequencer.abandon();
+            }
+            return;
+        };
+        built.post();
+        let Some(dates) = plan.resend_at else {
+            return;
+        };
+        let Ok(mut ends) = self.resends.ends.try_borrow_mut() else {
+            return;
+        };
+        for ((slot, timer), date) in ends.iter_mut().zip(&self.timers).zip(dates) {
+            *slot = self.api.build(&post);
+            if slot.is_some() {
+                timer.set_next_fire_date(date);
+            }
+        }
+    }
+}
+
+impl SwipeOutput for MacDockSwipe {
+    fn begin(&mut self, axis: DragAxis) {
+        let plan = self.sequencer.begin(axis);
+        self.run(plan);
+    }
+
+    fn change(&mut self, progress: f64) {
+        let plan = self.sequencer.change(progress);
+        self.run(plan);
+    }
+
+    fn end(&mut self, velocity: f64) {
+        let plan = self.sequencer.end(velocity, CFAbsoluteTimeGetCurrent());
+        self.run(plan);
+    }
+
+    fn cancel(&mut self) {
+        let plan = self.sequencer.cancel();
+        self.run(plan);
+    }
+}
+
+impl Drop for MacDockSwipe {
+    /// Invalidating removes the timers from every run loop, so no callback
+    /// can reach `resends` after this; it drops after this body runs.
+    fn drop(&mut self) {
+        for timer in &self.timers {
+            timer.invalidate();
+        }
+    }
+}
+
+unsafe extern "C-unwind" fn first_resend_fired(_timer: *mut CFRunLoopTimer, info: *mut c_void) {
+    resend(info, 0)
+}
+
+unsafe extern "C-unwind" fn second_resend_fired(_timer: *mut CFRunLoopTimer, info: *mut c_void) {
+    resend(info, 1)
+}
+
+/// Posts one prebuilt re-send, once. A re-entrant fire is dropped.
+fn resend(info: *mut c_void, index: usize) {
+    // SAFETY: `info` is the boxed `Resends` the timer was created with;
+    // `MacDockSwipe::drop` invalidates both timers before the box is freed.
+    let resends = unsafe { &*info.cast_const().cast::<Resends>() };
+    guarded(&resends.degraded, (), || {
+        let Ok(mut ends) = resends.ends.try_borrow_mut() else {
+            return;
+        };
+        if let Some(end) = ends.get_mut(index).and_then(Option::take) {
+            end.post();
+        }
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const fn sf(
+        motion: isize,
+        mask: isize,
+        progress: f64,
+        options: u32,
+        velocity: Option<VelocityField>,
+    ) -> SwipeFields {
+        SwipeFields {
+            motion,
+            mask,
+            flavor: 3,
+            progress,
+            options,
+            velocity,
+        }
+    }
+
+    #[test]
+    fn a_horizontal_change_encodes_motion_mask_progress_and_phase() {
+        assert_eq!(
+            fields(DragAxis::Horizontal, Phase::Changed, 0.5, None),
+            sf(1, 8, 0.5, 0x0200_0000, None)
+        );
+        assert_eq!(
+            fields(DragAxis::Horizontal, Phase::Changed, -0.25, None),
+            sf(1, 4, -0.25, 0x0200_0000, None)
+        );
+    }
+
+    #[test]
+    fn an_upward_end_carries_its_velocity_on_the_y_axis() {
+        assert_eq!(
+            fields(DragAxis::Vertical, Phase::Ended, -1.0, Some(-2.0)),
+            sf(
+                2,
+                1,
+                -1.0,
+                0x0400_0000,
+                Some(VelocityField {
+                    field: 0x0009_0001,
+                    value: -2.0
+                })
+            )
+        );
+    }
+
+    #[test]
+    fn a_begin_has_no_direction_yet_and_a_downward_cancel_masks_down() {
+        assert_eq!(
+            fields(DragAxis::Vertical, Phase::Began, 0.0, None),
+            sf(2, 0, 0.0, 0x0100_0000, None)
+        );
+        assert_eq!(
+            fields(DragAxis::Vertical, Phase::Cancelled, 0.3, None),
+            sf(2, 2, 0.3, 0x0800_0000, None)
+        );
+    }
+
+    #[test]
+    fn an_end_is_re_sent_at_200_and_500_ms() {
+        assert_eq!(ResendSchedule::after_end(10.0), [10.2, 10.5]);
+    }
+
+    #[test]
+    fn a_begin_withdraws_old_re_sends_and_needs_its_end_to_build() {
+        let mut s = Sequencer::default();
+        assert_eq!(
+            s.begin(DragAxis::Horizontal),
+            Plan {
+                disarm: true,
+                post: Some(sf(1, 0, 0.0, 0x0100_0000, None)),
+                needs: Some(sf(
+                    1,
+                    0,
+                    0.0,
+                    0x0400_0000,
+                    Some(VelocityField {
+                        field: 0x0009_0000,
+                        value: 0.0
+                    })
+                )),
+                resend_at: None,
+            }
+        );
+    }
+
+    #[test]
+    fn an_end_posts_the_last_progress_with_velocity_and_two_re_sends() {
+        let mut s = Sequencer::default();
+        s.begin(DragAxis::Horizontal);
+        assert_eq!(
+            s.change(0.5),
+            Plan {
+                post: Some(sf(1, 8, 0.5, 0x0200_0000, None)),
+                ..Plan::NOTHING
+            }
+        );
+        assert_eq!(
+            s.end(2.0, 10.0),
+            Plan {
+                post: Some(sf(
+                    1,
+                    8,
+                    0.5,
+                    0x0400_0000,
+                    Some(VelocityField {
+                        field: 0x0009_0000,
+                        value: 2.0
+                    })
+                )),
+                resend_at: Some([10.2, 10.5]),
+                ..Plan::NOTHING
+            }
+        );
+        assert_eq!(s.change(0.7), Plan::NOTHING);
+        assert_eq!(s.end(1.0, 11.0), Plan::NOTHING);
+        assert_eq!(s.cancel(), Plan::NOTHING);
+    }
+
+    #[test]
+    fn a_cancel_posts_cancelled_at_the_last_progress_and_withdraws_re_sends() {
+        let mut s = Sequencer::default();
+        s.begin(DragAxis::Vertical);
+        s.change(-0.3);
+        assert_eq!(
+            s.cancel(),
+            Plan {
+                disarm: true,
+                post: Some(sf(2, 1, -0.3, 0x0800_0000, None)),
+                ..Plan::NOTHING
+            }
+        );
+        assert_eq!(s.cancel(), Plan::NOTHING);
+    }
+
+    #[test]
+    fn nothing_is_posted_without_a_begin_or_after_an_abandoned_one() {
+        let mut s = Sequencer::default();
+        assert_eq!(s.change(0.5), Plan::NOTHING);
+        assert_eq!(s.end(2.0, 10.0), Plan::NOTHING);
+        assert_eq!(s.cancel(), Plan::NOTHING);
+        s.begin(DragAxis::Horizontal);
+        s.abandon();
+        assert_eq!(s.change(0.5), Plan::NOTHING);
+        assert_eq!(s.end(2.0, 10.0), Plan::NOTHING);
+    }
+}
+
+/// Reads built events back through the private getters. Posts nothing.
+#[cfg(test)]
+mod read_back {
+    use objc2::msg_send;
+
+    use super::*;
+
     type CopyHidEvent = unsafe extern "C" fn(*mut c_void) -> *mut c_void;
     type GetHidType = unsafe extern "C" fn(*mut c_void) -> u32;
 
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    pub enum Direction {
-        Right,
-        Up,
-        Down,
+    unsafe extern "C" {
+        fn CFRelease(cf: *const c_void);
     }
 
-    impl Direction {
-        fn motion(self) -> isize {
-            match self {
-                Self::Right => 1,
-                Self::Up | Self::Down => 2,
-            }
-        }
-
-        fn mask(self) -> isize {
-            match self {
-                Self::Up => 1,
-                Self::Down => 2,
-                Self::Right => 8,
-            }
-        }
-
-        /// Screen coordinates: x grows right, y grows down. A guess (module doc).
-        pub fn sign(self) -> f64 {
-            match self {
-                Self::Right | Self::Down => 1.0,
-                Self::Up => -1.0,
-            }
-        }
-
-        fn horizontal(self) -> bool {
-            self == Self::Right
-        }
+    #[derive(Debug, PartialEq)]
+    struct Velocity {
+        child_type: u32,
+        x: f64,
+        y: f64,
     }
 
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    pub enum Phase {
-        Began,
-        Changed,
-        Ended,
+    #[derive(Debug, PartialEq)]
+    struct ReadBack {
+        hid_type: u32,
+        motion: isize,
+        mask: isize,
+        flavor: isize,
+        progress: f64,
+        phase: u32,
+        velocity: Option<Velocity>,
+        cg_type: u32,
+        tag: i64,
     }
 
-    impl Phase {
-        pub fn bits(self) -> u32 {
-            match self {
-                Self::Began => 1,
-                Self::Changed => 2,
-                Self::Ended => 4,
-            }
-        }
-    }
-
-    /// Every selector the probe and the read-back test send to a `HIDEvent`
-    /// ([B]). `Api::load` refuses to start unless the class answers all of
-    /// them, so a missing method fails before anything is posted instead of
-    /// raising an Objective-C exception mid-gesture.
-    const SELECTORS: [&CStr; 9] = [
-        c"initWithType:timestamp:senderID:",
-        c"setIntegerValue:forField:",
-        c"setDoubleValue:forField:",
-        c"setOptions:",
-        c"appendEvent:",
-        c"integerValueForField:",
-        c"doubleValueForField:",
-        c"options",
-        c"children",
-    ];
-
-    /// One built, unposted dock-swipe step. The HID event is kept alive
-    /// next to the CGEvent until both drop, after posting, so the step
-    /// stays valid whether or not the setter retains it (unknown).
-    pub struct Step {
-        pub event: CFRetained<CGEvent>,
-        _hid: Retained<AnyObject>,
-    }
-
-    /// The private functions and class the probe needs, resolved at runtime
-    /// so a missing symbol is a readable error rather than a link failure.
-    pub struct Api {
-        hid_event: &'static AnyClass,
-        set_hid_event: SetHidEvent,
+    struct Getters {
         copy_hid_event: CopyHidEvent,
         get_hid_type: GetHidType,
     }
 
-    impl Api {
-        pub fn load() -> Result<Self, String> {
-            for path in [HID_FRAMEWORK, SKYLIGHT] {
-                // SAFETY: dlopen with a NUL-terminated path; a null result only
-                // means the framework isn't there, reported by the lookups below.
-                unsafe { dlopen(path.as_ptr(), RTLD_LAZY) };
-            }
-            let hid_event = AnyClass::get(c"HIDEvent").ok_or("class HIDEvent not found")?;
-            for name in SELECTORS {
-                if !hid_event.responds_to(Sel::register(name)) {
-                    return Err(format!("HIDEvent doesn't respond to {name:?}"));
-                }
-            }
-            Ok(Self {
-                hid_event,
-                // SAFETY: the alias is the assumed signature (module doc,
-                // "Unknown"); `attached_dock_swipe_reads_back` checks it.
-                set_hid_event: unsafe { resolve::<SetHidEvent>(c"SLEventSetIOHIDEvent") }
-                    .ok_or("SLEventSetIOHIDEvent not found")?,
+    impl Getters {
+        fn load() -> Self {
+            Self {
                 // SAFETY: signature from WebKit's CoreGraphicsSPI.h (module doc [F]).
                 copy_hid_event: unsafe { resolve::<CopyHidEvent>(c"CGEventCopyIOHIDEvent") }
-                    .ok_or("CGEventCopyIOHIDEvent not found")?,
+                    .expect("CGEventCopyIOHIDEvent resolves"),
                 // SAFETY: signature from WebKit's IOKitSPIIOS.h (module doc [C]).
                 get_hid_type: unsafe { resolve::<GetHidType>(c"IOHIDEventGetType") }
-                    .ok_or("IOHIDEventGetType not found")?,
-            })
-        }
-
-        fn new_hid_event(&self, hid_type: u32) -> Option<Retained<AnyObject>> {
-            // SAFETY: `HIDEvent` is an NSObject subclass; `alloc` takes no arguments.
-            let alloc: Allocated<AnyObject> = unsafe { msg_send![self.hid_event, alloc] };
-            // SAFETY: selector and argument types from Apple's HIDEvent.h
-            // (module doc [B]): IOHIDEventType is uint32_t, the rest uint64_t.
-            // `load` checked the class responds to it.
-            unsafe {
-                msg_send![alloc, initWithType: hid_type, timestamp: mach_absolute_time(), senderID: 0u64]
+                    .expect("IOHIDEventGetType resolves"),
             }
         }
 
-        /// One dock-swipe step as a type-30 CGEvent, built but not posted.
-        pub fn build(
-            &self,
-            direction: Direction,
-            phase: Phase,
-            progress: f64,
-            velocity: Option<f64>,
-            legacy_fields: bool,
-        ) -> Option<Step> {
-            // Every selector below was checked by `load`.
-            let swipe = self.new_hid_event(HID_TYPE_DOCK_SWIPE)?;
-            let set_int = |event: &AnyObject, value: isize, field: u32| {
-                // SAFETY: `-setIntegerValue:(NSInteger)forField:(IOHIDEventField)`, [B].
-                let _: () = unsafe { msg_send![event, setIntegerValue: value, forField: field] };
-            };
-            let set_double = |event: &AnyObject, value: f64, field: u32| {
-                // SAFETY: `-setDoubleValue:(double)forField:(IOHIDEventField)`, [B].
-                let _: () = unsafe { msg_send![event, setDoubleValue: value, forField: field] };
-            };
-            set_int(&swipe, direction.motion(), DOCK_SWIPE_MOTION);
-            set_int(&swipe, FLAVOR_DOCK_PRIMARY, DOCK_SWIPE_FLAVOR);
-            set_int(&swipe, direction.mask(), DOCK_SWIPE_MASK);
-            set_double(&swipe, progress, DOCK_SWIPE_PROGRESS);
-            let options = phase.bits() << PHASE_SHIFT;
-            // SAFETY: `@property uint32_t options`, [B].
-            let _: () = unsafe { msg_send![&*swipe, setOptions: options] };
-            if let Some(v) = velocity {
-                let child = self.new_hid_event(HID_TYPE_VELOCITY)?;
-                let axis = if direction.horizontal() {
-                    VELOCITY_X
-                } else {
-                    VELOCITY_Y
-                };
-                set_double(&child, v, axis);
-                // SAFETY: `-appendEvent:(HIDEvent *)`, [B]; `child` is a live HIDEvent.
-                let _: () = unsafe { msg_send![&*swipe, appendEvent: &*child] };
-            }
-
-            let event = CGEvent::new(None)?;
-            CGEvent::set_type(Some(&event), CGEventType(CG_DOCK_CONTROL));
-            let set =
-                |f: u32, v: i64| CGEvent::set_integer_value_field(Some(&event), CGEventField(f), v);
-            set(CGEventField::EventSourceUserData.0, MOUSETUNE_EVENT_TAG);
-            if legacy_fields {
-                let set_fine = |f: u32, v: f64| {
-                    CGEvent::set_double_value_field(Some(&event), CGEventField(f), v)
-                };
-                set(CG_GESTURE_HID_TYPE, i64::from(HID_TYPE_DOCK_SWIPE));
-                set(CG_SWIPE_MOTION, direction.motion() as i64);
-                set(CG_GESTURE_FLAVOR, FLAVOR_DOCK_PRIMARY as i64);
-                set(CG_SWIPE_MASK, direction.mask() as i64);
-                set(CG_GESTURE_PHASE, i64::from(phase.bits()));
-                set_fine(CG_SWIPE_PROGRESS, progress);
-                if let Some(v) = velocity {
-                    let axis = if direction.horizontal() {
-                        CG_SWIPE_VELOCITY_X
-                    } else {
-                        CG_SWIPE_VELOCITY_Y
-                    };
-                    set_fine(axis, v);
-                }
-            }
-            let cg_ptr = CFRetained::as_ptr(&event).as_ptr().cast::<c_void>();
-            let hid_ptr = Retained::as_ptr(&swipe).cast_mut().cast::<c_void>();
-            // SAFETY: both pointers are live objects held by the returned
-            // `Step`, so they outlive the call and the post that follows.
-            // The signature `void (CGEventRef, IOHIDEventRef)` is an
-            // assumption (module doc, "Unknown"), checked by the read-back
-            // test. Whether the setter retains or copies the HID event is
-            // unknown; `Step` keeps our reference either way.
-            unsafe { (self.set_hid_event)(cg_ptr, hid_ptr) };
-            Some(Step { event, _hid: swipe })
-        }
-
-        pub fn post(step: &Step) {
-            CGEvent::post(CGEventTapLocation::SessionEventTap, Some(&step.event));
-        }
-
-        /// What the CGEvent carries, read back through the HID event.
-        pub fn read_back(&self, step: &Step) -> Option<ReadBack> {
-            let event: &CGEvent = &step.event;
+        fn read(&self, built: &Built) -> Option<ReadBack> {
+            let event: &CGEvent = &built.event;
             let cg_ptr = (event as *const CGEvent).cast_mut().cast::<c_void>();
             // SAFETY: `event` is a live CGEvent; the getter follows the CF
             // Copy rule, so we release the result below.
@@ -397,6 +852,7 @@ mod ffi {
                 // SAFETY: `hid` is a live IOHIDEventRef; signature from [C].
                 hid_type: unsafe { (self.get_hid_type)(hid) },
                 motion: int(DOCK_SWIPE_MOTION),
+                mask: int(DOCK_SWIPE_MASK),
                 flavor: int(DOCK_SWIPE_FLAVOR),
                 progress,
                 phase: options >> PHASE_SHIFT,
@@ -410,98 +866,163 @@ mod ffi {
         }
     }
 
-    #[derive(Debug, PartialEq)]
-    pub struct Velocity {
-        pub child_type: u32,
-        pub x: f64,
-        pub y: f64,
-    }
-
-    #[derive(Debug, PartialEq)]
-    pub struct ReadBack {
-        pub hid_type: u32,
-        pub motion: isize,
-        pub flavor: isize,
-        pub progress: f64,
-        pub phase: u32,
-        pub velocity: Option<Velocity>,
-        pub cg_type: u32,
-        pub tag: i64,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::ffi::{Api, Direction, Phase, ReadBack, Velocity};
-    use crate::input::filter::MOUSETUNE_EVENT_TAG;
-
-    /// Builds (never posts) dock-swipe steps and reads them back, which
-    /// checks the assumed `SLEventSetIOHIDEvent` signature, the field
-    /// numbers and the end path with its velocity child. Expected values are
-    /// the module doc's literals. Run it before the probe:
-    /// `cargo test attached_dock_swipe_reads_back -- --ignored --nocapture`.
+    /// Builds (never posts) the adapter's begin, change(0.5) and end(2.0)
+    /// and reads them back, which checks the assumed `SLEventSetIOHIDEvent`
+    /// signature, the field numbers and the end's velocity child. Expected
+    /// values are the module doc's literals. Run by name:
+    /// `cargo test dock_swipe_events_read_back -- --ignored --nocapture`.
     #[test]
     #[ignore = "private SkyLight/HID APIs; verified on macOS 27 only"]
-    fn attached_dock_swipe_reads_back() {
+    fn dock_swipe_events_read_back() {
         let api = Api::load().expect("the private dock-swipe symbols resolve on this macOS");
-        for legacy_fields in [false, true] {
-            let change = api
-                .build(Direction::Right, Phase::Changed, 0.5, None, legacy_fields)
-                .expect("a change step builds");
-            assert_eq!(
-                api.read_back(&change),
-                Some(ReadBack {
-                    hid_type: 23,
-                    motion: 1,
-                    flavor: 3,
-                    progress: 0.5,
-                    phase: 2,
-                    velocity: None,
-                    cg_type: 30,
-                    tag: MOUSETUNE_EVENT_TAG,
-                }),
-                "change, legacy_fields = {legacy_fields}"
-            );
-            let end = api
-                .build(Direction::Up, Phase::Ended, -1.0, Some(-2.0), legacy_fields)
-                .expect("an end step with velocity builds");
-            assert_eq!(
-                api.read_back(&end),
-                Some(ReadBack {
-                    hid_type: 23,
-                    motion: 2,
-                    flavor: 3,
-                    progress: -1.0,
-                    phase: 4,
-                    velocity: Some(Velocity {
-                        child_type: 9,
-                        x: 0.0,
-                        y: -2.0,
-                    }),
-                    cg_type: 30,
-                    tag: MOUSETUNE_EVENT_TAG,
-                }),
-                "end, legacy_fields = {legacy_fields}"
-            );
-        }
+        let getters = Getters::load();
+        let mut s = Sequencer::default();
+        let read = |plan: Plan| {
+            let post = plan.post.expect("the plan posts");
+            getters.read(&api.build(&post).expect("the step builds"))
+        };
+        let step = |mask, progress, phase, velocity| {
+            Some(ReadBack {
+                hid_type: 23,
+                motion: 1,
+                mask,
+                flavor: 3,
+                progress,
+                phase,
+                velocity,
+                cg_type: 30,
+                tag: MOUSETUNE_EVENT_TAG,
+            })
+        };
+        assert_eq!(read(s.begin(DragAxis::Horizontal)), step(0, 0.0, 1, None));
+        assert_eq!(read(s.change(0.5)), step(8, 0.5, 2, None));
+        assert_eq!(
+            read(s.end(2.0, 0.0)),
+            step(
+                8,
+                0.5,
+                4,
+                Some(Velocity {
+                    child_type: 9,
+                    x: 2.0,
+                    y: 0.0
+                })
+            )
+        );
+        s.begin(DragAxis::Vertical);
+        s.change(-0.25);
+        let cancelled = read(s.cancel()).expect("reads back");
+        assert_eq!(
+            (
+                cancelled.motion,
+                cancelled.mask,
+                cancelled.progress,
+                cancelled.phase
+            ),
+            (2, 1, -0.25, 8)
+        );
     }
 }
 
+/// The maintainer's hardware probe (plan Task 8). Builds through the
+/// adapter's `fields` and `Api`, keeping its own mask per direction and
+/// the optional legacy fields.
 #[cfg(test)]
 mod probe {
     use std::{thread::sleep, time::Duration};
 
-    use super::ffi::{Api, Direction, Phase, Step};
+    use super::*;
 
     const STEPS: u32 = 30;
     const SWIPE_TIME: Duration = Duration::from_millis(500);
     /// 1.0 of progress over 0.5 s, in progress per second (units unknown).
     const END_SPEED: f64 = 2.0;
 
+    const CG_GESTURE_HID_TYPE: u32 = 110;
+    const CG_SWIPE_MOTION: u32 = 123;
+    const CG_SWIPE_PROGRESS: u32 = 124;
+    const CG_SWIPE_VELOCITY_X: u32 = 129;
+    const CG_SWIPE_VELOCITY_Y: u32 = 130;
+    const CG_GESTURE_PHASE: u32 = 132;
+    const CG_SWIPE_MASK: u32 = 134;
+    const CG_GESTURE_FLAVOR: u32 = 138;
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum Direction {
+        Right,
+        Up,
+        Down,
+    }
+
+    impl Direction {
+        fn axis(self) -> DragAxis {
+            match self {
+                Self::Right => DragAxis::Horizontal,
+                Self::Up | Self::Down => DragAxis::Vertical,
+            }
+        }
+
+        fn mask(self) -> isize {
+            match self {
+                Self::Up => MASK_UP,
+                Self::Down => MASK_DOWN,
+                Self::Right => MASK_RIGHT,
+            }
+        }
+
+        /// Screen coordinates: x grows right, y grows down.
+        fn sign(self) -> f64 {
+            match self {
+                Self::Right | Self::Down => 1.0,
+                Self::Up => -1.0,
+            }
+        }
+    }
+
+    /// The probe's step: the adapter's fields, with the direction's mask
+    /// on every phase (the probe knows its direction up front).
+    fn step_fields(
+        direction: Direction,
+        phase: Phase,
+        progress: f64,
+        velocity: Option<f64>,
+    ) -> SwipeFields {
+        SwipeFields {
+            mask: direction.mask(),
+            ..fields(direction.axis(), phase, progress, velocity)
+        }
+    }
+
+    fn build(api: &Api, f: &SwipeFields, legacy: bool) -> Option<Built> {
+        if !legacy {
+            return api.build(f);
+        }
+        api.build_with(f, |event| {
+            let set =
+                |n: u32, v: i64| CGEvent::set_integer_value_field(Some(event), CGEventField(n), v);
+            let set_fine =
+                |n: u32, v: f64| CGEvent::set_double_value_field(Some(event), CGEventField(n), v);
+            set(CG_GESTURE_HID_TYPE, i64::from(HID_TYPE_DOCK_SWIPE));
+            set(CG_SWIPE_MOTION, f.motion as i64);
+            set(CG_GESTURE_FLAVOR, f.flavor as i64);
+            set(CG_SWIPE_MASK, f.mask as i64);
+            set(CG_GESTURE_PHASE, i64::from(f.options >> PHASE_SHIFT));
+            set_fine(CG_SWIPE_PROGRESS, f.progress);
+            if let Some(v) = f.velocity {
+                let axis = if v.field == VELOCITY_X {
+                    CG_SWIPE_VELOCITY_X
+                } else {
+                    CG_SWIPE_VELOCITY_Y
+                };
+                set_fine(axis, v.value);
+            }
+        })
+    }
+
     /// A built step, the pause before posting it, and what to print.
     struct Planned {
         wait: Duration,
-        step: Step,
+        step: Built,
         line: String,
     }
 
@@ -511,9 +1032,12 @@ mod probe {
         let sign = direction.sign();
         let mut planned = Vec::new();
         let mut add = |wait, phase, progress, velocity: Option<f64>, note: &str| {
-            let step = api
-                .build(direction, phase, progress, velocity, legacy)
-                .ok_or_else(|| format!("{direction:?} {phase:?} {progress:+.3} didn't build"))?;
+            let step = build(
+                api,
+                &step_fields(direction, phase, progress, velocity),
+                legacy,
+            )
+            .ok_or_else(|| format!("{direction:?} {phase:?} {progress:+.3} didn't build"))?;
             let velocity = velocity.map_or(String::new(), |v| format!(", velocity {v:+.1}"));
             planned.push(Planned {
                 wait,
@@ -527,27 +1051,23 @@ mod probe {
             let progress = sign * f64::from(i) / f64::from(STEPS);
             add(SWIPE_TIME / STEPS, Phase::Changed, progress, None, "")?;
         }
-        // An end without velocity beats a swipe left open (fix round 1).
+        // An end without velocity beats a swipe left open (Task 8 fix round 1).
         let mut velocity = Some(sign * END_SPEED);
-        if api
-            .build(direction, Phase::Ended, sign, velocity, legacy)
-            .is_none()
-        {
+        let end = step_fields(direction, Phase::Ended, sign, velocity);
+        if build(api, &end, legacy).is_none() {
             println!("{direction:?}: the end with velocity didn't build; ending without velocity.");
             velocity = None;
         }
         add(Duration::ZERO, Phase::Ended, sign, velocity, " (end)")?;
-        let resend_200 = Duration::from_millis(200);
         add(
-            resend_200,
+            Duration::from_millis(200),
             Phase::Ended,
             sign,
             velocity,
             " (end re-sent, +200 ms)",
         )?;
-        let resend_500 = Duration::from_millis(300);
         add(
-            resend_500,
+            Duration::from_millis(300),
             Phase::Ended,
             sign,
             velocity,
@@ -561,7 +1081,7 @@ mod probe {
             Ok(planned) => {
                 for p in planned {
                     sleep(p.wait);
-                    Api::post(&p.step);
+                    p.step.post();
                     println!("{}", p.line);
                 }
             }
@@ -569,12 +1089,12 @@ mod probe {
         }
     }
 
-    /// Run by the maintainer only, after `attached_dock_swipe_reads_back`
-    /// passes: `cargo test dock_swipe_probe -- --ignored --nocapture`.
+    /// Run by the maintainer only, after `dock_swipe_events_read_back`
+    /// passes: `cargo test dock_swipe_moves_spaces -- --ignored --nocapture`.
     /// Posts real events. Watch the screen.
     #[test]
     #[ignore = "posts real dock-swipe events; the maintainer runs and watches it"]
-    fn dock_swipe_probe() {
+    fn dock_swipe_moves_spaces() {
         let api = Api::load().expect("the private dock-swipe symbols resolve on this macOS");
         if !crate::platform::permissions::is_accessibility_trusted() {
             println!(

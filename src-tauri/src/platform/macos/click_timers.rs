@@ -23,7 +23,7 @@ use crate::{
 /// interval so a fired timer parks itself instead of firing again.
 pub(crate) const NEVER_SECS: f64 = 1.0e9;
 
-type TimerCallback = unsafe extern "C-unwind" fn(*mut CFRunLoopTimer, *mut c_void);
+pub(crate) type TimerCallback = unsafe extern "C-unwind" fn(*mut CFRunLoopTimer, *mut c_void);
 
 pub struct MacClickTimers {
     hold: CFRetained<CFRunLoopTimer>,
@@ -33,9 +33,12 @@ pub struct MacClickTimers {
 impl MacClickTimers {
     /// `context` must outlive the timers; dropping them invalidates both.
     pub fn new(context: *const TapContext, run_loop: &CFRunLoop) -> Self {
+        let info = context.cast_mut().cast();
+        let timer =
+            |callback| parked_timer(info, run_loop, callback).expect("CFRunLoopTimerCreate failed");
         Self {
-            hold: parked_timer(context, run_loop, hold_fired),
-            expiry: parked_timer(context, run_loop, expiry_fired),
+            hold: timer(hold_fired),
+            expiry: timer(expiry_fired),
         }
     }
 
@@ -48,14 +51,16 @@ impl MacClickTimers {
 }
 
 /// Creates a timer that won't fire until armed and adds it to `run_loop`.
-fn parked_timer(
-    context: *const TapContext,
+/// `info` must outlive the timer: the owner invalidates it on `Drop`.
+/// `None` if CoreFoundation couldn't create it.
+pub(crate) fn parked_timer(
+    info: *mut c_void,
     run_loop: &CFRunLoop,
     callback: TimerCallback,
-) -> CFRetained<CFRunLoopTimer> {
+) -> Option<CFRetained<CFRunLoopTimer>> {
     let mut timer_context = CFRunLoopTimerContext {
         version: 0,
-        info: context.cast_mut().cast(),
+        info,
         retain: None,
         release: None,
         copyDescription: None,
@@ -73,12 +78,11 @@ fn parked_timer(
             Some(callback),
             &mut timer_context,
         )
-    }
-    .expect("CFRunLoopTimerCreate failed");
+    }?;
     // SAFETY: reading an immutable CoreFoundation constant.
     let modes = unsafe { kCFRunLoopCommonModes };
     run_loop.add_timer(Some(&timer), modes);
-    timer
+    Some(timer)
 }
 
 impl ClickTimers for MacClickTimers {

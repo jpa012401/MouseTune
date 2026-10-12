@@ -23,7 +23,7 @@ use crate::{
     config::schema::Scroll,
     input::{
         capture::SystemClock,
-        drag::NoSwipe,
+        drag::{NoSwipe, SwipeOutput},
         engine::{ButtonSetup, EngineObserver, InputEngine, TapHandler},
         guard::guarded,
         intents::{GestureSetup, IntentSignal},
@@ -35,6 +35,7 @@ use crate::{
     platform::{
         click_timers::MacClickTimers,
         display_link::MacFrameDriver,
+        dock_swipe::MacDockSwipe,
         event_poster::MacEventPoster,
         event_tap::{MacTapController, OnUnwind, TapContext},
         hid::DeviceMonitor,
@@ -200,8 +201,7 @@ fn run_input_thread(
         signal: Box::new(MacIntentSignal {
             source: intents.clone(),
         }),
-        // Task 9 replaces this once dock swipes are verified.
-        swipe: Box::new(NoSwipe),
+        swipe: swipe_output(&run_loop, &shared.degraded),
         scroll: Box::new(MacScrollPoster::new()),
         magnify: Box::new(MacMagnify),
     };
@@ -322,6 +322,23 @@ fn run_input_thread(
     // 4. Only now the context the taps, click timers and frames pointed to.
     drop(context);
     tracing::info!("input thread stopped");
+}
+
+/// The dock-swipe adapter where this macOS is verified for it, else
+/// `NoSwipe` (Phase 6 design §3). `output_support` already checked that the
+/// symbols load, so `remaps` compiled `SpacesAndMissionControl` to match;
+/// a failure here is only a timer that couldn't be created.
+fn swipe_output(run_loop: &CFRunLoop, degraded: &Arc<AtomicBool>) -> Box<dyn SwipeOutput> {
+    if !super::output_support().dock_swipe {
+        return Box::new(NoSwipe);
+    }
+    match MacDockSwipe::new(run_loop, Arc::clone(degraded)) {
+        Ok(swipe) => Box::new(swipe),
+        Err(why) => {
+            tracing::warn!(%why, "dock swipes are verified here but couldn't start");
+            Box::new(NoSwipe)
+        }
+    }
 }
 
 /// Control source callback: applies queued messages, stops on `Shutdown`.
