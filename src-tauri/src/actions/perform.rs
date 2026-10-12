@@ -233,8 +233,8 @@ mod tests {
             [
                 "read 32",
                 "key 0x3b down 0x40000",
-                "key 0x7e down 0x40000",
-                "key 0x7e up 0x40000",
+                "key 0x7e down 0xa40000",
+                "key 0x7e up 0xa40000",
                 "key 0x3b up 0x0"
             ]
         );
@@ -308,8 +308,8 @@ mod tests {
             log.all(),
             [
                 "key 0x3b down 0x40000",
-                "key 0x7e down 0x40000",
-                "key 0x7e up 0x40000",
+                "key 0x7e down 0xa40000",
+                "key 0x7e up 0xa40000",
                 "key 0x3b up 0x0"
             ]
         );
@@ -324,8 +324,8 @@ mod tests {
             [
                 "read 32",
                 "key 0x3b down 0x40000",
-                "key 0x7e down 0x40000",
-                "key 0x7e up 0x40000",
+                "key 0x7e down 0xa40000",
+                "key 0x7e up 0xa40000",
                 "key 0x3b up 0x0"
             ]
         );
@@ -338,7 +338,26 @@ mod tests {
             SymbolicHotkeyId::ShowDesktop,
         ));
         perform(job, &rig(None, None, &log)).unwrap();
-        assert_eq!(log.all(), ["key 0x67 down 0x0", "key 0x67 up 0x0"]);
+        assert_eq!(
+            log.all(),
+            ["key 0x67 down 0x800000", "key 0x67 up 0x800000"]
+        );
+    }
+
+    #[test]
+    fn space_right_without_cgs_symbols_posts_ctrl_right_arrow_with_its_key_flags() {
+        let log = OutputLog::default();
+        let job = Job::Perform(CompiledAction::SymbolicHotkey(SymbolicHotkeyId::SpaceRight));
+        perform(job, &rig(None, None, &log)).unwrap();
+        assert_eq!(
+            log.all(),
+            [
+                "key 0x3b down 0x40000",
+                "key 0x7c down 0xa40000",
+                "key 0x7c up 0xa40000",
+                "key 0x3b up 0x0"
+            ]
+        );
     }
 
     #[test]

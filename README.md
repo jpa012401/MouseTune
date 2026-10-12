@@ -72,6 +72,7 @@ Taps pass every event through unchanged in this phase (since Phase 4a the button
 5. Start recording a shortcut and press ⌘Q: nothing quits, and ⌘Q is recorded.
 6. Start mouse capture (+ Add remap), then close the Settings window: B3 still opens Mission Control.
 7. Note whether macOS asked for Input Monitoring the first time you recorded a shortcut, and report it. It is assumed that Accessibility is enough; this step checks that.
+8. Record ⌃→ for B4 · Click. Pressing B4 moves one Space right.
 
 ## Building
 
