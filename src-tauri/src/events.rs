@@ -6,8 +6,11 @@ use tauri::AppHandle;
 use tauri_specta::Event;
 
 use crate::{
-    actions::ActionStats,
-    config::{schema::Config, store::ConfigObserver},
+    actions::{ActionStats, KeyCapture, NoticeObserver},
+    config::{
+        schema::{Config, KeyModifier},
+        store::ConfigObserver,
+    },
     input::{
         engine::{EngineObserver, EngineSnapshot, ScrollStats},
         taps::TapSet,
@@ -73,5 +76,71 @@ impl ConfigObserver for EmitConfigChanged {
         if let Err(err) = ConfigChanged(config.clone()).emit(&self.0) {
             tracing::warn!(%err, "failed to emit config-changed");
         }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type, Event)]
+pub struct ButtonCaptured {
+    pub button: u8,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type, Event)]
+pub struct KeyCaptured {
+    pub key_code: u16,
+    pub modifiers: Vec<KeyModifier>,
+    pub key_label: String,
+}
+
+impl From<KeyCapture> for KeyCaptured {
+    fn from(capture: KeyCapture) -> Self {
+        Self {
+            key_code: capture.key_code,
+            modifiers: capture.modifiers,
+            key_label: capture.key_label,
+        }
+    }
+}
+
+/// No fields, so it serializes as `{}`.
+#[derive(Debug, Clone, Serialize, Deserialize, Type, Event)]
+pub struct KeyCaptureCancelled {}
+
+/// Forwards capture results to the UI.
+pub struct EmitNotices(pub AppHandle);
+
+impl NoticeObserver for EmitNotices {
+    fn button_captured(&self, button: u8) {
+        if let Err(err) = (ButtonCaptured { button }).emit(&self.0) {
+            tracing::warn!(%err, "failed to emit button-captured");
+        }
+    }
+    fn key_captured(&self, capture: KeyCapture) {
+        if let Err(err) = KeyCaptured::from(capture).emit(&self.0) {
+            tracing::warn!(%err, "failed to emit key-captured");
+        }
+    }
+    fn key_capture_cancelled(&self) {
+        if let Err(err) = (KeyCaptureCancelled {}).emit(&self.0) {
+            tracing::warn!(%err, "failed to emit key-capture-cancelled");
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_key_capture_becomes_the_event_unchanged() {
+        let capture = KeyCapture {
+            key_code: 21,
+            modifiers: vec![KeyModifier::Shift, KeyModifier::Command],
+            key_label: "4".into(),
+        };
+        let event = KeyCaptured::from(capture);
+        assert_eq!(
+            (event.key_code, event.modifiers, event.key_label.as_str()),
+            (21, vec![KeyModifier::Shift, KeyModifier::Command], "4")
+        );
     }
 }

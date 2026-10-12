@@ -114,23 +114,64 @@ pub enum TriggerDuration {
     Hold,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub struct Effect {
     pub action: Action,
 }
 
-/// What a remap does. Phase 4b adds the rest of spec §7.1.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+/// What a remap does (spec §7.1, §9.2).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(tag = "type")]
 pub enum Action {
-    SymbolicHotkey { id: SymbolicHotkeyId },
-    Navigate { direction: NavDirection },
+    SymbolicHotkey {
+        id: SymbolicHotkeyId,
+    },
+    Navigate {
+        direction: NavDirection,
+    },
+    /// A keyboard shortcut to post. `key_label` is only for display.
+    KeyCombo {
+        key_code: u16,
+        modifiers: Vec<KeyModifier>,
+        key_label: String,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub enum KeyModifier {
+    Command,
+    Shift,
+    Option,
+    Control,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub enum SymbolicHotkeyId {
     MissionControl,
+    AppExpose,
     ShowDesktop,
+    Launchpad,
+    LookUp,
+    Spotlight,
+    NotificationCenter,
+    SpaceLeft,
+    SpaceRight,
+    Desktop1,
+    Desktop2,
+    Desktop3,
+    Desktop4,
+    Desktop5,
+    Desktop6,
+    Desktop7,
+    Desktop8,
+    Desktop9,
+    Desktop10,
+    Desktop11,
+    Desktop12,
+    Desktop13,
+    Desktop14,
+    Desktop15,
+    Desktop16,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -146,6 +187,7 @@ pub fn tap_demand(config: &Config) -> TapDemand {
         buttons: g.buttons_enabled,
         scroll: g.scroll_enabled,
         flags: g.buttons_enabled || g.scroll_enabled,
+        keys: false,
     }
 }
 
@@ -182,7 +224,8 @@ mod tests {
             TapDemand {
                 buttons: true,
                 scroll: true,
-                flags: true
+                flags: true,
+                keys: false
             }
         );
     }
@@ -194,7 +237,8 @@ mod tests {
             TapDemand {
                 buttons: true,
                 scroll: false,
-                flags: true
+                flags: true,
+                keys: false
             }
         );
     }
@@ -206,7 +250,8 @@ mod tests {
             TapDemand {
                 buttons: false,
                 scroll: true,
-                flags: true
+                flags: true,
+                keys: false
             }
         );
     }
@@ -218,7 +263,8 @@ mod tests {
             TapDemand {
                 buttons: false,
                 scroll: false,
-                flags: false
+                flags: false,
+                keys: false
             }
         );
     }
@@ -266,5 +312,18 @@ mod tests {
             "buttons": { "remaps": [ { "trigger": { "button": 3, "level": 1, "duration": "click" } } ] }
         });
         assert!(serde_json::from_value::<Config>(missing_effect).is_err());
+    }
+
+    #[test]
+    fn a_key_combo_action_has_the_documented_shape() {
+        let action = Action::KeyCombo {
+            key_code: 1,
+            modifiers: vec![KeyModifier::Command, KeyModifier::Shift],
+            key_label: "S".into(),
+        };
+        assert_eq!(
+            serde_json::to_value(&action).unwrap(),
+            serde_json::json!({ "type": "KeyCombo", "key_code": 1, "modifiers": ["Command", "Shift"], "key_label": "S" })
+        );
     }
 }

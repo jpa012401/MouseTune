@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { commands, events, type ConfigView, type General as GeneralSettings } from "../bindings";
+import { commands, events, type ConfigView, type General as GeneralSettings, type Config, type Remap } from "../bindings";
 import { configErrorMessage } from "../lib/config";
 
 type ConfigState = {
@@ -10,8 +10,30 @@ type ConfigState = {
   loadError: string | null;
   load: () => Promise<void>;
   setGeneral: (patch: Partial<GeneralSettings>) => Promise<void>;
+  /** True when saved; otherwise `error` says why and the old list stays. */
+  setRemaps: (remaps: Remap[]) => Promise<boolean>;
   dismissRecovery: () => Promise<void>;
 };
+
+type SetState = (partial: Partial<ConfigState>) => void;
+
+/** The one save path. Errors name rows in the list being saved, not the stored one. */
+async function save(set: SetState, next: Config): Promise<boolean> {
+  try {
+    const result = await commands.setConfig(next);
+    if (result.status === "error") {
+      set({ error: configErrorMessage(result.error, next.buttons.remaps) });
+      return false;
+    }
+    // A save can clear the recovery notice in Rust (the unreadable file was overwritten).
+    const { recovery } = await commands.getConfig();
+    set({ view: { config: result.data, recovery }, error: null });
+    return true;
+  } catch (err) {
+    set({ error: configErrorMessage(err, next.buttons.remaps) });
+    return false;
+  }
+}
 
 /** Mirror of the saved settings. Rust validates and persists; the UI shows what Rust returns. */
 export const useConfigStore = create<ConfigState>((set, get) => ({
@@ -28,21 +50,12 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
   setGeneral: async (patch) => {
     const { view } = get();
     if (!view) return;
-    try {
-      const result = await commands.setConfig({
-        ...view.config,
-        general: { ...view.config.general, ...patch },
-      });
-      if (result.status === "error") {
-        set({ error: configErrorMessage(result.error) });
-        return;
-      }
-      // A save can clear the recovery notice in Rust (the unreadable file was overwritten).
-      const { recovery } = await commands.getConfig();
-      set({ view: { config: result.data, recovery }, error: null });
-    } catch (err) {
-      set({ error: configErrorMessage(err) });
-    }
+    await save(set, { ...view.config, general: { ...view.config.general, ...patch } });
+  },
+  setRemaps: async (remaps) => {
+    const { view } = get();
+    if (!view) return false;
+    return save(set, { ...view.config, buttons: { remaps } });
   },
   dismissRecovery: async () => {
     try {

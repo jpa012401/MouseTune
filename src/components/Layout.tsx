@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { NavLink, Outlet } from "react-router";
 import { startConfigSync } from "../store/config";
+import { startCaptureSync } from "../store/capture";
 import { RecoveryNotice } from "./RecoveryNotice";
 
 const NAV = [
@@ -13,6 +14,7 @@ const NAV = [
 export function Layout() {
   // Synced here rather than on a page, so the recovery notice shows on whichever page opens first.
   useEffect(() => startConfigSync(), []);
+  useEffect(() => startCaptureSync(), []);
 
   return (
     <div className="flex h-full">

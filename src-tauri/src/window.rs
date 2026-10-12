@@ -1,7 +1,11 @@
 //! Settings window lifecycle. The window is created on demand and destroyed on
 //! close so the WebKit process doesn't stay resident (spec §2.1).
 
+use std::sync::Arc;
+
 use tauri::{AppHandle, Manager, TitleBarStyle, WebviewUrl, WebviewWindowBuilder};
+
+use crate::input::thread::{Control, InputHandle};
 
 const SETTINGS: &str = "settings";
 
@@ -24,6 +28,16 @@ pub fn open_settings(app: &AppHandle) {
     match result {
         Ok(window) => {
             let _ = window.set_focus();
+            let handle = app.clone();
+            window.on_window_event(move |event| {
+                if matches!(event, tauri::WindowEvent::Destroyed) {
+                    // A closed window must never leave a button or the keyboard captured.
+                    if let Some(input) = handle.try_state::<Arc<InputHandle>>() {
+                        input.send(Control::StopCapture);
+                        input.send(Control::StopKeyCapture);
+                    }
+                }
+            });
         }
         Err(err) => tracing::error!(%err, "failed to open settings window"),
     }

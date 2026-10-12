@@ -119,14 +119,14 @@ mod tests {
         assert!(unsafe { resolve::<unsafe extern "C" fn()>(c"MouseTuneNoSuchSymbol") }.is_none());
     }
 
-    /// Read-only: reads Mission Control's binding; never sets anything.
+    /// Read-only: reads every supported hotkey's binding; never sets anything.
     #[test]
     #[ignore = "reads WindowServer state; run by hand"]
-    fn reads_mission_controls_binding() {
+    fn reads_every_supported_hotkey() {
         let hotkeys = MacSymbolicHotkeys::load().expect("CGS symbols resolve on this macOS");
-        let state = hotkeys
-            .read(32)
-            .expect("CGSGetSymbolicHotKeyValue succeeds");
-        println!("Mission Control: {state:?}");
+        for id in crate::actions::perform::ALL_HOTKEYS {
+            let (cgs, _) = crate::actions::perform::hotkey(id);
+            println!("{id:?} ({cgs}): {:?}", hotkeys.read(cgs));
+        }
     }
 }

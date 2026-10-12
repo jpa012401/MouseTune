@@ -43,11 +43,18 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             ipc::set_config,
             ipc::reset_config,
             ipc::dismiss_config_recovery,
+            ipc::start_capture,
+            ipc::stop_capture,
+            ipc::start_key_capture,
+            ipc::stop_key_capture,
         ])
         .events(tauri_specta::collect_events![
             events::PermissionChanged,
             events::InputStatusChanged,
             events::ConfigChanged,
+            events::ButtonCaptured,
+            events::KeyCaptured,
+            events::KeyCaptureCancelled,
         ])
 }
 
@@ -107,6 +114,7 @@ pub fn run() {
                         .map(|h| Box::new(h) as Box<dyn actions::perform::SymbolicHotkeys>),
                     poster: Box::new(platform::event_poster::MacEventPoster),
                     frontmost: Box::new(platform::frontmost_app::MacFrontmostApp),
+                    notices: Box::new(events::EmitNotices(app.handle().clone())),
                 },
                 Arc::clone(&input.shared().actions),
             );

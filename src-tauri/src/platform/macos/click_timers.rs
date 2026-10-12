@@ -148,6 +148,7 @@ mod tests {
         engine::TapHandler,
         filter::ScrollFields,
         guard::DisabledReason,
+        key_recorder::KeyEvent,
         router::{ButtonEvent, Verdict},
         taps::TapKind,
     };
@@ -160,6 +161,9 @@ mod tests {
         }
         fn on_click_timer(&mut self, kind: TimerKind) {
             self.0.borrow_mut().push(kind)
+        }
+        fn on_key(&mut self, _: &KeyEvent) -> Verdict {
+            Verdict::Pass
         }
         fn on_tap_disabled(&mut self, _: TapKind, _: DisabledReason) {}
     }

@@ -2,6 +2,7 @@ import { afterEach } from "vitest";
 import { cleanup } from "@testing-library/react";
 import { clearMocks } from "@tauri-apps/api/mocks";
 import { useConfigStore } from "../store/config";
+import { useCaptureStore } from "../store/capture";
 import { useStatusStore } from "../store/status";
 
 afterEach(async () => {
@@ -12,5 +13,6 @@ afterEach(async () => {
   clearMocks();
   useStatusStore.setState({ status: null, error: null });
   useConfigStore.setState({ view: null, error: null, loadError: null });
+  useCaptureStore.getState().reset();
   window.location.hash = "";
 });

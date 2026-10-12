@@ -34,6 +34,12 @@ pub enum Control {
     /// Boxed: the compiled tables are large, and every message pays for the
     /// biggest variant.
     SetRemaps(Box<CompiledRemaps>),
+    /// Report the next press of button 3 or higher instead of acting on it.
+    StartCapture,
+    StopCapture,
+    /// Record the next key-down (with modifiers) instead of letting it through.
+    StartKeyCapture,
+    StopKeyCapture,
     Shutdown,
 }
 
@@ -140,6 +146,22 @@ pub fn handle_control<C: TapController>(engine: &mut InputEngine<C>, msg: Contro
             engine.set_remaps(*remaps);
             Flow::Continue
         }
+        Control::StartCapture => {
+            engine.start_capture();
+            Flow::Continue
+        }
+        Control::StopCapture => {
+            engine.stop_capture();
+            Flow::Continue
+        }
+        Control::StartKeyCapture => {
+            engine.start_key_capture();
+            Flow::Continue
+        }
+        Control::StopKeyCapture => {
+            engine.stop_key_capture();
+            Flow::Continue
+        }
         Control::Shutdown => Flow::Stop,
     }
 }
@@ -195,14 +217,15 @@ mod tests {
 
     use super::*;
     use crate::{
-        config::schema::General,
+        actions::{CompiledAction, Job, Notice},
+        config::schema::{General, NavDirection},
         input::{
             devices::DeviceEvent,
             engine::{ButtonSetup, EngineObserver, InputEngine, TapHandler},
             router::{ButtonEvent, ButtonKind, Verdict},
             taps::{TapDemand, TapSet},
         },
-        test_support::{FakeSink, FakeTapController, FakeTimers, mouse},
+        test_support::{FakeClock, FakeSink, FakeTapController, FakeTimers, mouse},
     };
 
     #[derive(Default)]
@@ -219,6 +242,13 @@ mod tests {
     }
 
     fn engine(trusted: bool) -> (InputEngine<FakeTapController>, FakeTapController) {
+        engine_with(trusted, FakeSink::default())
+    }
+
+    fn engine_with(
+        trusted: bool,
+        sink: FakeSink,
+    ) -> (InputEngine<FakeTapController>, FakeTapController) {
         let taps = FakeTapController::default();
         let mut engine = InputEngine::new(
             taps.clone(),
@@ -228,8 +258,9 @@ mod tests {
             ButtonSetup {
                 remaps: compile(&Config::default()),
                 timers: Box::new(FakeTimers::default()),
-                sink: Box::new(FakeSink::default()),
+                sink: Box::new(sink),
                 counters: Arc::default(),
+                clock: Box::new(FakeClock::new()),
             },
             Box::new(Ignore),
         );
@@ -255,6 +286,7 @@ mod tests {
             buttons: false,
             scroll: false,
             flags: false,
+            keys: false,
         };
         assert_eq!(
             handle_control(&mut engine, Control::SetDemand(off)),
@@ -284,7 +316,8 @@ mod tests {
             Ok(Control::SetDemand(TapDemand {
                 buttons: true,
                 scroll: false,
-                flags: true
+                flags: true,
+                keys: false
             }))
         );
         assert_eq!(
@@ -312,6 +345,57 @@ mod tests {
             mouse_subtype: 0,
         };
         assert_eq!(engine.on_button(&middle_down), Verdict::Pass);
+    }
+
+    #[test]
+    fn capture_controls_reach_the_engine_and_continue() {
+        let sink = FakeSink::default();
+        let (mut engine, _) = engine_with(true, sink.clone());
+        let press = |engine: &mut InputEngine<FakeTapController>, kind, button| {
+            engine.on_button(&ButtonEvent {
+                kind,
+                button,
+                sender_id: 10,
+                user_data: 0,
+                mouse_subtype: 0,
+            })
+        };
+
+        assert_eq!(
+            handle_control(&mut engine, Control::StartCapture),
+            Flow::Continue
+        );
+        press(&mut engine, ButtonKind::Down, 2);
+        press(&mut engine, ButtonKind::Up, 2);
+        handle_control(&mut engine, Control::StartCapture);
+        assert_eq!(
+            handle_control(&mut engine, Control::StopCapture),
+            Flow::Continue
+        );
+        press(&mut engine, ButtonKind::Down, 3);
+
+        assert_eq!(
+            *sink.jobs.lock().unwrap(),
+            vec![
+                Job::Notice(Notice::ButtonCaptured { button: 3 }),
+                Job::Perform(CompiledAction::Navigate(NavDirection::Back)),
+            ]
+        );
+    }
+
+    #[test]
+    fn key_capture_controls_reach_the_engine_and_continue() {
+        let (mut engine, _) = engine(true);
+        assert_eq!(
+            handle_control(&mut engine, Control::StartKeyCapture),
+            Flow::Continue
+        );
+        assert!(engine.snapshot().taps.keys);
+        assert_eq!(
+            handle_control(&mut engine, Control::StopKeyCapture),
+            Flow::Continue
+        );
+        assert!(!engine.snapshot().taps.keys);
     }
 
     #[test]
