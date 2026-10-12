@@ -232,4 +232,38 @@ mod tests {
         ));
         assert!(outcome.recover);
     }
+
+    #[test]
+    fn a_phase_4b_file_without_scroll_gets_the_scroll_defaults() {
+        let outcome = parse_config(Some(
+            r#"{ "version": 1, "general": { "buttons_enabled": true, "scroll_enabled": false }, "buttons": { "remaps": [] } }"#,
+        ));
+        assert!(!outcome.recover);
+        assert!(!outcome.config.general.scroll_enabled);
+        assert_eq!(
+            outcome.config.scroll,
+            crate::config::schema::Scroll::default()
+        );
+    }
+
+    #[test]
+    fn a_partial_scroll_section_keeps_its_values_and_fills_the_rest() {
+        let outcome = parse_config(Some(
+            r#"{ "version": 1, "scroll": { "smooth": false, "speed": "high" } }"#,
+        ));
+        assert!(!outcome.recover);
+        let s = outcome.config.scroll;
+        assert!(!s.smooth);
+        assert_eq!(s.speed, crate::config::schema::ScrollSpeed::High);
+        assert_eq!(s.smoothness, crate::config::schema::Smoothness::Regular);
+        assert!(s.trackpad_simulation);
+    }
+
+    #[test]
+    fn an_unknown_smoothness_recovers_to_defaults() {
+        let outcome = parse_config(Some(
+            r#"{ "version": 1, "scroll": { "smoothness": "silky" } }"#,
+        ));
+        assert!(outcome.recover);
+    }
 }

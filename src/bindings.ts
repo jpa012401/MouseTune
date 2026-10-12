@@ -73,6 +73,7 @@ export type Config = {
 	version: number,
 	general: General,
 	buttons: Buttons,
+	scroll: Scroll,
 };
 
 export type ConfigChanged = Config;
@@ -155,10 +156,35 @@ export type Remap = {
 
 export type RemapProblem = "DuplicateTrigger" | "ButtonNotRemappable" | "ButtonOutOfRange" | "LevelOutOfRange" | "EmptyKeyCombo";
 
+/**
+ *  Smooth scrolling (Phase 5a design §1). Every field is `Copy`, so the
+ *  input engine takes the whole section as its settings.
+ */
+export type Scroll = {
+	/**  Animate wheel ticks. Off: inversion only, done in place. */
+	smooth: boolean,
+	smoothness: Smoothness,
+	speed: ScrollSpeed,
+	/**  Send the coasting tail as momentum events instead of `Changed`. */
+	trackpad_simulation: boolean,
+	/**
+	 *  Flip that axis relative to what macOS delivers (which already
+	 *  includes the Natural Scrolling setting).
+	 */
+	invert_vertical: boolean,
+	invert_horizontal: boolean,
+};
+
+export type ScrollSpeed = 
+/**  The distance macOS would have scrolled, just smoothed. */
+"system" | "low" | "medium" | "high";
+
 export type ScrollStats = {
 	mouse_wheel: number,
 	passed_through: number,
 };
+
+export type Smoothness = "low" | "regular" | "high";
 
 export type Status = {
 	app_version: string,
