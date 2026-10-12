@@ -92,9 +92,18 @@ struct LoopState {
 }
 
 /// Wakes `mt-input` from any thread.
-struct RunLoopWaker {
+pub(crate) struct RunLoopWaker {
     run_loop: CFRetained<CFRunLoop>,
     source: CFRetained<CFRunLoopSource>,
+}
+
+impl RunLoopWaker {
+    pub(crate) fn new(
+        run_loop: CFRetained<CFRunLoop>,
+        source: CFRetained<CFRunLoopSource>,
+    ) -> Self {
+        Self { run_loop, source }
+    }
 }
 
 // SAFETY: CFRunLoopSourceSignal and CFRunLoopWakeUp are documented thread-safe.
@@ -216,10 +225,7 @@ fn run_input_thread(
 
     engine.borrow_mut().start();
 
-    let waker = Arc::new(RunLoopWaker {
-        run_loop: run_loop.clone(),
-        source: source.clone(),
-    });
+    let waker = Arc::new(RunLoopWaker::new(run_loop.clone(), source.clone()));
     if waker_tx.send(waker).is_err() {
         tracing::error!("input thread caller went away before startup finished");
     }

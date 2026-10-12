@@ -21,7 +21,7 @@ use crate::{
 
 /// "Not armed": a fire date about 31 years away, also used as the repeat
 /// interval so a fired timer parks itself instead of firing again.
-const NEVER_SECS: f64 = 1.0e9;
+pub(crate) const NEVER_SECS: f64 = 1.0e9;
 
 type TimerCallback = unsafe extern "C-unwind" fn(*mut CFRunLoopTimer, *mut c_void);
 
