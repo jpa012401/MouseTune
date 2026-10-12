@@ -43,9 +43,14 @@ pub fn spawn(jobs: Receiver<Job>, out: Outputs, counters: Arc<ActionCounters>) -
 mod tests {
     use super::*;
     use crate::{
-        actions::{ActionSink, ActionStats, queue::queue},
+        actions::{
+            ActionSink, ActionStats,
+            keys::{KeyBinding, ModifierMask},
+            perform::HotkeyState,
+            queue::queue,
+        },
         config::schema::{Action, NavDirection, SymbolicHotkeyId},
-        test_support::{FakeFrontmost, FakePoster, OutputLog},
+        test_support::{FakeFrontmost, FakeHotkeys, FakePoster, OutputLog},
     };
 
     fn outputs(log: &OutputLog, panics: bool) -> Outputs {
@@ -75,6 +80,45 @@ mod tests {
                 performed: 2,
                 dropped: 0,
                 failed: 0
+            }
+        );
+    }
+
+    #[test]
+    fn a_job_that_returns_an_error_is_counted_as_failed() {
+        let log = OutputLog::default();
+        let (sink, rx) = queue();
+        sink.submit(Job::Perform(Action::SymbolicHotkey {
+            id: SymbolicHotkeyId::MissionControl,
+        }));
+        drop(sink);
+        let state = HotkeyState {
+            enabled: false,
+            binding: KeyBinding {
+                key_code: 0xFFFF,
+                modifiers: ModifierMask(0),
+            },
+        };
+        let out = Outputs {
+            hotkeys: Some(Box::new(FakeHotkeys {
+                log: log.clone(),
+                state: Some(state),
+                install_fails: true,
+            })),
+            poster: Box::new(FakePoster {
+                log: log.clone(),
+                panics: false,
+            }),
+            frontmost: Box::new(FakeFrontmost(None)),
+        };
+        let counters = Arc::new(ActionCounters::default());
+        run(rx, out, Arc::clone(&counters));
+        assert_eq!(
+            counters.stats(),
+            ActionStats {
+                performed: 0,
+                dropped: 0,
+                failed: 1
             }
         );
     }

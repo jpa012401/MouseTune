@@ -83,9 +83,12 @@ fn symbolic_hotkey(id: SymbolicHotkeyId, out: &Outputs) -> Result<(), OutputErro
         return post(default_shortcut(id), out);
     };
     let n = hotkey_id(id);
+    // A failed read says nothing about the user's binding; installing over it
+    // could replace a working shortcut, so fall back to the default instead.
     let binding = match hotkeys.read(n) {
+        None => return post(default_shortcut(id), out),
         Some(s) if s.enabled && s.binding.key_code != NO_KEY => s.binding,
-        _ => {
+        Some(_) => {
             let unreachable = KeyBinding {
                 key_code: 400 + n,
                 modifiers: ModifierMask::NUMERIC_PAD | ModifierMask::SECONDARY_FN,
@@ -247,6 +250,53 @@ mod tests {
                 "key 0x7e down 0x40000",
                 "key 0x7e up 0x40000",
                 "key 0x3b up 0x0"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_failed_read_falls_back_to_the_default_shortcut() {
+        let log = OutputLog::default();
+        perform(MC, &rig(Some(hotkeys(&log, None)), None, &log)).unwrap();
+        assert_eq!(
+            log.all(),
+            [
+                "read 32",
+                "key 0x3b down 0x40000",
+                "key 0x7e down 0x40000",
+                "key 0x7e up 0x40000",
+                "key 0x3b up 0x0"
+            ]
+        );
+    }
+
+    #[test]
+    fn show_desktop_without_cgs_symbols_posts_f11() {
+        let log = OutputLog::default();
+        let job = Job::Perform(Action::SymbolicHotkey {
+            id: SymbolicHotkeyId::ShowDesktop,
+        });
+        perform(job, &rig(None, None, &log)).unwrap();
+        assert_eq!(log.all(), ["key 0x67 down 0x0", "key 0x67 up 0x0"]);
+    }
+
+    #[test]
+    fn forward_in_finder_is_cmd_right_bracket() {
+        let log = OutputLog::default();
+        perform(
+            Job::Perform(Action::Navigate {
+                direction: NavDirection::Forward,
+            }),
+            &rig(None, Some("com.apple.finder"), &log),
+        )
+        .unwrap();
+        assert_eq!(
+            log.all(),
+            [
+                "key 0x37 down 0x100000",
+                "key 0x1e down 0x100000",
+                "key 0x1e up 0x100000",
+                "key 0x37 up 0x0"
             ]
         );
     }

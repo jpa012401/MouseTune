@@ -8,7 +8,14 @@ use std::{
     },
 };
 
-use crate::accessibility::Accessibility;
+use crate::{
+    accessibility::Accessibility,
+    actions::{
+        ActionSink, Job, OutputError,
+        keys::{KeyBinding, KeyStroke},
+        perform::{EventPoster, FrontmostApp, HotkeyState, SymbolicHotkeys},
+    },
+};
 
 /// Records every OS call, in order, with its argument.
 #[derive(Default)]
@@ -225,12 +232,6 @@ impl ConfigFile for FakeConfigFile {
         Ok("config.1760000000.bak.json".to_owned())
     }
 }
-
-use crate::actions::{
-    ActionSink, Job, OutputError,
-    keys::{KeyBinding, KeyStroke},
-    perform::{EventPoster, FrontmostApp, HotkeyState, SymbolicHotkeys},
-};
 
 /// Records submitted jobs; `full` makes every submit fail like a full queue.
 #[derive(Clone, Default)]
