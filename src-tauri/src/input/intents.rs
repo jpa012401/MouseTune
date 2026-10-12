@@ -6,7 +6,7 @@
 
 use crate::{
     actions::keys::KeyStroke,
-    input::{remaps::SwipeKind, router::DragAxis},
+    input::{drag::SwipeOutput, remaps::SwipeKind, router::DragAxis, scroll::ScrollPoster},
 };
 
 /// Port: stops the pointer moving during a drag. Must be idempotent.
@@ -34,6 +34,9 @@ pub struct GestureSetup {
     pub freeze: Box<dyn PointerFreeze>,
     pub poster: Box<dyn InputPoster>,
     pub signal: Box<dyn IntentSignal>,
+    pub swipe: Box<dyn SwipeOutput>,
+    /// A second poster, for the two-finger swipe.
+    pub scroll: Box<dyn ScrollPoster>,
 }
 
 #[expect(

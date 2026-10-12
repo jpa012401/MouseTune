@@ -4,6 +4,7 @@
 pub mod capture;
 pub mod click_cycle;
 pub mod devices;
+pub mod drag;
 pub mod engine;
 pub mod filter;
 pub mod guard;

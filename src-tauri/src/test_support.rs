@@ -579,5 +579,33 @@ pub fn fake_gestures() -> crate::input::intents::GestureSetup {
         freeze: Box::new(FakeFreeze::default()),
         poster: Box::new(FakeInputPoster::default()),
         signal: Box::new(FakeSignal::default()),
+        swipe: Box::new(FakeSwipe::default()),
+        scroll: Box::new(FakeScrollPoster::default()),
+    }
+}
+
+use crate::input::{drag::SwipeOutput, router::DragAxis};
+
+/// Records dock-swipe calls as text ("begin Horizontal", "change 0.25",
+/// "end 1.50", "cancel"). Clones share the log.
+#[derive(Clone, Default)]
+pub struct FakeSwipe(Arc<Mutex<Vec<String>>>);
+impl FakeSwipe {
+    pub fn log(&self) -> Vec<String> {
+        self.0.lock().unwrap().clone()
+    }
+}
+impl SwipeOutput for FakeSwipe {
+    fn begin(&mut self, axis: DragAxis) {
+        self.0.lock().unwrap().push(format!("begin {axis:?}"));
+    }
+    fn change(&mut self, progress: f64) {
+        self.0.lock().unwrap().push(format!("change {progress:.2}"));
+    }
+    fn end(&mut self, velocity: f64) {
+        self.0.lock().unwrap().push(format!("end {velocity:.2}"));
+    }
+    fn cancel(&mut self) {
+        self.0.lock().unwrap().push("cancel".into());
     }
 }

@@ -23,6 +23,7 @@ use crate::{
     config::schema::Scroll,
     input::{
         capture::SystemClock,
+        drag::NoSwipe,
         engine::{ButtonSetup, EngineObserver, InputEngine, TapHandler},
         guard::guarded,
         intents::{GestureSetup, IntentSignal},
@@ -198,6 +199,9 @@ fn run_input_thread(
         signal: Box::new(MacIntentSignal {
             source: intents.clone(),
         }),
+        // Task 9 replaces this once dock swipes are verified.
+        swipe: Box::new(NoSwipe),
+        scroll: Box::new(MacScrollPoster::new()),
     };
     let engine: Engine = Rc::new(RefCell::new(InputEngine::new(
         controller,

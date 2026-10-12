@@ -16,11 +16,12 @@ use crate::{
     input::{
         capture::{ButtonCapture, Clock},
         devices::{DeviceEvent, DeviceInfo, DeviceRegistry},
+        drag::DragSession,
         filter::{
             MOUSETUNE_EVENT_TAG, ScrollClass, ScrollFields, classify_scroll, is_foreign_button_down,
         },
         guard::{DisabledAction, DisabledReason, on_tap_disabled},
-        intents::{GestureSetup, Intent, IntentRing},
+        intents::{GestureSetup, InputPoster, Intent, IntentRing, IntentSignal, PointerFreeze},
         key_recorder::{KeyEvent, KeyRecorder},
         remaps::CompiledRemaps,
         router::{
@@ -119,7 +120,10 @@ pub struct InputEngine<C: TapController> {
     clock: Box<dyn Clock>,
     scroll: ScrollEngine,
     intents: IntentRing,
-    gestures: GestureSetup,
+    freeze: Box<dyn PointerFreeze>,
+    poster: Box<dyn InputPoster>,
+    signal: Box<dyn IntentSignal>,
+    session: DragSession,
     /// What the engine last told `PointerFreeze`.
     frozen: bool,
     observer: Box<dyn EngineObserver>,
@@ -156,7 +160,10 @@ impl<C: TapController> InputEngine<C> {
             clock: buttons.clock,
             scroll,
             intents: IntentRing::default(),
-            gestures,
+            freeze: gestures.freeze,
+            poster: gestures.poster,
+            signal: gestures.signal,
+            session: DragSession::new(gestures.swipe, gestures.scroll),
             frozen: false,
             observer,
             last_published: None,
@@ -300,7 +307,7 @@ impl<C: TapController> InputEngine<C> {
     /// Hot path: a fixed ring push and a signal.
     fn queue(&mut self, intent: Intent) {
         self.intents.push(intent);
-        self.gestures.signal.signal();
+        self.signal.signal();
     }
 
     /// Carries out queued intents. Never runs inside a tap callout.
@@ -308,16 +315,20 @@ impl<C: TapController> InputEngine<C> {
         while let Some(intent) = self.intents.pop() {
             match intent {
                 Intent::DragTap(_) => self.update_taps(),
-                Intent::DragBegin { .. } => {
+                Intent::DragBegin { axis, swipe } => {
                     if self.router.freeze_pointer() {
                         self.set_frozen(true);
                     }
+                    if let Some(kind) = swipe {
+                        self.session.begin(axis, kind, self.clock.now());
+                    }
                 }
-                Intent::DragMove { .. } => {}
-                Intent::DragEnd => self.set_frozen(false),
-                Intent::HoldThrough { cg_button, down } => {
-                    self.gestures.poster.button(cg_button, down)
+                Intent::DragMove { dx, dy } => self.session.motion(dx, dy, self.clock.now()),
+                Intent::DragEnd => {
+                    self.session.end(self.clock.now());
+                    self.set_frozen(false);
                 }
+                Intent::HoldThrough { cg_button, down } => self.poster.button(cg_button, down),
                 Intent::AppSwitch(_) | Intent::Magnify(_) => {} // Task 7.
             }
         }
@@ -328,7 +339,7 @@ impl<C: TapController> InputEngine<C> {
     fn set_frozen(&mut self, frozen: bool) {
         if self.frozen != frozen {
             self.frozen = frozen;
-            self.gestures.freeze.set_frozen(frozen);
+            self.freeze.set_frozen(frozen);
         }
     }
 
@@ -343,6 +354,7 @@ impl<C: TapController> InputEngine<C> {
             self.apply(d);
         }
         self.run_intents();
+        self.session.cancel();
         self.set_frozen(false);
     }
 
@@ -499,7 +511,8 @@ mod tests {
         },
         test_support::{
             FakeClock, FakeFrames, FakeFreeze, FakeInputPoster, FakeScrollPoster, FakeSignal,
-            FakeSink, FakeTapController, FakeTimers, apple_trackpad, mouse, phase4_buttons,
+            FakeSink, FakeSwipe, FakeTapController, FakeTimers, apple_trackpad, mouse,
+            phase4_buttons,
         },
     };
 
@@ -543,6 +556,8 @@ mod tests {
         freeze: FakeFreeze,
         poster: FakeInputPoster,
         signal: FakeSignal,
+        swipe: FakeSwipe,
+        gesture_scroll: FakeScrollPoster,
     }
 
     fn rig(trusted: bool) -> Rig {
@@ -558,6 +573,8 @@ mod tests {
         let freeze = FakeFreeze::default();
         let poster = FakeInputPoster::default();
         let signal = FakeSignal::default();
+        let swipe = FakeSwipe::default();
+        let gesture_scroll = FakeScrollPoster::default();
         let mut engine = InputEngine::new(
             taps.clone(),
             trusted,
@@ -582,6 +599,8 @@ mod tests {
                 freeze: Box::new(freeze.clone()),
                 poster: Box::new(poster.clone()),
                 signal: Box::new(signal.clone()),
+                swipe: Box::new(swipe.clone()),
+                scroll: Box::new(gesture_scroll.clone()),
             },
             Box::new(published.clone()),
         );
@@ -600,6 +619,8 @@ mod tests {
             freeze,
             poster,
             signal,
+            swipe,
+            gesture_scroll,
         }
     }
 
@@ -801,6 +822,70 @@ mod tests {
         press_and_drag(&mut r);
         r.engine.set_trusted(false);
         assert_eq!(r.freeze.calls(), ["freeze", "unfreeze"]);
+    }
+
+    fn dock_swipe_rig() -> Rig {
+        let mut r = rig(true);
+        r.engine.apply_device_event(DeviceEvent::Added(mouse(1)));
+        let mut c = Config {
+            buttons: phase4_buttons(),
+            ..Config::default()
+        };
+        c.buttons.drags = vec![crate::config::schema::DragBinding {
+            button: 3,
+            effect: crate::config::schema::DragEffect::SpacesAndMissionControl,
+        }];
+        r.engine.set_remaps(crate::input::remaps::compile_with(
+            &c,
+            crate::input::remaps::OutputSupport {
+                dock_swipe: true,
+                magnify: false,
+            },
+        ));
+        r
+    }
+
+    #[test]
+    fn a_dock_swipe_drag_drives_the_swipe_output_and_ends_on_release() {
+        let mut r = dock_swipe_rig();
+        button(&mut r, ButtonKind::Down, 2, 10);
+        r.engine.on_motion(&MotionEvent {
+            dx: 200,
+            dy: 0,
+            user_data: 0,
+        });
+        r.engine.on_intents();
+        button(&mut r, ButtonKind::Up, 2, 10);
+        r.engine.on_intents();
+        let log = r.swipe.log();
+        assert_eq!(log.first().map(String::as_str), Some("begin Horizontal"));
+        assert_eq!(log.get(1).map(String::as_str), Some("change 0.50"));
+        assert!(log.last().is_some_and(|l| l.starts_with("end ")));
+    }
+
+    #[test]
+    fn a_two_finger_swipe_drag_posts_phased_scrolls_on_the_gesture_poster() {
+        let mut r = drag_rig();
+        press_and_drag(&mut r);
+        button(&mut r, ButtonKind::Up, 2, 10);
+        r.engine.on_intents();
+        assert_eq!(r.gesture_scroll.log(), ["Began", "Changed dy 12", "Ended"]);
+        assert!(r.posted.log().is_empty(), "not the smoothing poster");
+    }
+
+    #[test]
+    fn unplugging_mid_dock_swipe_ends_it() {
+        let mut r = dock_swipe_rig();
+        button(&mut r, ButtonKind::Down, 2, 10);
+        r.engine.on_motion(&MotionEvent {
+            dx: 200,
+            dy: 0,
+            user_data: 0,
+        });
+        r.engine.on_intents();
+        r.engine.apply_device_event(DeviceEvent::Removed { id: 1 });
+        assert!(r.swipe.log().last().is_some_and(|l| l.starts_with("end ")));
+        assert_eq!(r.freeze.calls().last(), Some(&"unfreeze"));
     }
 
     #[test]
