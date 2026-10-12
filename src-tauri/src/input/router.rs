@@ -360,6 +360,27 @@ mod tests {
             ..Config::default()
         }))
     }
+    #[test]
+    fn a_press_arms_the_configured_double_click_and_hold_windows() {
+        let mut r = ButtonRouter::new(compile(&Config {
+            timing: crate::config::schema::Timing {
+                hold_ms: 400,
+                double_click_ms: 300,
+            },
+            ..Config::default()
+        }));
+        assert_eq!(
+            down(&mut r, MIDDLE),
+            (
+                Verdict::Swallow,
+                vec![
+                    Outcome::Arm(TimerKind::Expiry, Duration::from_millis(300)),
+                    Outcome::Arm(TimerKind::Hold, Duration::from_millis(400)),
+                ]
+            )
+        );
+    }
+
     fn defaults() -> ButtonRouter {
         ButtonRouter::new(compile(&Config::default()))
     }

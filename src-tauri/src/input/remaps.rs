@@ -7,20 +7,32 @@ use std::time::Duration;
 use crate::{
     actions::CompiledAction,
     config::{
-        schema::{Config, TriggerDuration},
+        schema::{Config, TIMING_MS, Timing as TimingConfig, TriggerDuration},
         validate::check_remap,
     },
 };
 
 pub const MAX_BUTTONS: usize = 32;
 pub const MAX_LEVEL: u8 = 3;
-pub const HOLD: Duration = Duration::from_millis(250);
-pub const LEVEL_EXPIRY: Duration = Duration::from_millis(260);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Timing {
     pub hold: Duration,
     pub level_expiry: Duration,
+}
+
+impl From<&TimingConfig> for Timing {
+    /// Clamped, so a hand-edited value outside the range still works
+    /// (Phase 4c design §1).
+    fn from(t: &TimingConfig) -> Self {
+        let ms = |v: u32| {
+            Duration::from_millis(u64::from(v.clamp(*TIMING_MS.start(), *TIMING_MS.end())))
+        };
+        Self {
+            hold: ms(t.hold_ms),
+            level_expiry: ms(t.double_click_ms),
+        }
+    }
 }
 
 /// One button's bindings, indexed by `level - 1`.
@@ -77,10 +89,7 @@ impl CompiledRemaps {
     pub fn empty() -> Self {
         Self {
             buttons: [ButtonRemaps::default(); MAX_BUTTONS],
-            timing: Timing {
-                hold: HOLD,
-                level_expiry: LEVEL_EXPIRY,
-            },
+            timing: Timing::from(&TimingConfig::default()),
         }
     }
 
@@ -109,6 +118,7 @@ pub fn compile(config: &Config) -> CompiledRemaps {
         }
         *slot = Some(CompiledAction::from(&remap.effect.action));
     }
+    compiled.timing = Timing::from(&config.timing);
     compiled
 }
 
@@ -169,6 +179,50 @@ mod tests {
         let t = compile(&Config::default()).timing;
         assert_eq!(t.hold, Duration::from_millis(250));
         assert_eq!(t.level_expiry, Duration::from_millis(260));
+    }
+
+    fn timing_of(hold_ms: u32, double_click_ms: u32) -> Timing {
+        compile(&Config {
+            timing: crate::config::schema::Timing {
+                hold_ms,
+                double_click_ms,
+            },
+            ..Config::default()
+        })
+        .timing
+    }
+
+    #[test]
+    fn timing_comes_from_the_config() {
+        assert_eq!(
+            timing_of(400, 300),
+            Timing {
+                hold: Duration::from_millis(400),
+                level_expiry: Duration::from_millis(300)
+            }
+        );
+    }
+
+    #[test]
+    fn out_of_range_timing_is_clamped_when_compiled() {
+        assert_eq!(
+            timing_of(50, 9999),
+            Timing {
+                hold: Duration::from_millis(150),
+                level_expiry: Duration::from_millis(600)
+            }
+        );
+    }
+
+    #[test]
+    fn empty_remaps_use_the_default_timing() {
+        assert_eq!(
+            CompiledRemaps::empty().timing,
+            Timing {
+                hold: Duration::from_millis(250),
+                level_expiry: Duration::from_millis(260)
+            }
+        );
     }
 
     #[test]
