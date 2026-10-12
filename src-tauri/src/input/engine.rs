@@ -226,11 +226,13 @@ impl<C: TapController> TapHandler for InputEngine<C> {
         self.apply(decision);
     }
 
-    /// The tap missed events while it was off, so any cycle in flight is
-    /// stale, whatever the reason.
+    /// A disabled button tap missed button events, so any cycle in flight is
+    /// stale, whatever the reason. Other taps miss no button events.
     fn on_tap_disabled(&mut self, kind: TapKind, reason: DisabledReason) {
-        let reset = self.router.reset();
-        self.apply(reset);
+        if kind == TapKind::Buttons {
+            let reset = self.router.reset();
+            self.apply(reset);
+        }
         if on_tap_disabled(reason) == DisabledAction::Reenable {
             self.taps.reenable(kind);
         }
@@ -244,7 +246,7 @@ mod tests {
     use super::*;
     use crate::{
         actions::Job,
-        config::schema::{Action, Config, SymbolicHotkeyId},
+        config::schema::{Action, Config, NavDirection, SymbolicHotkeyId},
         input::{
             filter::{MOUSETUNE_EVENT_TAG, PassReason},
             remaps::compile,
@@ -367,7 +369,12 @@ mod tests {
             button(&mut r, ButtonKind::Down, 3, 999_999),
             Verdict::Swallow
         );
-        assert_eq!(r.sink.jobs.lock().unwrap().len(), 1);
+        assert_eq!(
+            *r.sink.jobs.lock().unwrap(),
+            vec![Job::Perform(Action::Navigate {
+                direction: NavDirection::Back
+            })]
+        );
     }
 
     #[test]
@@ -390,6 +397,7 @@ mod tests {
 
     #[test]
     fn a_kill_switch_mid_press_still_swallows_the_up() {
+        // Pins the engine contract; with real taps this up wouldn't arrive.
         let mut r = rig(true);
         button(&mut r, ButtonKind::Down, 2, 10);
         r.engine.set_demand(TapDemand {
@@ -405,6 +413,25 @@ mod tests {
         );
         // The cycle was reset, so the release fires nothing.
         assert!(r.sink.jobs.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_passing_down_after_a_lost_up_leaves_its_up_alone() {
+        let mut r = rig(true);
+        button(&mut r, ButtonKind::Down, 2, 10); // its up went straight to the OS
+        r.engine.set_remaps(CompiledRemaps::empty());
+        assert_eq!(button(&mut r, ButtonKind::Down, 2, 10), Verdict::Pass);
+        assert_eq!(button(&mut r, ButtonKind::Up, 2, 10), Verdict::Pass);
+    }
+
+    #[test]
+    fn a_scroll_tap_timeout_mid_press_keeps_the_hold() {
+        let mut r = rig(true);
+        button(&mut r, ButtonKind::Down, 2, 10);
+        r.engine
+            .on_tap_disabled(TapKind::Scroll, DisabledReason::Timeout);
+        r.engine.on_click_timer(TimerKind::Hold);
+        assert_eq!(*r.sink.jobs.lock().unwrap(), vec![DESKTOP]);
     }
 
     #[test]

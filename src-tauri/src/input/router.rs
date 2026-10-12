@@ -190,6 +190,9 @@ impl ButtonRouter {
         let remaps = self.remaps.button(button);
         let max = remaps.max_click_level();
         if max == 0 {
+            // A fresh down proves the previous up was missed (it went to the
+            // OS while the tap was off), so its stale bit must not eat this up.
+            self.swallowed &= !(1 << button);
             return Decision::pass();
         }
         let mut d = Decision::swallow();
@@ -576,6 +579,18 @@ mod tests {
                 ]
             )
         );
+    }
+
+    #[test]
+    fn a_fresh_passing_down_clears_a_stale_swallowed_bit() {
+        let mut r = defaults();
+        down(&mut r, MIDDLE); // swallowed; its up never reaches us
+        r.set_remaps(compile(&Config {
+            buttons: Buttons { remaps: vec![] },
+            ..Config::default()
+        }));
+        assert_eq!(down(&mut r, MIDDLE), (Verdict::Pass, vec![]));
+        assert_eq!(up(&mut r, MIDDLE), (Verdict::Pass, vec![]));
     }
 
     #[test]
