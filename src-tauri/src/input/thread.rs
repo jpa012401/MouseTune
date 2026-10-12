@@ -19,7 +19,7 @@ use crate::{
     },
     input::{
         engine::{EngineObserver, EngineSnapshot, InputEngine, ScrollCounters},
-        remaps::{CompiledRemaps, compile},
+        remaps::{CompiledRemaps, OutputSupport, compile_with},
         taps::{TapController, TapDemand},
     },
     permission_monitor::PermissionObserver,
@@ -125,13 +125,19 @@ impl PermissionObserver for PermissionBridge {
 }
 
 /// Tells the input engine which taps the saved settings want.
-pub struct InputConfigBridge(pub Arc<InputHandle>);
+pub struct InputConfigBridge {
+    pub handle: Arc<InputHandle>,
+    pub support: OutputSupport,
+}
 
 impl ConfigObserver for InputConfigBridge {
     fn config_changed(&self, config: &Config) {
-        self.0.send(Control::SetDemand(tap_demand(config)));
-        self.0.send(Control::SetRemaps(Box::new(compile(config))));
-        self.0.send(Control::SetScroll(config.scroll));
+        self.handle.send(Control::SetDemand(tap_demand(config)));
+        self.handle.send(Control::SetRemaps(Box::new(compile_with(
+            config,
+            self.support,
+        ))));
+        self.handle.send(Control::SetScroll(config.scroll));
     }
 }
 
@@ -224,6 +230,7 @@ mod tests {
     };
 
     use super::*;
+    use crate::input::remaps::compile;
     use crate::{
         actions::{CompiledAction, Job, Notice},
         config::schema::{General, NavDirection, Scroll},
@@ -327,7 +334,11 @@ mod tests {
             ..Config::default()
         };
 
-        InputConfigBridge(handle).config_changed(&config);
+        InputConfigBridge {
+            handle,
+            support: OutputSupport::NONE,
+        }
+        .config_changed(&config);
 
         assert_eq!(
             rx.try_recv(),
@@ -340,7 +351,10 @@ mod tests {
         );
         assert_eq!(
             rx.try_recv(),
-            Ok(Control::SetRemaps(Box::new(compile(&config))))
+            Ok(Control::SetRemaps(Box::new(compile_with(
+                &config,
+                OutputSupport::NONE
+            ))))
         );
         assert_eq!(rx.try_recv(), Ok(Control::SetScroll(config.scroll)));
         assert_eq!(waker.0.load(Ordering::SeqCst), 3);

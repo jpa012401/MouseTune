@@ -7,8 +7,11 @@ use std::time::Duration;
 use crate::{
     actions::CompiledAction,
     config::{
-        schema::{Config, TIMING_MS, Timing as TimingConfig, TriggerDuration},
-        validate::check_remap,
+        schema::{
+            Action, Config, DragEffect, ScrollEffect, SymbolicHotkeyId, TIMING_MS,
+            Timing as TimingConfig, TriggerDuration,
+        },
+        validate::{check_action, check_remap},
     },
 };
 
@@ -35,11 +38,60 @@ impl From<&TimingConfig> for Timing {
     }
 }
 
+/// Which private outputs are verified on this macOS (Phase 6 design §3).
+/// Unverified ones compile to their documented fallbacks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OutputSupport {
+    pub dock_swipe: bool,
+    pub magnify: bool,
+}
+
+impl OutputSupport {
+    pub const NONE: Self = Self {
+        dock_swipe: false,
+        magnify: false,
+    };
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SwipeKind {
+    SpacesAndMissionControl,
+    ScrollSwipe,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DiscreteActions {
+    pub left: Option<CompiledAction>,
+    pub right: Option<CompiledAction>,
+    pub up: Option<CompiledAction>,
+    pub down: Option<CompiledAction>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompiledDrag {
+    Swipe(SwipeKind),
+    Discrete(DiscreteActions),
+}
+
+/// What `SpacesAndMissionControl` becomes when dock swipes aren't verified.
+const SPACES_FALLBACK: DiscreteActions = DiscreteActions {
+    left: Some(CompiledAction::SymbolicHotkey(SymbolicHotkeyId::SpaceLeft)),
+    right: Some(CompiledAction::SymbolicHotkey(SymbolicHotkeyId::SpaceRight)),
+    up: Some(CompiledAction::SymbolicHotkey(
+        SymbolicHotkeyId::MissionControl,
+    )),
+    down: Some(CompiledAction::SymbolicHotkey(SymbolicHotkeyId::AppExpose)),
+};
+
 /// One button's bindings, indexed by `level - 1`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ButtonRemaps {
     click: [Option<CompiledAction>; MAX_LEVEL as usize],
     hold: [Option<CompiledAction>; MAX_LEVEL as usize],
+    pub drag: Option<CompiledDrag>,
+    pub scroll: Option<ScrollEffect>,
+    /// The CG button this button presses while held (hold-through).
+    pub acts_as: Option<u8>,
 }
 
 impl ButtonRemaps {
@@ -70,6 +122,21 @@ impl ButtonRemaps {
             .unwrap_or(0)
     }
 
+    /// Swallowed and tracked by the router: anything bound.
+    pub fn is_bound(&self) -> bool {
+        self.max_click_level() > 0 || self.drag.is_some() || self.scroll.is_some()
+    }
+
+    /// The click must wait for the release: the press may turn into a
+    /// drag or a scroll modifier first.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the router uses it from Phase 6 Task 3")
+    )]
+    pub fn waits_for_release(&self) -> bool {
+        self.drag.is_some() || self.scroll.is_some()
+    }
+
     pub fn has_hold(&self, level: u8) -> bool {
         self.action(level, TriggerDuration::Hold).is_some()
     }
@@ -83,6 +150,7 @@ impl ButtonRemaps {
 pub struct CompiledRemaps {
     buttons: [ButtonRemaps; MAX_BUTTONS],
     pub timing: Timing,
+    pub freeze_pointer: bool,
 }
 
 impl CompiledRemaps {
@@ -90,6 +158,7 @@ impl CompiledRemaps {
         Self {
             buttons: [ButtonRemaps::default(); MAX_BUTTONS],
             timing: Timing::from(&TimingConfig::default()),
+            freeze_pointer: true,
         }
     }
 
@@ -103,7 +172,12 @@ impl CompiledRemaps {
 
 /// Bad hand-edited entries are skipped with a warning; one bad remap never
 /// resets the user's settings (design §1).
+#[cfg(test)]
 pub fn compile(config: &Config) -> CompiledRemaps {
+    compile_with(config, OutputSupport::NONE)
+}
+
+pub fn compile_with(config: &Config, support: OutputSupport) -> CompiledRemaps {
     let mut compiled = CompiledRemaps::empty();
     for remap in &config.buttons.remaps {
         let t = remap.trigger;
@@ -119,14 +193,91 @@ pub fn compile(config: &Config) -> CompiledRemaps {
         *slot = Some(CompiledAction::from(&remap.effect.action));
     }
     compiled.timing = Timing::from(&config.timing);
+    compiled.freeze_pointer = config.general.freeze_pointer_during_drag;
+    compile_bindings(config, support, &mut compiled);
     compiled
+}
+
+fn valid_binding_button(button: u8, seen: &mut u64) -> bool {
+    if !(3..=MAX_BUTTONS as u8).contains(&button) || *seen & (1 << button) != 0 {
+        tracing::warn!(button, "skipping an invalid or duplicate binding");
+        return false;
+    }
+    *seen |= 1 << button;
+    true
+}
+
+/// Same rules as the save path; a bad hand-edited entry is skipped. The
+/// whole-list check (`validate_bindings`) finds the first problem only, so
+/// entries are checked one by one here.
+fn compile_bindings(config: &Config, support: OutputSupport, compiled: &mut CompiledRemaps) {
+    let b = &config.buttons;
+    let mut seen_drag = 0u64;
+    for d in &b.drags {
+        if !valid_binding_button(d.button, &mut seen_drag) {
+            continue;
+        }
+        let drag = match &d.effect {
+            DragEffect::SpacesAndMissionControl if support.dock_swipe => {
+                CompiledDrag::Swipe(SwipeKind::SpacesAndMissionControl)
+            }
+            DragEffect::SpacesAndMissionControl => CompiledDrag::Discrete(SPACES_FALLBACK),
+            DragEffect::ScrollSwipe => CompiledDrag::Swipe(SwipeKind::ScrollSwipe),
+            DragEffect::Discrete {
+                left,
+                right,
+                up,
+                down,
+            } => {
+                let one = |a: &Option<Action>| {
+                    a.as_ref()
+                        .filter(|a| check_action(a).is_ok())
+                        .map(CompiledAction::from)
+                };
+                let actions = DiscreteActions {
+                    left: one(left),
+                    right: one(right),
+                    up: one(up),
+                    down: one(down),
+                };
+                if actions == DiscreteActions::default() {
+                    continue;
+                }
+                CompiledDrag::Discrete(actions)
+            }
+        };
+        compiled.buttons[usize::from(d.button - 1)].drag = Some(drag);
+    }
+
+    let mut seen_scroll = 0u64;
+    for s in &b.scroll_bindings {
+        if valid_binding_button(s.button, &mut seen_scroll) {
+            compiled.buttons[usize::from(s.button - 1)].scroll = Some(s.effect);
+        }
+    }
+
+    let mut seen_hold = 0u64;
+    for h in &b.hold_through {
+        if !valid_binding_button(h.button, &mut seen_hold) {
+            continue;
+        }
+        let slot = &mut compiled.buttons[usize::from(h.button - 1)];
+        if slot.is_bound() {
+            tracing::warn!(
+                button = h.button,
+                "skipping a hold-through on a bound button"
+            );
+            continue;
+        }
+        slot.acts_as = Some(h.acts_as.cg_button());
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::schema::{
-        Buttons, ClickTrigger, Effect, NavDirection, Remap, SymbolicHotkeyId,
+        Buttons, ClickTrigger, DragEffect, Effect, NavDirection, Remap, SymbolicHotkeyId,
     };
     use crate::test_support::{config_action, phase4_buttons};
 
@@ -351,5 +502,127 @@ mod tests {
             c.button(4).action(1, TriggerDuration::Click),
             Some(CompiledAction::SystemKey(SystemKey::Mute))
         );
+    }
+
+    use crate::config::schema::{
+        DragBinding, HoldThrough, MouseButton as Mb, ScrollBinding, ScrollEffect as Se,
+    };
+
+    fn with_buttons(f: impl FnOnce(&mut Buttons)) -> Config {
+        let mut c = Config {
+            buttons: phase4_buttons(),
+            ..Config::default()
+        };
+        f(&mut c.buttons);
+        c
+    }
+
+    #[test]
+    fn a_verified_dock_swipe_compiles_to_the_swipe() {
+        let c = compile_with(
+            &with_buttons(|b| {
+                b.drags = vec![DragBinding {
+                    button: 3,
+                    effect: DragEffect::SpacesAndMissionControl,
+                }]
+            }),
+            OutputSupport {
+                dock_swipe: true,
+                magnify: false,
+            },
+        );
+        assert_eq!(
+            c.button(2).drag,
+            Some(CompiledDrag::Swipe(SwipeKind::SpacesAndMissionControl))
+        );
+    }
+
+    #[test]
+    fn an_unverified_dock_swipe_falls_back_to_separate_actions() {
+        let c = compile_with(
+            &with_buttons(|b| {
+                b.drags = vec![DragBinding {
+                    button: 3,
+                    effect: DragEffect::SpacesAndMissionControl,
+                }]
+            }),
+            OutputSupport::NONE,
+        );
+        assert_eq!(
+            c.button(2).drag,
+            Some(CompiledDrag::Discrete(DiscreteActions {
+                left: Some(CompiledAction::SymbolicHotkey(SymbolicHotkeyId::SpaceLeft)),
+                right: Some(CompiledAction::SymbolicHotkey(SymbolicHotkeyId::SpaceRight)),
+                up: Some(MC),
+                down: Some(CompiledAction::SymbolicHotkey(SymbolicHotkeyId::AppExpose)),
+            }))
+        );
+    }
+
+    #[test]
+    fn scroll_swipe_needs_no_private_api() {
+        let c = compile_with(
+            &with_buttons(|b| {
+                b.drags = vec![DragBinding {
+                    button: 5,
+                    effect: DragEffect::ScrollSwipe,
+                }]
+            }),
+            OutputSupport::NONE,
+        );
+        assert_eq!(
+            c.button(4).drag,
+            Some(CompiledDrag::Swipe(SwipeKind::ScrollSwipe))
+        );
+    }
+
+    #[test]
+    fn scroll_bindings_and_hold_through_compile_per_button() {
+        let c = compile(&with_buttons(|b| {
+            b.scroll_bindings = vec![ScrollBinding {
+                button: 4,
+                effect: Se::Zoom,
+            }];
+            b.hold_through = vec![HoldThrough {
+                button: 6,
+                acts_as: Mb::Middle,
+            }];
+        }));
+        assert_eq!(c.button(3).scroll, Some(Se::Zoom));
+        assert_eq!(c.button(5).acts_as, Some(2), "B6 acts as middle (CG 2)");
+    }
+
+    #[test]
+    fn a_drag_only_button_is_bound_and_waits_for_release() {
+        let c = compile(&with_buttons(|b| {
+            b.drags = vec![DragBinding {
+                button: 7,
+                effect: DragEffect::ScrollSwipe,
+            }]
+        }));
+        let b7 = c.button(6);
+        assert_eq!(b7.max_click_level(), 0);
+        assert!(b7.is_bound());
+        assert!(b7.waits_for_release());
+        assert!(!c.button(7).is_bound());
+    }
+
+    #[test]
+    fn a_hand_edited_conflicting_hold_through_is_skipped() {
+        let c = compile(&with_buttons(|b| {
+            b.hold_through = vec![HoldThrough {
+                button: 4,
+                acts_as: Mb::Left,
+            }];
+        }));
+        assert_eq!(c.button(3).acts_as, None, "B4 already has a click remap");
+    }
+
+    #[test]
+    fn the_freeze_setting_is_compiled() {
+        let mut config = Config::default();
+        config.general.freeze_pointer_during_drag = false;
+        assert!(!compile(&config).freeze_pointer);
+        assert!(compile(&Config::default()).freeze_pointer);
     }
 }

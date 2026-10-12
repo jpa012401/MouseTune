@@ -9,3 +9,10 @@ pub mod os_version;
 pub mod permissions;
 pub mod scroll_poster;
 pub mod symbolic_hotkeys;
+
+/// Private outputs verified on this macOS (Phase 6 design §3). Each flips
+/// to `true` only for the versions its spike verified; see
+/// `dock_swipe::VERIFIED_ON` and `magnify::VERIFIED_ON` (Tasks 9 and 11).
+pub fn output_support() -> crate::input::remaps::OutputSupport {
+    crate::input::remaps::OutputSupport::NONE
+}
