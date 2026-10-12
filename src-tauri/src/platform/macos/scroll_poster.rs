@@ -46,9 +46,11 @@ impl ScrollPoster for MacScrollPoster {
     }
 }
 
-/// Builds the event without posting it, so tests can read it back. Line
-/// deltas are written first and point deltas last, so nothing CoreGraphics
-/// derives from one field overwrites what we set on another.
+/// Builds the event without posting it, so tests can read it back. Setting
+/// a line delta (DeltaAxisN) makes CoreGraphics rewrite that axis's
+/// fixed-point delta (to the line value) and point delta (to an accelerated
+/// value); setting fixed or point changes nothing else. So each axis is
+/// written line, then fixed, then point.
 pub fn scroll_event(
     source: Option<&CGEventSource>,
     out: &ScrollOut,

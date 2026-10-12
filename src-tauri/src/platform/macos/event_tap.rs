@@ -89,8 +89,10 @@ pub fn invert_scroll(event: &CGEvent, vertical: bool, horizontal: bool) {
         if !flip {
             continue;
         }
-        // CoreGraphics rewrites the sibling fields when one is set, so read
-        // all three before writing any, then write line, fixed, point.
+        // Setting the line delta (DeltaAxisN) makes CoreGraphics rewrite
+        // that axis's fixed-point delta (to the line value) and point delta
+        // (to an accelerated value); setting fixed or point changes nothing
+        // else. So read all three first, then write line, fixed, point.
         let get = |field| CGEvent::integer_value_field(Some(event), field);
         let (line_value, point_value) = (get(line), get(point));
         let fine = CGEvent::double_value_field(Some(event), fixed);
