@@ -110,6 +110,11 @@ impl<C: TapController> InputEngine<C> {
         self.refresh();
     }
 
+    pub fn set_demand(&mut self, demand: TapDemand) {
+        self.demand = demand;
+        self.refresh();
+    }
+
     pub fn apply_device_event(&mut self, event: DeviceEvent) {
         match event {
             DeviceEvent::Added(device) => self.devices.insert(device),
@@ -286,6 +291,41 @@ mod tests {
         r.engine.set_trusted(false);
         assert_eq!(r.published.last().taps, TapSet::NONE);
         assert!(!r.published.last().trusted);
+    }
+
+    #[test]
+    fn turning_scroll_off_in_settings_disables_the_scroll_tap() {
+        let mut r = rig(true);
+        r.engine.apply_device_event(DeviceEvent::Added(mouse(1)));
+
+        r.engine.set_demand(TapDemand {
+            buttons: true,
+            scroll: false,
+            flags: true,
+        });
+        assert_eq!(
+            r.published.last().taps,
+            TapSet {
+                buttons: true,
+                scroll: false,
+                flags: true
+            }
+        );
+
+        r.engine.set_demand(TapDemand::ALL);
+        assert_eq!(r.published.last().taps, ALL_ON);
+    }
+
+    #[test]
+    fn everything_off_runs_no_taps() {
+        let mut r = rig(true);
+        r.engine.apply_device_event(DeviceEvent::Added(mouse(1)));
+        r.engine.set_demand(TapDemand {
+            buttons: false,
+            scroll: false,
+            flags: false,
+        });
+        assert_eq!(r.published.last().taps, TapSet::NONE);
     }
 
     #[test]

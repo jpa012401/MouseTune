@@ -74,6 +74,7 @@ pub fn run() {
             let trusted = accessibility.is_trusted();
             let input = input::thread::spawn(
                 trusted,
+                input::taps::TapDemand::ALL,
                 Box::new(events::EmitInputStatus(app.handle().clone())),
             );
             app.manage(Arc::clone(&input));

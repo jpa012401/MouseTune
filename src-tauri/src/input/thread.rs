@@ -12,9 +12,13 @@ use arc_swap::ArcSwap;
 use crossbeam_channel::Sender;
 
 use crate::{
+    config::{
+        schema::{Config, tap_demand},
+        store::ConfigObserver,
+    },
     input::{
         engine::{EngineObserver, EngineSnapshot, InputEngine, ScrollCounters},
-        taps::TapController,
+        taps::{TapController, TapDemand},
     },
     permission_monitor::PermissionObserver,
     platform::input_loop,
@@ -24,6 +28,7 @@ use crate::{
 #[derive(Debug, PartialEq, Eq)]
 pub enum Control {
     SetTrusted(bool),
+    SetDemand(TapDemand),
     Shutdown,
 }
 
@@ -104,10 +109,23 @@ impl PermissionObserver for PermissionBridge {
     }
 }
 
+/// Tells the input engine which taps the saved settings want.
+pub struct InputConfigBridge(pub Arc<InputHandle>);
+
+impl ConfigObserver for InputConfigBridge {
+    fn config_changed(&self, config: &Config) {
+        self.0.send(Control::SetDemand(tap_demand(config)));
+    }
+}
+
 pub fn handle_control<C: TapController>(engine: &mut InputEngine<C>, msg: Control) -> Flow {
     match msg {
         Control::SetTrusted(trusted) => {
             engine.set_trusted(trusted);
+            Flow::Continue
+        }
+        Control::SetDemand(demand) => {
+            engine.set_demand(demand);
             Flow::Continue
         }
         Control::Shutdown => Flow::Stop,
@@ -129,14 +147,18 @@ impl EngineObserver for StoreSnapshot {
 }
 
 /// Starts `mt-input` and returns once its run loop is ready for messages.
-pub fn spawn(trusted: bool, ui: Box<dyn EngineObserver + Send>) -> Arc<InputHandle> {
+pub fn spawn(
+    trusted: bool,
+    demand: TapDemand,
+    ui: Box<dyn EngineObserver + Send>,
+) -> Arc<InputHandle> {
     let (tx, rx) = crossbeam_channel::unbounded();
     let shared = Arc::new(InputShared::default());
     let observer = Box::new(StoreSnapshot {
         shared: Arc::clone(&shared),
         ui,
     });
-    let (join, waker) = input_loop::start(trusted, observer, rx, Arc::clone(&shared));
+    let (join, waker) = input_loop::start(trusted, demand, observer, rx, Arc::clone(&shared));
     Arc::new(InputHandle::new(tx, waker, shared, Some(join)))
 }
 
@@ -149,6 +171,7 @@ mod tests {
 
     use super::*;
     use crate::{
+        config::schema::General,
         input::{
             devices::DeviceEvent,
             engine::{EngineObserver, InputEngine},
@@ -192,6 +215,47 @@ mod tests {
             Flow::Continue
         );
         assert_eq!(engine.snapshot().taps, TapSet::NONE);
+    }
+
+    #[test]
+    fn set_demand_reaches_the_engine_and_continues() {
+        let (mut engine, _) = engine(true);
+        let off = TapDemand {
+            buttons: false,
+            scroll: false,
+            flags: false,
+        };
+        assert_eq!(
+            handle_control(&mut engine, Control::SetDemand(off)),
+            Flow::Continue
+        );
+        assert_eq!(engine.snapshot().taps, TapSet::NONE);
+    }
+
+    #[test]
+    fn config_bridge_sends_the_demand_and_wakes_the_input_thread() {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let waker = Arc::new(CountingWaker::default());
+        let handle = Arc::new(InputHandle::new(tx, waker.clone(), Arc::default(), None));
+        let config = Config {
+            version: 1,
+            general: General {
+                buttons_enabled: true,
+                scroll_enabled: false,
+            },
+        };
+
+        InputConfigBridge(handle).config_changed(&config);
+
+        assert_eq!(
+            rx.try_recv(),
+            Ok(Control::SetDemand(TapDemand {
+                buttons: true,
+                scroll: false,
+                flags: true
+            }))
+        );
+        assert_eq!(waker.0.load(Ordering::SeqCst), 1);
     }
 
     #[test]
@@ -247,7 +311,7 @@ mod tests {
         impl EngineObserver for Ignore2 {
             fn snapshot_changed(&self, _: &EngineSnapshot) {}
         }
-        let handle = spawn(false, Box::new(Ignore2));
+        let handle = spawn(false, TapDemand::ALL, Box::new(Ignore2));
         assert!(!handle.shared().snapshot.load().trusted);
         let started = std::time::Instant::now();
         handle.shutdown();

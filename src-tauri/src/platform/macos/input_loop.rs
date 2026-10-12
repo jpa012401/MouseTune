@@ -41,6 +41,7 @@ const QOS_CLASS_USER_INTERACTIVE: u32 = 0x21;
 /// which are applied after the returned waker is woken.
 pub fn start(
     trusted: bool,
+    demand: TapDemand,
     observer: Box<dyn EngineObserver + Send>,
     rx: Receiver<Control>,
     shared: Arc<InputShared>,
@@ -48,7 +49,7 @@ pub fn start(
     let (waker_tx, waker_rx) = mpsc::sync_channel::<Arc<dyn Waker>>(1);
     let join = thread::Builder::new()
         .name("mt-input".into())
-        .spawn(move || run_input_thread(trusted, observer, rx, shared, waker_tx))
+        .spawn(move || run_input_thread(trusted, demand, observer, rx, shared, waker_tx))
         .expect("failed to spawn the mt-input thread");
     let waker = waker_rx
         .recv_timeout(Duration::from_secs(2))
@@ -103,6 +104,7 @@ fn set_user_interactive_qos() {
 
 fn run_input_thread(
     trusted: bool,
+    demand: TapDemand,
     observer: Box<dyn EngineObserver + Send>,
     rx: Receiver<Control>,
     shared: Arc<InputShared>,
@@ -119,7 +121,7 @@ fn run_input_thread(
     let engine: Engine = Rc::new(RefCell::new(InputEngine::new(
         controller,
         trusted,
-        TapDemand::ALL,
+        demand,
         Arc::clone(&shared.counters),
         observer,
     )));
