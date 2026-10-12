@@ -412,16 +412,17 @@ impl ButtonRouter {
         let mut d = Decision::pass();
         self.let_go(&mut d.outcomes);
         let mut released = 0;
-        for (button, target) in self.through.iter_mut().enumerate() {
+        for target in &mut self.through {
             if released == MAX_THROUGH_UPS_PER_CALL {
                 break;
             }
+            // The source button's bit stays: while the button tap runs, its
+            // real up still arrives and must be swallowed like its down was.
             if let Some(Through {
                 target: cg_button, ..
             }) = target.take()
             {
                 released += 1;
-                self.swallowed &= !(1 << button);
                 d.outcomes.push(Outcome::HoldThrough {
                     cg_button,
                     down: false,

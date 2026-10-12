@@ -1180,6 +1180,24 @@ mod tests {
         assert_eq!(r.poster.log(), ["down 2"]);
     }
 
+    #[test]
+    fn a_refresh_that_keeps_the_button_tap_on_still_swallows_a_held_through_up() {
+        let mut r = hold_through_rig();
+        button(&mut r, ButtonKind::Down, 5, 10);
+        r.engine.on_intents();
+        r.engine.set_demand(TapDemand {
+            buttons: true,
+            scroll: false,
+            flags: true,
+            keys: false,
+            drag: false,
+        });
+        assert_eq!(r.poster.log(), ["down 2", "up 2"], "the refresh let go");
+        assert_eq!(button(&mut r, ButtonKind::Up, 5, 10), Verdict::Swallow);
+        r.engine.on_intents();
+        assert_eq!(r.poster.log(), ["down 2", "up 2"], "nothing extra posted");
+    }
+
     /// B3 (CG 2) acts as Back (CG 3); no other bindings.
     fn b3_acts_as_back_rig() -> Rig {
         let mut r = rig(true);
