@@ -28,6 +28,7 @@ describe("Buttons page", () => {
     const rows = within(list).getAllByRole("listitem").map((li) => li.textContent);
     expect(rows).toEqual([
       expect.stringContaining("Mission Control"),
+      expect.stringContaining("Spaces & Mission Control"),
       expect.stringContaining("Back"),
       expect.stringContaining("Forward"),
     ]);
@@ -35,7 +36,7 @@ describe("Buttons page", () => {
   });
 
   it("says so when there are no remaps", async () => {
-    mockBackend({ get_status: tapsOn, get_config: () => configView({ config: { ...config(), buttons: { ...config().buttons, remaps: [] } } }) });
+    mockBackend({ get_status: tapsOn, get_config: () => configView({ config: { ...config(), buttons: { ...config().buttons, remaps: [], drags: [] } } }) });
     renderButtons();
     expect(await screen.findByText("No buttons are remapped.")).toBeTruthy();
   });
@@ -51,7 +52,7 @@ describe("Buttons page", () => {
     expect(await screen.findByText("Turn on mouse buttons in General to add a remap.")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "+ Add remap" })).toBeNull();
     expect(screen.getByRole("button", { name: "Restore defaults" })).toBeTruthy();
-    expect(screen.getAllByRole("button", { name: "Change" })).toHaveLength(3);
+    expect(screen.getAllByRole("button", { name: "Change" })).toHaveLength(4);
   });
 
   it("offers to add a remap once the buttons tap is on", async () => {
@@ -181,7 +182,7 @@ describe("Buttons page", () => {
     let saved: Config | undefined;
     mockBackend({ get_status: tapsOn, set_config: (a) => (saved = (a as { config: Config }).config) });
     renderButtons();
-    fireEvent.click(within((await screen.findAllByRole("listitem"))[1]!).getByRole("button", { name: "Delete" }));
+    fireEvent.click(within((await screen.findAllByRole("listitem"))[2]!).getByRole("button", { name: "Delete" }));
     await waitFor(() => expect(saved!.buttons.remaps).toEqual([defaultRemaps[0], defaultRemaps[2]]));
   });
 
@@ -191,9 +192,114 @@ describe("Buttons page", () => {
     mockBackend({ get_status: tapsOn, get_config: () => configView({ config: { ...config({ buttons_enabled: false }), buttons: { ...config().buttons, remaps: [] } } }), set_config: (a) => (saved = (a as { config: Config }).config) });
     renderButtons();
     fireEvent.click(await screen.findByRole("button", { name: "Restore defaults" }));
-    expect(window.confirm).toHaveBeenCalledWith("Replace your button remaps with the defaults?");
+    expect(window.confirm).toHaveBeenCalledWith("Replace your button bindings with the defaults?");
     await waitFor(() => expect(saved!.buttons.remaps).toEqual(defaultRemaps));
     expect(saved!.general.buttons_enabled).toBe(false);
+  });
+
+  it("lists drag, scroll and acts-as rows", async () => {
+    mockBackend({
+      get_status: tapsOn,
+      get_config: () => configView({ config: { ...config(), buttons: {
+        remaps: defaultRemaps,
+        drags: [{ button: 3, effect: { type: "SpacesAndMissionControl" } }],
+        scroll_bindings: [{ button: 4, effect: "Zoom" }],
+        hold_through: [{ button: 6, acts_as: "Middle" }],
+      } } }),
+    });
+    renderButtons();
+    expect(await screen.findByText("Middle button · Drag")).toBeTruthy();
+    expect(screen.getByText("Spaces & Mission Control")).toBeTruthy();
+    expect(screen.getByText("Button 4 · Scroll")).toBeTruthy();
+    expect(screen.getByText("Button 6 · Acts as")).toBeTruthy();
+  });
+
+  it("adds a drag with separate actions", async () => {
+    let saved: Config | undefined;
+    mockBackend({ get_status: tapsOn, start_capture: () => null, stop_capture: () => null, set_config: (a) => (saved = (a as { config: Config }).config) });
+    renderButtons();
+    fireEvent.click(await screen.findByRole("button", { name: "+ Add remap" }));
+    await act(() => emit("button-captured", { button: 7 }));
+    fireEvent.click(screen.getByRole("radio", { name: "Drag" }));
+    fireEvent.change(screen.getByLabelText("Drag effect"), { target: { value: "Discrete" } });
+    fireEvent.change(screen.getByLabelText("Left"), { target: { value: "nav:Back" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    await waitFor(() =>
+      expect(saved!.buttons.drags).toContainEqual({
+        button: 7,
+        effect: { type: "Discrete", left: { type: "Navigate", direction: "Back" }, right: null, up: null, down: null },
+      }),
+    );
+  });
+
+  it("adds a scroll binding", async () => {
+    const saved: Config[] = [];
+    mockBackend({ get_status: tapsOn, start_capture: () => null, stop_capture: () => null, set_config: (a) => { const c = (a as { config: Config }).config; saved.push(c); return c; } });
+    renderButtons();
+    fireEvent.click(await screen.findByRole("button", { name: "+ Add remap" }));
+    await act(() => emit("button-captured", { button: 4 }));
+    fireEvent.click(screen.getByRole("radio", { name: "Scroll" }));
+    fireEvent.change(screen.getByLabelText("Scroll effect"), { target: { value: "AppSwitcher" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    await waitFor(() => expect(saved.at(-1)!.buttons.scroll_bindings).toEqual([{ button: 4, effect: "AppSwitcher" }]));
+    expect(saved.at(-1)!.buttons.drags).toEqual(config().buttons.drags);
+    expect(saved.at(-1)!.buttons.remaps).toEqual(defaultRemaps);
+  });
+
+  it("adds an acts-as binding", async () => {
+    let saved: Config | undefined;
+    mockBackend({ get_status: tapsOn, start_capture: () => null, stop_capture: () => null, set_config: (a) => (saved = (a as { config: Config }).config) });
+    renderButtons();
+    fireEvent.click(await screen.findByRole("button", { name: "+ Add remap" }));
+    await act(() => emit("button-captured", { button: 6 }));
+    fireEvent.click(screen.getByRole("radio", { name: "Acts as" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "Acts as" }), { target: { value: "Middle" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    await waitFor(() => expect(saved!.buttons.hold_through).toEqual([{ button: 6, acts_as: "Middle" }]));
+  });
+
+  it("won't let a button with other bindings act as another button", async () => {
+    mockBackend({ get_status: tapsOn, start_capture: () => null, stop_capture: () => null });
+    renderButtons();
+    fireEvent.click(await screen.findByRole("button", { name: "+ Add remap" }));
+    await act(() => emit("button-captured", { button: 3 }));
+    fireEvent.click(screen.getByRole("radio", { name: "Acts as" }));
+    expect(screen.getByText("Middle button already has other bindings, so it can’t act as another button.")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Add" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("deletes a drag row", async () => {
+    let saved: Config | undefined;
+    mockBackend({ get_status: tapsOn, set_config: (a) => (saved = (a as { config: Config }).config) });
+    renderButtons();
+    const row = (await screen.findByText("Middle button · Drag")).closest("li")!;
+    fireEvent.click(within(row).getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(saved!.buttons.drags).toEqual([]));
+    expect(saved!.buttons.remaps).toEqual(defaultRemaps);
+  });
+
+  it("changes a drag row's effect", async () => {
+    let saved: Config | undefined;
+    mockBackend({ get_status: tapsOn, set_config: (a) => (saved = (a as { config: Config }).config) });
+    renderButtons();
+    const row = (await screen.findByText("Middle button · Drag")).closest("li")!;
+    fireEvent.click(within(row).getByRole("button", { name: "Change" }));
+    fireEvent.change(within(row).getByLabelText("Drag effect"), { target: { value: "ScrollSwipe" } });
+    fireEvent.click(within(row).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(saved!.buttons.drags).toEqual([{ button: 3, effect: { type: "ScrollSwipe" } }]));
+  });
+
+  it("restore defaults restores every binding list", async () => {
+    let saved: Config | undefined;
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    mockBackend({
+      get_status: tapsOn,
+      get_config: () => configView({ config: { ...config(), buttons: { remaps: [], drags: [], scroll_bindings: [{ button: 4, effect: "Zoom" }], hold_through: [] } } }),
+      set_config: (a) => (saved = (a as { config: Config }).config),
+    });
+    renderButtons();
+    fireEvent.click(await screen.findByRole("button", { name: "Restore defaults" }));
+    await waitFor(() => expect(saved!.buttons).toEqual(config().buttons));
   });
 
   it("cancelling restore defaults changes nothing", async () => {
@@ -209,7 +315,7 @@ describe("Buttons page", () => {
     renderButtons();
     fireEvent.click(within((await screen.findAllByRole("listitem"))[0]!).getByRole("button", { name: "Delete" }));
     expect(await screen.findByText("Couldn’t save your settings: disk full")).toBeTruthy();
-    expect(screen.getAllByRole("listitem")).toHaveLength(3);
+    expect(screen.getAllByRole("listitem")).toHaveLength(4);
   });
 
   it("leaving the page stops a capture", async () => {

@@ -1,9 +1,10 @@
 import { useEffect, useId, useRef, useState } from "react";
-import type { Action, Remap } from "../bindings";
+import type { Action, Buttons as ButtonSettings, DragEffect, MouseButton, Remap, ScrollEffect } from "../bindings";
 import { ActionPicker } from "../components/ActionPicker";
 import { AddRemapPanel } from "../components/AddRemapPanel";
+import { ActsAsPicker, DragEffectPicker, ScrollEffectPicker } from "../components/BindingEffectPicker";
 import { buttonClass } from "../components/buttonStyles";
-import { DEFAULT_TIMING, defaultButtonRemaps, remapLabel, waitsForDoubleClick } from "../lib/remaps";
+import { bindingRows, DEFAULT_TIMING, defaultButtons, waitsForDoubleClick, type BindingRow } from "../lib/remaps";
 import { useCaptureStore } from "../store/capture";
 import { useConfigStore } from "../store/config";
 import { useStatusStore } from "../store/status";
@@ -16,6 +17,80 @@ const muted = "text-neutral-500";
 function showsDoubleClickHint(remaps: Remap[], index: number): boolean {
   const { button } = remaps[index]!.trigger;
   return remaps.findIndex((r) => r.trigger.button === button) === index && waitsForDoubleClick(remaps, button);
+}
+
+/** What a row is being changed to: the row's own effect, held until Save. */
+type Draft =
+  | { kind: "remap"; value: Action | null }
+  | { kind: "drag"; value: DragEffect | null }
+  | { kind: "scroll"; value: ScrollEffect | null }
+  | { kind: "through"; value: MouseButton | null };
+
+const rowKey = (row: BindingRow) => `${row.kind}-${row.index}`;
+
+function draftOf(b: ButtonSettings, row: BindingRow): Draft {
+  switch (row.kind) {
+    case "remap":
+      return { kind: "remap", value: b.remaps[row.index]!.effect.action };
+    case "drag":
+      return { kind: "drag", value: b.drags[row.index]!.effect };
+    case "scroll":
+      return { kind: "scroll", value: b.scroll_bindings[row.index]!.effect };
+    case "through":
+      return { kind: "through", value: b.hold_through[row.index]!.acts_as };
+  }
+}
+
+/** A recorded-but-cancelled shortcut sets a remap draft to null; the others always hold a choice. */
+const draftReady = (d: Draft) => d.value !== null;
+
+/** Saves into the one list at `row.index`; the other lists are carried over untouched. */
+function withDraft(b: ButtonSettings, row: BindingRow, d: Draft): ButtonSettings {
+  const at = <T,>(list: T[], make: (old: T) => T) => list.map((x, i) => (i === row.index ? make(x) : x));
+  if (d.kind === "remap" && row.kind === "remap" && d.value) {
+    const action = d.value;
+    return { ...b, remaps: at(b.remaps, (r) => ({ ...r, effect: { ...r.effect, action } })) };
+  }
+  if (d.kind === "drag" && row.kind === "drag" && d.value) {
+    const effect = d.value;
+    return { ...b, drags: at(b.drags, (x) => ({ ...x, effect })) };
+  }
+  if (d.kind === "scroll" && row.kind === "scroll" && d.value) {
+    const effect = d.value;
+    return { ...b, scroll_bindings: at(b.scroll_bindings, (x) => ({ ...x, effect })) };
+  }
+  if (d.kind === "through" && row.kind === "through" && d.value) {
+    const acts_as = d.value;
+    return { ...b, hold_through: at(b.hold_through, (x) => ({ ...x, acts_as })) };
+  }
+  return b;
+}
+
+function without(b: ButtonSettings, row: BindingRow): ButtonSettings {
+  const drop = <T,>(list: T[]) => list.filter((_, i) => i !== row.index);
+  switch (row.kind) {
+    case "remap":
+      return { ...b, remaps: drop(b.remaps) };
+    case "drag":
+      return { ...b, drags: drop(b.drags) };
+    case "scroll":
+      return { ...b, scroll_bindings: drop(b.scroll_bindings) };
+    case "through":
+      return { ...b, hold_through: drop(b.hold_through) };
+  }
+}
+
+function DraftPicker({ draft, onChange }: { draft: Draft; onChange: (d: Draft) => void }) {
+  switch (draft.kind) {
+    case "remap":
+      return <ActionPicker value={draft.value} onChange={(value) => onChange({ kind: "remap", value })} />;
+    case "drag":
+      return <DragEffectPicker value={draft.value} onChange={(value) => onChange({ kind: "drag", value })} />;
+    case "scroll":
+      return <ScrollEffectPicker value={draft.value} onChange={(value) => onChange({ kind: "scroll", value })} />;
+    case "through":
+      return <ActsAsPicker value={draft.value} onChange={(value) => onChange({ kind: "through", value })} />;
+  }
 }
 
 /** What the engine uses for a hand-edited value outside 150–600 ms (it clamps when compiling). */
@@ -85,13 +160,15 @@ export function Buttons() {
   const view = useConfigStore((s) => s.view);
   const saveError = useConfigStore((s) => s.error);
   const loadError = useConfigStore((s) => s.loadError);
-  const remaps = view?.config.buttons.remaps ?? [];
+  const buttons = view?.config.buttons;
+  const remaps = buttons?.remaps ?? [];
+  const rows = buttons ? bindingRows(buttons) : [];
   const timing = view?.config.timing ?? DEFAULT_TIMING;
   // Capture only sees presses through the buttons tap; without it the panel could only time out.
   const canCapture = useStatusStore((s) => s.status?.input.taps.buttons ?? false);
   const [adding, setAdding] = useState(false);
-  const [editing, setEditing] = useState<number | null>(null);
-  const [draft, setDraft] = useState<Action | null>(null);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [draft, setDraft] = useState<Draft | null>(null);
 
   // A capture or recording must not outlive the page that started it.
   useEffect(
@@ -102,13 +179,14 @@ export function Buttons() {
     [],
   );
 
-  const { setRemaps, setTiming } = useConfigStore.getState();
+  const { setButtons, setTiming } = useConfigStore.getState();
 
   // Adding and changing share one capture store, so only one of them is ever open.
-  function startChange(index: number) {
+  function startChange(row: BindingRow) {
+    if (!buttons) return;
     setAdding(false);
-    setEditing(index);
-    setDraft(remaps[index]!.effect.action);
+    setEditing(rowKey(row));
+    setDraft(draftOf(buttons, row));
   }
 
   function toggleAdding() {
@@ -116,19 +194,19 @@ export function Buttons() {
     setAdding(!adding);
   }
 
-  async function saveChange(index: number) {
-    if (!draft) return;
-    const next = remaps.map((r, i) => (i === index ? { ...r, effect: { ...r.effect, action: draft } } : r));
-    if (await setRemaps(next)) setEditing(null);
+  async function saveChange(row: BindingRow) {
+    if (!buttons || !draft) return;
+    if (await setButtons(withDraft(buttons, row, draft))) setEditing(null);
   }
 
-  async function remove(index: number) {
-    if (await setRemaps(remaps.filter((_, i) => i !== index))) setEditing(null);
+  async function remove(row: BindingRow) {
+    if (!buttons) return;
+    if (await setButtons(without(buttons, row))) setEditing(null);
   }
 
   async function restoreDefaults() {
-    if (!window.confirm("Replace your button remaps with the defaults?")) return;
-    if (await setRemaps(defaultButtonRemaps)) setEditing(null);
+    if (!window.confirm("Replace your button bindings with the defaults?")) return;
+    if (await setButtons(defaultButtons)) setEditing(null);
   }
 
   return (
@@ -147,21 +225,21 @@ export function Buttons() {
 
       {view && (
         <>
-          {remaps.length === 0 ? (
+          {rows.length === 0 ? (
             <p className={`mb-6 text-sm ${muted}`}>No buttons are remapped.</p>
           ) : (
             <ul aria-label="Button remaps" className={listClass}>
-              {remaps.map((remap, index) => {
-                const label = remapLabel(remap);
+              {rows.map((row) => {
+                const key = rowKey(row);
                 return (
-                  // Rows have no identity of their own; the list is replaced on every save.
-                  <li key={index}>
+                  // Rows have no identity of their own; the lists are replaced on every save.
+                  <li key={key}>
                     <div className={`${rowClass} gap-3`}>
-                      <span>{label.trigger}</span>
-                      {editing === index ? (
+                      <span>{row.trigger}</span>
+                      {editing === key && draft ? (
                         <div className="flex flex-wrap items-center justify-end gap-2">
-                          <ActionPicker value={draft} onChange={setDraft} />
-                          <button type="button" className={buttonClass} disabled={!draft} onClick={() => void saveChange(index)}>
+                          <DraftPicker draft={draft} onChange={setDraft} />
+                          <button type="button" className={buttonClass} disabled={!draftReady(draft)} onClick={() => void saveChange(row)}>
                             Save
                           </button>
                           <button type="button" className={buttonClass} onClick={() => setEditing(null)}>
@@ -170,17 +248,17 @@ export function Buttons() {
                         </div>
                       ) : (
                         <div className="flex items-center gap-2">
-                          <span className="mr-2">{label.action}</span>
-                          <button type="button" className={buttonClass} onClick={() => startChange(index)}>
+                          <span className="mr-2">{row.action}</span>
+                          <button type="button" className={buttonClass} onClick={() => startChange(row)}>
                             Change
                           </button>
-                          <button type="button" className={buttonClass} onClick={() => void remove(index)}>
+                          <button type="button" className={buttonClass} onClick={() => void remove(row)}>
                             Delete
                           </button>
                         </div>
                       )}
                     </div>
-                    {showsDoubleClickHint(remaps, index) && (
+                    {row.kind === "remap" && showsDoubleClickHint(remaps, row.index) && (
                       <p className={`pb-2 text-xs ${muted}`}>{`Single clicks on this button will wait up to ${timing.double_click_ms} ms.`}</p>
                     )}
                   </li>
@@ -195,7 +273,7 @@ export function Buttons() {
             </p>
           )}
 
-          {adding && <AddRemapPanel remaps={remaps} onDone={() => setAdding(false)} />}
+          {adding && <AddRemapPanel buttons={buttons!} onDone={() => setAdding(false)} />}
 
           <div className="flex flex-wrap gap-2">
             {canCapture ? (

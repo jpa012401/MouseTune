@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { commands, events, type ConfigView, type General as GeneralSettings, type Config, type Remap, type Scroll as ScrollSettings, type Timing } from "../bindings";
+import { commands, events, type ConfigView, type General as GeneralSettings, type Buttons, type Config, type Remap, type Scroll as ScrollSettings, type Timing } from "../bindings";
 import { configErrorMessage } from "../lib/config";
 
 type ConfigState = {
@@ -13,6 +13,8 @@ type ConfigState = {
   setScroll: (patch: Partial<ScrollSettings>) => Promise<void>;
   /** True when saved; otherwise `error` says why and the old list stays. */
   setRemaps: (remaps: Remap[]) => Promise<boolean>;
+  /** Saves all four binding lists; callers pass the whole `Buttons` so no list is dropped. */
+  setButtons: (buttons: Buttons) => Promise<boolean>;
   setTiming: (timing: Timing) => Promise<boolean>;
   dismissRecovery: () => Promise<void>;
 };
@@ -59,10 +61,15 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
     if (!view) return;
     await save(set, { ...view.config, scroll: { ...view.config.scroll, ...patch } });
   },
+  setButtons: async (buttons) => {
+    const { view } = get();
+    if (!view) return false;
+    return save(set, { ...view.config, buttons });
+  },
   setRemaps: async (remaps) => {
     const { view } = get();
     if (!view) return false;
-    return save(set, { ...view.config, buttons: { ...view.config.buttons, remaps } });
+    return get().setButtons({ ...view.config.buttons, remaps });
   },
   setTiming: async (timing) => {
     const { view } = get();

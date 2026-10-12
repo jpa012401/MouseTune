@@ -1,16 +1,24 @@
 import { useEffect, useState } from "react";
-import type { Action, ClickTrigger, Remap } from "../bindings";
-import { buttonName, findTrigger, remapLabel } from "../lib/remaps";
+import type { Action, Buttons, ClickTrigger, DragEffect, MouseButton, ScrollEffect } from "../bindings";
+import { bindingConflict, buttonName, findTrigger, remapLabel, type BindingKind } from "../lib/remaps";
 import { CAPTURE_TIMEOUT_MS, useCaptureStore } from "../store/capture";
 import { useConfigStore } from "../store/config";
 import { ActionPicker } from "./ActionPicker";
+import { ActsAsPicker, DragEffectPicker, ScrollEffectPicker } from "./BindingEffectPicker";
 import { buttonClass } from "./buttonStyles";
 
-const TRIGGERS: { label: string; level: number; duration: ClickTrigger["duration"] }[] = [
-  { label: "Click", level: 1, duration: "click" },
-  { label: "Double click", level: 2, duration: "click" },
-  { label: "Triple click", level: 3, duration: "click" },
-  { label: "Hold", level: 1, duration: "hold" },
+type TriggerChoice =
+  | { label: string; kind: "remap"; level: number; duration: ClickTrigger["duration"] }
+  | { label: string; kind: BindingKind };
+
+const TRIGGERS: TriggerChoice[] = [
+  { label: "Click", kind: "remap", level: 1, duration: "click" },
+  { label: "Double click", kind: "remap", level: 2, duration: "click" },
+  { label: "Triple click", kind: "remap", level: 3, duration: "click" },
+  { label: "Hold", kind: "remap", level: 1, duration: "hold" },
+  { label: "Drag", kind: "drag" },
+  { label: "Scroll", kind: "scroll" },
+  { label: "Acts as", kind: "through" },
 ];
 
 const SECONDS = CAPTURE_TIMEOUT_MS / 1000;
@@ -31,7 +39,7 @@ function useCountdown(running: boolean): number {
 }
 
 /** Adds one remap: capture a button, pick a trigger and an action, then save. */
-export function AddRemapPanel({ remaps, onDone }: { remaps: Remap[]; onDone: () => void }) {
+export function AddRemapPanel({ buttons, onDone }: { buttons: Buttons; onDone: () => void }) {
   const phase = useCaptureStore((s) => s.phase);
   const captured = useCaptureStore((s) => s.button);
   const timedOut = useCaptureStore((s) => s.timedOut);
@@ -40,6 +48,9 @@ export function AddRemapPanel({ remaps, onDone }: { remaps: Remap[]; onDone: () 
   const [button, setButton] = useState<number | null>(null);
   const [triggerIndex, setTriggerIndex] = useState<number | null>(null);
   const [action, setAction] = useState<Action | null>(null);
+  const [dragEffect, setDragEffect] = useState<DragEffect | null>(null);
+  const [scrollEffect, setScrollEffect] = useState<ScrollEffect | null>(null);
+  const [actsAs, setActsAs] = useState<MouseButton | null>(null);
   const secondsLeft = useCountdown(phase === "capturing" && button === null);
 
   useEffect(() => {
@@ -57,10 +68,24 @@ export function AddRemapPanel({ remaps, onDone }: { remaps: Remap[]; onDone: () 
 
   const choice = triggerIndex === null ? null : TRIGGERS[triggerIndex]!;
   const trigger: ClickTrigger | null =
-    button !== null && choice ? { button, level: choice.level, duration: choice.duration } : null;
+    button !== null && choice?.kind === "remap" ? { button, level: choice.level, duration: choice.duration } : null;
+  const { remaps } = buttons;
   const conflict = trigger ? findTrigger(remaps, trigger) : -1;
   const conflictLabel = conflict >= 0 ? remapLabel(remaps[conflict]!) : null;
-  const canAdd = trigger !== null && action !== null && conflict < 0;
+  // Remaps keep their own exact-trigger check; the others share `bindingConflict`.
+  const bindingProblem =
+    conflictLabel
+      ? `${conflictLabel.trigger} is already set to ${conflictLabel.action}. Change that row instead.`
+      : button !== null && choice
+        ? bindingConflict(buttons, button, choice.kind)
+        : null;
+  const effectChosen =
+    choice?.kind === "remap" ? action !== null
+    : choice?.kind === "drag" ? dragEffect !== null
+    : choice?.kind === "scroll" ? scrollEffect !== null
+    : choice?.kind === "through" ? actsAs !== null
+    : false;
+  const canAdd = effectChosen && bindingProblem === null;
 
   function cancel() {
     void useCaptureStore.getState().cancel();
@@ -68,8 +93,13 @@ export function AddRemapPanel({ remaps, onDone }: { remaps: Remap[]; onDone: () 
   }
 
   async function add() {
-    if (!trigger || !action) return;
-    if (await useConfigStore.getState().setRemaps([...remaps, { trigger, effect: { action } }])) onDone();
+    if (button === null || !choice || !canAdd) return;
+    let next: Buttons | null = null;
+    if (choice.kind === "remap" && trigger && action) next = { ...buttons, remaps: [...remaps, { trigger, effect: { action } }] };
+    else if (choice.kind === "drag" && dragEffect) next = { ...buttons, drags: [...buttons.drags, { button, effect: dragEffect }] };
+    else if (choice.kind === "scroll" && scrollEffect) next = { ...buttons, scroll_bindings: [...buttons.scroll_bindings, { button, effect: scrollEffect }] };
+    else if (choice.kind === "through" && actsAs) next = { ...buttons, hold_through: [...buttons.hold_through, { button, acts_as: actsAs }] };
+    if (next && (await useConfigStore.getState().setButtons(next))) onDone();
   }
 
   const cancelButton = (
@@ -122,14 +152,17 @@ export function AddRemapPanel({ remaps, onDone }: { remaps: Remap[]; onDone: () 
         </div>
       </fieldset>
 
-      {conflictLabel && (
+      {bindingProblem && (
         <p role="alert" className="mb-3 text-red-600">
-          {`${conflictLabel.trigger} is already set to ${conflictLabel.action}. Change that row instead.`}
+          {bindingProblem}
         </p>
       )}
 
       <div className="mb-3">
-        <ActionPicker value={action} onChange={setAction} />
+        {(!choice || choice.kind === "remap") && <ActionPicker value={action} onChange={setAction} />}
+        {choice?.kind === "drag" && <DragEffectPicker value={dragEffect} onChange={setDragEffect} />}
+        {choice?.kind === "scroll" && <ScrollEffectPicker value={scrollEffect} onChange={setScrollEffect} />}
+        {choice?.kind === "through" && <ActsAsPicker value={actsAs} onChange={setActsAs} />}
       </div>
 
       <div className="flex gap-2">

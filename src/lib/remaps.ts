@@ -1,4 +1,4 @@
-import type { Action, ClickTrigger, Remap, Timing, TriggerDuration } from "../bindings";
+import type { Action, Buttons, ClickTrigger, DragEffect, MouseButton, Remap, ScrollEffect, Timing, TriggerDuration } from "../bindings";
 import { actionLabel } from "./actions";
 
 export const DEFAULT_TIMING: Timing = { hold_ms: 250, double_click_ms: 260 };
@@ -45,3 +45,82 @@ export const defaultButtonRemaps: Remap[] = [
   remap(4, "click", { type: "Navigate", direction: "Back" }),
   remap(5, "click", { type: "Navigate", direction: "Forward" }),
 ];
+
+export type BindingKind = "drag" | "scroll" | "through";
+export type BindingRow = { kind: "remap" | BindingKind; index: number; button: number; trigger: string; action: string };
+
+const DIRECTIONS: ["left" | "right" | "up" | "down", string][] = [
+  ["left", "Left"],
+  ["right", "Right"],
+  ["up", "Up"],
+  ["down", "Down"],
+];
+
+export function dragLabel(effect: DragEffect): string {
+  switch (effect.type) {
+    case "SpacesAndMissionControl":
+      return "Spaces & Mission Control";
+    case "ScrollSwipe":
+      return "Two-finger swipe";
+    case "Discrete":
+      return DIRECTIONS.filter(([d]) => effect[d])
+        .map(([d, name]) => `${name}: ${actionLabel(effect[d]!)}`)
+        .join(", ");
+  }
+}
+
+export const SCROLL_LABELS: Record<ScrollEffect, string> = {
+  Zoom: "Zoom",
+  Horizontal: "Scroll horizontally",
+  AppSwitcher: "App Switcher",
+};
+export const scrollLabel = (effect: ScrollEffect): string => SCROLL_LABELS[effect];
+
+export const ACTS_AS_LABELS: Record<MouseButton, string> = {
+  Left: "Left button",
+  Right: "Right button",
+  Middle: "Middle button",
+  Back: "Button 4",
+  Forward: "Button 5",
+};
+export const actsAsLabel = (button: MouseButton): string => ACTS_AS_LABELS[button];
+
+const KIND_ORDER = { remap: 0, drag: 1, scroll: 2, through: 3 } as const;
+
+export function bindingRows(b: Buttons): BindingRow[] {
+  const rows: BindingRow[] = [
+    ...b.remaps.map((r, index) => ({ kind: "remap" as const, index, button: r.trigger.button, ...remapLabel(r) })),
+    ...b.drags.map((d, index) => ({ kind: "drag" as const, index, button: d.button, trigger: `${buttonName(d.button)} · Drag`, action: dragLabel(d.effect) })),
+    ...b.scroll_bindings.map((s, index) => ({ kind: "scroll" as const, index, button: s.button, trigger: `${buttonName(s.button)} · Scroll`, action: scrollLabel(s.effect) })),
+    ...b.hold_through.map((h, index) => ({ kind: "through" as const, index, button: h.button, trigger: `${buttonName(h.button)} · Acts as`, action: actsAsLabel(h.acts_as) })),
+  ];
+  // Stable: rows of the same button and kind keep their list order.
+  return rows
+    .map((row, order) => ({ row, order }))
+    .sort((a, b) => a.row.button - b.row.button || KIND_ORDER[a.row.kind] - KIND_ORDER[b.row.kind] || a.order - b.order)
+    .map(({ row }) => row);
+}
+
+export function bindingConflict(b: Buttons, button: number, kind: BindingKind | "remap"): string | null {
+  const name = buttonName(button);
+  if (kind !== "through" && b.hold_through.some((h) => h.button === button)) {
+    return `${name} acts as another button, so it can’t have other bindings.`;
+  }
+  if (kind === "through") {
+    const taken =
+      b.remaps.some((r) => r.trigger.button === button) ||
+      b.drags.some((d) => d.button === button) ||
+      b.scroll_bindings.some((s) => s.button === button);
+    if (taken) return `${name} already has other bindings, so it can’t act as another button.`;
+  }
+  const existing = bindingRows(b).find((r) => r.button === button && r.kind === kind && kind !== "remap");
+  return existing ? `${existing.trigger} is already set to ${existing.action}. Change that row instead.` : null;
+}
+
+/** Mirrors Rust's full `Buttons::default()`; pinned to the fixture by a test. */
+export const defaultButtons: Buttons = {
+  remaps: defaultButtonRemaps,
+  drags: [{ button: 3, effect: { type: "SpacesAndMissionControl" } }],
+  scroll_bindings: [],
+  hold_through: [],
+};
