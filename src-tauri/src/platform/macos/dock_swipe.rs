@@ -90,6 +90,11 @@
 //!   As above; the probe run shows whether the Dock agrees.
 //! - **Whether the Dock needs a `senderID` or a type-29 companion event on
 //!   macOS 27.** Sender 0, no companion.
+//! - **Whether a stale timestamp matters on a re-send.** Re-sends re-post
+//!   the event that went out, so its HID timestamp (`mach_absolute_time`
+//!   when it was built) is 200 or 500 ms old by the time it is posted
+//!   again. Whether the Dock ignores or rejects an old timestamp is
+//!   unknown.
 //!
 //! # macOS 12–26 encoding (documentation only; not testable on this Mac)
 //!
