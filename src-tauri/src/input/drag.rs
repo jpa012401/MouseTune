@@ -2,7 +2,7 @@
 //! through a `SwipeOutput` port, and the two-finger swipe as scroll events
 //! with gesture phases. Pure; runs from `run_intents`, never in a callout.
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::input::{
     remaps::SwipeKind,
@@ -16,6 +16,10 @@ use crate::input::{
 /// Pixels of drag for one whole swipe unit (one Space, or Mission Control
 /// fully open). A tuning knob.
 pub const SWIPE_UNIT_PX: f64 = 400.0;
+
+/// A release this long after the last motion is a stop, not a flick: the
+/// swipe ends with no velocity instead of the last measured one.
+const FLICK_WINDOW: Duration = Duration::from_millis(50);
 
 /// Port: the Dock's swipe gesture. `progress` is in swipe units along the
 /// locked axis, signed in screen coordinates (left and up are negative).
@@ -115,12 +119,15 @@ impl DragSession {
         }
     }
 
-    pub fn end(&mut self, _now: Instant) {
+    pub fn end(&mut self, now: Instant) {
         let Some(a) = self.active.take() else {
             return;
         };
         match a.kind {
-            SwipeKind::SpacesAndMissionControl => self.swipe.end(a.velocity),
+            SwipeKind::SpacesAndMissionControl => {
+                let paused = now.saturating_duration_since(a.last) > FLICK_WINDOW;
+                self.swipe.end(if paused { 0.0 } else { a.velocity });
+            }
             SwipeKind::ScrollSwipe => self.scroll.post(&marker(GesturePhase::Ended)),
         }
     }
@@ -184,6 +191,17 @@ mod tests {
                 "end 25.00"
             ]
         );
+    }
+
+    #[test]
+    fn a_pause_before_release_ends_with_no_velocity() {
+        // The last motion was 190 ms before the release: the flick is over.
+        let (mut s, swipe, _) = session();
+        let t0 = Instant::now();
+        s.begin(DragAxis::Horizontal, SwipeKind::SpacesAndMissionControl, t0);
+        s.motion(100, 0, t0 + Duration::from_millis(10));
+        s.end(t0 + Duration::from_millis(200));
+        assert_eq!(swipe.log(), ["begin Horizontal", "change 0.25", "end 0.00"]);
     }
 
     #[test]
