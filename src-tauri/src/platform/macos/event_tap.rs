@@ -791,6 +791,42 @@ mod tests {
     }
 
     #[test]
+    fn inverting_horizontal_negates_only_axis_2_in_place() {
+        // Line 3 / −2 first: setting a line delta rewrites that axis's fixed
+        // and point deltas, so the distinct fixed and point values below
+        // are written after it.
+        let event =
+            CGEvent::new_scroll_wheel_event2(None, CGScrollEventUnit::Line, 2, 3, -2, 0).unwrap();
+        let set = |f, v| CGEvent::set_integer_value_field(Some(&event), f, v);
+        let set_fine = |f, v| CGEvent::set_double_value_field(Some(&event), f, v);
+        set_fine(CGEventField::ScrollWheelEventFixedPtDeltaAxis1, 3.25);
+        set(CGEventField::ScrollWheelEventPointDeltaAxis1, 31);
+        set_fine(CGEventField::ScrollWheelEventFixedPtDeltaAxis2, -2.75);
+        set(CGEventField::ScrollWheelEventPointDeltaAxis2, -23);
+
+        invert_scroll(&event, false, true);
+
+        let int = |f| CGEvent::integer_value_field(Some(&event), f);
+        let fine = |f| CGEvent::double_value_field(Some(&event), f);
+        assert_eq!(int(CGEventField::ScrollWheelEventDeltaAxis2), 2);
+        let fine2 = fine(CGEventField::ScrollWheelEventFixedPtDeltaAxis2);
+        assert!((fine2 - 2.75).abs() < 1e-3, "{fine2}");
+        assert_eq!(int(CGEventField::ScrollWheelEventPointDeltaAxis2), 23);
+        assert_eq!(
+            int(CGEventField::ScrollWheelEventDeltaAxis1),
+            3,
+            "axis 1 untouched"
+        );
+        let fine1 = fine(CGEventField::ScrollWheelEventFixedPtDeltaAxis1);
+        assert!((fine1 - 3.25).abs() < 1e-3, "axis 1 untouched: {fine1}");
+        assert_eq!(
+            int(CGEventField::ScrollWheelEventPointDeltaAxis1),
+            31,
+            "axis 1 untouched"
+        );
+    }
+
+    #[test]
     fn scroll_fields_are_copied_from_a_real_event() {
         let event =
             CGEvent::new_scroll_wheel_event2(None, CGScrollEventUnit::Line, 2, -3, 1, 0).unwrap();
