@@ -336,6 +336,7 @@ impl<C: TapController> InputEngine<C> {
                 } else {
                     AppSwitchStep::Start { backward }
                 };
+                self.scroll.end_gesture();
                 self.app_switching = true;
                 self.queue(Intent::AppSwitch(step));
                 ScrollVerdict::Swallow
@@ -347,6 +348,7 @@ impl<C: TapController> InputEngine<C> {
         let Some(tick) = Tick::from_fields(fields) else {
             return ScrollVerdict::Pass;
         };
+        self.scroll.end_gesture();
         self.queue(Intent::Magnify(f64::from(tick.sign)));
         ScrollVerdict::Swallow
     }
@@ -1793,6 +1795,120 @@ mod tests {
         r.clock.advance(Duration::from_millis(90));
         r.engine.on_frame();
         assert_eq!(r.posted.log(), ["Began", "Changed dx 90", "Ended"]);
+    }
+
+    fn command_ups(r: &Rig) -> usize {
+        r.poster
+            .log()
+            .iter()
+            .filter(|l| *l == "key 0x37 up 0x0")
+            .count()
+    }
+
+    #[test]
+    fn buttons_tap_disabled_mid_app_switch_lets_go_of_command() {
+        let mut r = scroll_binding_rig(crate::config::schema::ScrollEffect::AppSwitcher);
+        button(&mut r, ButtonKind::Down, 3, 10);
+        r.engine.on_scroll(&wheel(-1));
+        r.engine.on_intents();
+        r.engine
+            .on_tap_disabled(TapKind::Buttons, DisabledReason::Timeout);
+        r.engine.on_intents();
+        assert_eq!(
+            r.poster.log().last().map(String::as_str),
+            Some("key 0x37 up 0x0")
+        );
+        assert_eq!(command_ups(&r), 1);
+    }
+
+    #[test]
+    fn changing_the_bindings_mid_app_switch_lets_go_of_command() {
+        let mut r = scroll_binding_rig(crate::config::schema::ScrollEffect::AppSwitcher);
+        button(&mut r, ButtonKind::Down, 3, 10);
+        r.engine.on_scroll(&wheel(-1));
+        r.engine.on_intents();
+        r.engine.set_remaps(compile(&Config {
+            buttons: phase4_buttons(),
+            ..Config::default()
+        }));
+        assert_eq!(
+            r.poster.log().last().map(String::as_str),
+            Some("key 0x37 up 0x0")
+        );
+        assert_eq!(command_ups(&r), 1);
+    }
+
+    #[test]
+    fn a_trackpad_scroll_passes_while_a_binding_is_held() {
+        let mut r = scroll_binding_rig(crate::config::schema::ScrollEffect::Zoom);
+        r.engine
+            .apply_device_event(DeviceEvent::Added(apple_trackpad(2)));
+        button(&mut r, ButtonKind::Down, 3, 10);
+        let trackpad = ScrollFields {
+            is_continuous: 1,
+            ..wheel(1)
+        };
+        assert_eq!(r.engine.on_scroll(&trackpad), ScrollVerdict::Pass);
+        r.engine.on_intents();
+        assert!(r.magnify.log().is_empty());
+        button(&mut r, ButtonKind::Up, 3, 10);
+        assert_eq!(jobs(&r), vec![BACK], "nothing acted, so the release clicks");
+    }
+
+    #[test]
+    fn horizontal_with_smoothing_off_passes_and_keeps_the_click() {
+        let mut r = scroll_binding_rig(crate::config::schema::ScrollEffect::Horizontal);
+        r.engine.set_scroll(Scroll {
+            smooth: false,
+            ..Scroll::default()
+        });
+        button(&mut r, ButtonKind::Down, 3, 10);
+        assert_eq!(r.engine.on_scroll(&wheel(1)), ScrollVerdict::Pass);
+        button(&mut r, ButtonKind::Up, 3, 10);
+        assert_eq!(jobs(&r), vec![BACK]);
+    }
+
+    #[test]
+    fn a_zoom_tick_ends_a_coasting_scroll_gesture() {
+        let mut r = scroll_binding_rig(crate::config::schema::ScrollEffect::Zoom);
+        r.engine.set_scroll(low());
+        assert_eq!(r.engine.on_scroll(&wheel(1)), ScrollVerdict::Swallow);
+        r.engine.on_frame();
+        assert_eq!(r.posted.log(), ["Began"]);
+        button(&mut r, ButtonKind::Down, 3, 10);
+        r.engine.on_scroll(&wheel(1));
+        r.engine.on_frame();
+        assert_eq!(r.posted.log(), ["Began", "Ended"]);
+    }
+
+    #[test]
+    fn an_app_switch_tick_ends_a_coasting_scroll_gesture() {
+        let mut r = scroll_binding_rig(crate::config::schema::ScrollEffect::AppSwitcher);
+        r.engine.set_scroll(low());
+        r.engine.on_scroll(&wheel(1));
+        r.engine.on_frame();
+        button(&mut r, ButtonKind::Down, 3, 10);
+        r.engine.on_scroll(&wheel(-1));
+        r.engine.on_frame();
+        assert_eq!(r.posted.log(), ["Began", "Ended"]);
+    }
+
+    #[test]
+    fn a_bound_zoom_key_ends_a_coasting_scroll_gesture() {
+        let mut r = rig(true);
+        r.engine.apply_device_event(DeviceEvent::Added(mouse(1)));
+        let mut s = low();
+        s.keyboard_modifiers.zoom = Some(crate::config::schema::KeyModifier::Command);
+        r.engine.set_scroll(s);
+        r.engine.on_scroll(&wheel(1));
+        r.engine.on_frame();
+        let cmd = ScrollFields {
+            flags: 0x10_0000,
+            ..wheel(1)
+        };
+        r.engine.on_scroll(&cmd);
+        r.engine.on_frame();
+        assert_eq!(r.posted.log(), ["Began", "Ended"]);
     }
 
     #[test]

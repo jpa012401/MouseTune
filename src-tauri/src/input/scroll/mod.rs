@@ -88,9 +88,7 @@ impl ScrollEngine {
         if held & !self.keys.bound != 0 {
             // A key with no scroll effect: leave the tick to macOS and apps
             // (⌃ + scroll is Accessibility Zoom).
-            if self.animator.end() {
-                self.frames.request();
-            }
+            self.end_gesture();
             return self.inverted_in_place();
         }
         let Some(mut tick) = Tick::from_fields(fields) else {
@@ -104,6 +102,14 @@ impl ScrollEngine {
         self.animator.tick(tick, now);
         self.frames.request();
         ScrollVerdict::Swallow
+    }
+
+    /// Closes a coasting gesture at the next frame, for ticks something else
+    /// takes (zoom, app switch). Hot path: posts nothing.
+    pub fn end_gesture(&mut self) {
+        if self.animator.end() {
+            self.frames.request();
+        }
     }
 
     /// The key bound to zoom is held. Hot path: O(1).
