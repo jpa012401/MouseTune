@@ -312,7 +312,9 @@ fn run_input_thread(
     drop(devices);
     // 3. The engine, which drops `MacTapController` (tearing down the taps),
     //    `MacClickTimers` (invalidating both click timers), `MacFrameDriver`
-    //    (invalidating the frame source and timer) and the action sink
+    //    (invalidating the frame source and timer), `MacDockSwipe` if dock
+    //    swipes are on (invalidating its two re-send timers, then freeing
+    //    the re-sends they point at) and the action sink
     //    (closing `mt-exec`'s queue). The context's handler holds the
     //    last reference.
     drop(engine);

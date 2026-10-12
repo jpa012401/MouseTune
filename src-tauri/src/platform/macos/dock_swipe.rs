@@ -508,8 +508,10 @@ pub struct MacDockSwipe {
     sequencer: Sequencer,
     /// The end built at begin: posted if nothing else closing will build.
     closer: Option<Rc<Built>>,
-    /// Boxed so the timers' `info` pointer stays put when `self` moves.
-    resends: Box<Resends>,
+    /// From `Box::into_raw`: the timers' `info`. Never moves, and is freed
+    /// in `Drop` after both timers are invalidated (as `input_loop` does
+    /// with its `LoopState`). All other access is through `resends()`.
+    resends: *mut Resends,
     timers: [CFRetained<CFRunLoopTimer>; 2],
 }
 
@@ -518,21 +520,24 @@ impl MacDockSwipe {
     /// created; the caller then uses `NoSwipe`.
     pub fn new(run_loop: &CFRunLoop, degraded: Arc<AtomicBool>) -> Result<Self, String> {
         let api = Api::load()?;
-        let resends = Box::new(Resends {
+        let resends = Box::into_raw(Box::new(Resends {
             ends: RefCell::new([None, None]),
             degraded,
-        });
-        let info = (&*resends as *const Resends).cast_mut().cast::<c_void>();
-        let timer = |callback| {
-            parked_timer(info, run_loop, callback).ok_or("couldn't create a re-send timer")
+        }));
+        let free = || {
+            // SAFETY: `resends` came from `Box::into_raw` just above, and on
+            // these early returns no timer holding it survives.
+            drop(unsafe { Box::from_raw(resends) })
         };
-        let first = timer(first_resend_fired)?;
-        let second = match timer(second_resend_fired) {
-            Ok(second) => second,
-            Err(why) => {
-                first.invalidate();
-                return Err(why.into());
-            }
+        let info = resends.cast::<c_void>();
+        let Some(first) = parked_timer(info, run_loop, first_resend_fired) else {
+            free();
+            return Err("couldn't create a re-send timer".into());
+        };
+        let Some(second) = parked_timer(info, run_loop, second_resend_fired) else {
+            first.invalidate();
+            free();
+            return Err("couldn't create a re-send timer".into());
         };
         Ok(Self {
             api,
@@ -543,11 +548,18 @@ impl MacDockSwipe {
         })
     }
 
+    fn resends(&self) -> &Resends {
+        // SAFETY: `resends` came from `Box::into_raw` in `new` and is freed
+        // only in `Drop`; only shared references are ever made to it, and
+        // its mutable state sits behind a `RefCell`.
+        unsafe { &*self.resends }
+    }
+
     fn disarm(&mut self) {
         for timer in &self.timers {
             timer.set_next_fire_date(CFAbsoluteTimeGetCurrent() + NEVER_SECS);
         }
-        if let Ok(mut ends) = self.resends.ends.try_borrow_mut() {
+        if let Ok(mut ends) = self.resends().ends.try_borrow_mut() {
             *ends = [None, None];
         }
     }
@@ -581,7 +593,7 @@ impl MacDockSwipe {
         let Some(dates) = plan.resend_at else {
             return;
         };
-        let Ok(mut ends) = self.resends.ends.try_borrow_mut() else {
+        let Ok(mut ends) = self.resends().ends.try_borrow_mut() else {
             return;
         };
         for ((slot, timer), date) in ends.iter_mut().zip(&self.timers).zip(dates) {
@@ -615,11 +627,14 @@ impl SwipeOutput for MacDockSwipe {
 
 impl Drop for MacDockSwipe {
     /// Invalidating removes the timers from every run loop, so no callback
-    /// can reach `resends` after this; it drops after this body runs.
+    /// can reach `resends` after this; only then is it freed.
     fn drop(&mut self) {
         for timer in &self.timers {
             timer.invalidate();
         }
+        // SAFETY: `resends` came from `Box::into_raw` in `new`, is freed
+        // only here, and both timers that pointed at it are invalidated.
+        drop(unsafe { Box::from_raw(self.resends) });
     }
 }
 
@@ -633,8 +648,9 @@ unsafe extern "C-unwind" fn second_resend_fired(_timer: *mut CFRunLoopTimer, inf
 
 /// Posts one prebuilt re-send, once. A re-entrant fire is dropped.
 fn resend(info: *mut c_void, index: usize) {
-    // SAFETY: `info` is the boxed `Resends` the timer was created with;
-    // `MacDockSwipe::drop` invalidates both timers before the box is freed.
+    // SAFETY: `info` is the `Resends` from `Box::into_raw` the timer was
+    // created with; `MacDockSwipe::drop` invalidates both timers before it
+    // frees it. Only shared references are made to it.
     let resends = unsafe { &*info.cast_const().cast::<Resends>() };
     guarded(&resends.degraded, (), || {
         let Ok(mut ends) = resends.ends.try_borrow_mut() else {
