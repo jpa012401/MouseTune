@@ -15,6 +15,7 @@ use std::{
     ptr::{self, NonNull},
     rc::Rc,
     sync::{Arc, atomic::AtomicBool},
+    time::{Duration, Instant},
 };
 
 use objc2_core_foundation::{
@@ -31,6 +32,11 @@ use crate::{
 
 /// The fallback timer's period.
 const FRAME_SECS: f64 = 1.0 / 120.0;
+/// A running display link silent for longer than this is taken to have
+/// stopped calling back (display unplugged, reconfigured or asleep) and is
+/// restarted, which re-points it or falls back to the timer. Six frames at
+/// 60 Hz is far beyond normal jitter.
+const STALL: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Pacer {
@@ -52,6 +58,8 @@ struct FrameInner {
     source: OnceCell<CFRetained<CFRunLoopSource>>,
     wanted: Cell<bool>,
     running: Cell<Option<Pacer>>,
+    /// When the running pacer last delivered a frame (or was started).
+    last_frame: Cell<Option<Instant>>,
 }
 
 impl MacFrameDriver {
@@ -100,6 +108,7 @@ impl MacFrameDriver {
             source: OnceCell::new(),
             wanted: Cell::new(false),
             running: Cell::new(None),
+            last_frame: Cell::new(None),
         });
         let info: *mut c_void = Rc::as_ptr(&inner).cast_mut().cast();
         // SAFETY: reading an immutable CoreFoundation constant.
@@ -186,11 +195,22 @@ impl FrameInner {
     /// One frame on `mt-input`. A panic stops the frames, so it can't
     /// repeat 120 times a second; the next tick asks again. A signal left
     /// over from before a stop, or a late CoreVideo callback, runs nothing.
+    /// A display link that went silent is halted here and started again
+    /// below, so the next tick's frame revives the pacing.
     fn frame(&self) {
         if !self.wanted.get() {
             self.halt();
             return;
         }
+        let now = Instant::now();
+        let stalled = self
+            .last_frame
+            .get()
+            .is_none_or(|last| now.saturating_duration_since(last) > STALL);
+        if self.running.get() == Some(Pacer::DisplayLink) && stalled {
+            self.halt();
+        }
+        self.last_frame.set(Some(now));
         let healthy = guarded(&self.degraded, false, || {
             (self.on_frame)();
             true
@@ -363,6 +383,50 @@ mod tests {
         run_for(0.1);
         assert_eq!(calls.get(), 1, "no frame after the panic");
         assert!(degraded.load(Ordering::SeqCst));
+    }
+
+    /// Fakes a display link that was started but has stopped calling back
+    /// (display unplugged or asleep mid-coast): the driver believes the
+    /// link is running, and its last frame was `since` ago. The timer-only
+    /// driver has no link, so a restart falls back to the 120 Hz timer.
+    fn stalled_link(driver: &MacFrameDriver, since: Duration) {
+        driver.inner.running.set(Some(Pacer::DisplayLink));
+        driver
+            .inner
+            .last_frame
+            .set(Instant::now().checked_sub(since));
+    }
+
+    #[test]
+    fn a_display_link_that_stopped_calling_back_is_restarted() {
+        let (frames, on_frame) = counting();
+        let mut driver = MacFrameDriver::with_timer_only(&run_loop(), Arc::default(), on_frame);
+        stalled_link(&driver, Duration::from_millis(200));
+        driver.request();
+        run_for(0.1);
+        // Without a restart only the tick's own signal runs a frame (1);
+        // after one, the timer paces ~12 frames in 100 ms at 120 Hz.
+        let seen = frames.get();
+        assert!(
+            seen >= 3,
+            "{seen} frames: the stalled pacer wasn't replaced"
+        );
+        assert_eq!(driver.inner.running.get(), Some(Pacer::Timer));
+        driver.stop();
+    }
+
+    #[test]
+    fn a_display_link_between_frames_is_left_running() {
+        let (frames, on_frame) = counting();
+        let mut driver = MacFrameDriver::with_timer_only(&run_loop(), Arc::default(), on_frame);
+        stalled_link(&driver, Duration::ZERO);
+        driver.request();
+        run_for(0.05);
+        // A fresh link isn't restarted on a tick, so only the tick's own
+        // signal runs a frame: 1.
+        assert_eq!(frames.get(), 1);
+        assert_eq!(driver.inner.running.get(), Some(Pacer::DisplayLink));
+        driver.stop();
     }
 
     #[test]

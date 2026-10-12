@@ -85,6 +85,7 @@ Taps pass every event through unchanged in this phase (since Phase 4a the button
 7. Tray → Enable scrolling off in the middle of a coast: scrolling stops cleanly, and the next tick is plain.
 8. Unplug the mouse in the middle of a coast: nothing keeps scrolling.
 9. If a 60 Hz external display is connected, scroll on each screen: both are smooth.
+10. With the pointer on an external display, unplug it in the middle of a coast: scrolling ends cleanly, and the next scroll is smooth. (If the coast seems to stop short, note whether the next tick finishes it: a frame source that goes silent is only restarted by the next tick.)
 
 Report how the scroll feels (too short a coast, too fast, too slow). The curve's constants are tuning knobs (spec §8.2, §8.3).
 
