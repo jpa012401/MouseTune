@@ -9,11 +9,11 @@ use std::time::Duration;
 
 use crate::{
     actions::CompiledAction,
-    config::schema::TriggerDuration,
+    config::schema::{ScrollEffect, TriggerDuration},
     input::{
         click_cycle::{ClickCycle, Press},
         filter::MOUSETUNE_EVENT_TAG,
-        remaps::{CompiledRemaps, MAX_BUTTONS},
+        remaps::{CompiledDrag, CompiledRemaps, DiscreteActions, MAX_BUTTONS, SwipeKind},
     },
 };
 
@@ -50,9 +50,49 @@ pub enum TimerKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Outcome {
     Fire(CompiledAction),
-    Click { button: u8 },
+    Click {
+        button: u8,
+    },
     Arm(TimerKind, Duration),
     Disarm(TimerKind),
+    DragBegin {
+        axis: DragAxis,
+        swipe: Option<SwipeKind>,
+    },
+    DragMove {
+        dx: i32,
+        dy: i32,
+    },
+    DragEnd,
+    HoldThrough {
+        cg_button: u8,
+        down: bool,
+    },
+    WantsMotion(bool),
+    ModifierReleased,
+}
+
+pub const DRAG_THRESHOLD_PX: i32 = 7;
+pub const DISCRETE_STEP_PX: i32 = 40;
+
+/// `release_all` pushes at most 5 other outcomes (DragEnd, ModifierReleased,
+/// WantsMotion, two Disarms), so 5 hold-through ups keep it within `CAPACITY`.
+const MAX_THROUGH_UPS_PER_CALL: usize = 5;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DragAxis {
+    Horizontal,
+    Vertical,
+}
+
+/// The drag progress of the press currently down (Phase 6 design §2).
+#[derive(Debug, Clone, Copy, Default)]
+struct DragTrack {
+    dx: i32,
+    dy: i32,
+    axis: Option<DragAxis>,
+    /// Discrete directions already fired this drag: bit 0 left, 1 right, 2 up, 3 down.
+    fired: u8,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -73,7 +113,7 @@ pub trait ClickTimers {
     fn disarm(&mut self, kind: TimerKind);
 }
 
-const CAPACITY: usize = 8;
+const CAPACITY: usize = 10;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Outcomes {
@@ -88,7 +128,7 @@ impl Outcomes {
     };
 
     fn push(&mut self, outcome: Outcome) {
-        // Capacity covers the worst case (6); never panic on the hot path.
+        // Capacity covers the worst case (8); never panic on the hot path.
         if let Some(slot) = self.items.get_mut(self.len) {
             *slot = Some(outcome);
             self.len += 1;
@@ -122,6 +162,11 @@ pub struct ButtonRouter {
     expiry_armed: bool,
     /// Bit `n` set: CG button `n`'s down was swallowed, so its up must be.
     swallowed: u32,
+    track: DragTrack,
+    /// The current press drove a drag or a scroll binding: its release clicks nothing.
+    acted: bool,
+    /// The hold-through target posted for each held CG button.
+    through: [Option<u8>; MAX_BUTTONS],
 }
 
 impl ButtonRouter {
@@ -132,6 +177,9 @@ impl ButtonRouter {
             hold_armed: false,
             expiry_armed: false,
             swallowed: 0,
+            track: DragTrack::default(),
+            acted: false,
+            through: [None; MAX_BUTTONS],
         }
     }
 
@@ -180,6 +228,7 @@ impl ButtonRouter {
     /// is swallowed, so its up is too. The caller guarantees `button < 32`.
     pub fn on_captured_down(&mut self, button: u8) -> Decision {
         let mut d = Decision::swallow();
+        self.let_go(&mut d.outcomes);
         self.end(&mut d.outcomes);
         self.swallowed |= 1 << button;
         d
@@ -218,10 +267,180 @@ impl ButtonRouter {
         d
     }
 
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the engine uses it from Phase 6 Task 5")
+    )]
+    /// Pointer movement while a button is down (Drag tap). Hot path.
+    pub fn on_motion(&mut self, dx: i32, dy: i32) -> Decision {
+        let mut d = Decision::pass();
+        let Some(c) = self.cycle.current() else {
+            return d;
+        };
+        if !c.down || c.hold_fired {
+            return d;
+        }
+        let Some(drag) = self.remaps.button(c.press.button).drag else {
+            return d;
+        };
+        self.track.dx = self.track.dx.saturating_add(dx);
+        self.track.dy = self.track.dy.saturating_add(dy);
+        let swipe = match drag {
+            CompiledDrag::Swipe(kind) => Some(kind),
+            CompiledDrag::Discrete(_) => None,
+        };
+        if self.track.axis.is_none() {
+            let (ax, ay) = (
+                self.track.dx.saturating_abs(),
+                self.track.dy.saturating_abs(),
+            );
+            if ax.max(ay) < DRAG_THRESHOLD_PX {
+                return d;
+            }
+            let axis = if ax > ay {
+                DragAxis::Horizontal
+            } else {
+                DragAxis::Vertical
+            };
+            self.track.axis = Some(axis);
+            self.acted = true;
+            self.disarm(TimerKind::Hold, &mut d.outcomes);
+            self.disarm(TimerKind::Expiry, &mut d.outcomes);
+            d.outcomes.push(Outcome::DragBegin { axis, swipe });
+            if swipe.is_some() {
+                d.outcomes.push(Outcome::DragMove {
+                    dx: self.track.dx,
+                    dy: self.track.dy,
+                });
+            }
+        } else if swipe.is_some() {
+            d.outcomes.push(Outcome::DragMove { dx, dy });
+        }
+        if let (CompiledDrag::Discrete(actions), Some(axis)) = (drag, self.track.axis) {
+            self.fire_discrete(actions, axis, &mut d.outcomes);
+        }
+        d
+    }
+
+    fn fire_discrete(&mut self, a: DiscreteActions, axis: DragAxis, out: &mut Outcomes) {
+        let (offset, negative, positive, neg_bit, pos_bit) = match axis {
+            DragAxis::Horizontal => (self.track.dx, a.left, a.right, 1u8, 2u8),
+            // Screen y grows downwards: negative dy is up.
+            DragAxis::Vertical => (self.track.dy, a.up, a.down, 4u8, 8u8),
+        };
+        let (action, bit) = if offset <= -DISCRETE_STEP_PX {
+            (negative, neg_bit)
+        } else if offset >= DISCRETE_STEP_PX {
+            (positive, pos_bit)
+        } else {
+            return;
+        };
+        if self.track.fired & bit == 0 {
+            self.track.fired |= bit;
+            if let Some(action) = action {
+                out.push(Outcome::Fire(action));
+            }
+        }
+    }
+
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the engine uses it from Phase 6 Task 5")
+    )]
+    /// A scroll tick was consumed by the held button's binding: it's a
+    /// modifier now, so its release clicks nothing.
+    pub fn acted_as_modifier(&mut self) -> Decision {
+        let mut d = Decision::pass();
+        if self.cycle.current().is_some_and(|c| c.down) && !self.acted {
+            self.acted = true;
+            self.disarm(TimerKind::Hold, &mut d.outcomes);
+            self.disarm(TimerKind::Expiry, &mut d.outcomes);
+        }
+        d
+    }
+
+    pub fn held_scroll_effect(&self) -> Option<ScrollEffect> {
+        let c = self.cycle.current().filter(|c| c.down)?;
+        self.remaps.button(c.press.button).scroll
+    }
+
+    /// The Drag tap is needed: a drag-bound button is down.
+    pub fn wants_motion(&self) -> bool {
+        self.cycle
+            .current()
+            .is_some_and(|c| c.down && self.remaps.button(c.press.button).drag.is_some())
+    }
+
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the engine uses it from Phase 6 Task 5")
+    )]
+    pub fn freeze_pointer(&self) -> bool {
+        self.remaps.freeze_pointer
+    }
+
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the engine uses it from Phase 6 Task 5")
+    )]
+    /// Lets go of everything this router is holding open, for `refresh`:
+    /// ends a drag, releases a modifier, posts hold-through ups. Posts at
+    /// most `MAX_THROUGH_UPS_PER_CALL` ups so the outcomes fit; the caller
+    /// repeats until a call returns no outcomes.
+    pub fn release_all(&mut self) -> Decision {
+        let mut d = Decision::pass();
+        self.let_go(&mut d.outcomes);
+        let mut released = 0;
+        for (button, target) in self.through.iter_mut().enumerate() {
+            if released == MAX_THROUGH_UPS_PER_CALL {
+                break;
+            }
+            if let Some(cg_button) = target.take() {
+                released += 1;
+                self.swallowed &= !(1 << button);
+                d.outcomes.push(Outcome::HoldThrough {
+                    cg_button,
+                    down: false,
+                });
+            }
+        }
+        // The press is over for MouseTune: its up is still swallowed (bit kept).
+        self.end(&mut d.outcomes);
+        d
+    }
+
+    /// Ends whatever the press still down is driving (a drag, a scroll
+    /// modifier, the Drag tap) before its cycle ends early, so no swipe stays
+    /// open and the pointer doesn't stay frozen.
+    fn let_go(&mut self, out: &mut Outcomes) {
+        if self.track.axis.is_some() {
+            out.push(Outcome::DragEnd);
+        }
+        if self.acted && self.held_scroll_effect().is_some() {
+            out.push(Outcome::ModifierReleased);
+        }
+        if self.wants_motion() {
+            out.push(Outcome::WantsMotion(false));
+        }
+        self.track = DragTrack::default();
+        self.acted = false;
+    }
+
     fn down(&mut self, button: u8, sender_id: u64) -> Decision {
         let remaps = self.remaps.button(button);
-        let max = remaps.max_click_level();
-        if max == 0 {
+        if let Some(target) = remaps.acts_as {
+            self.swallowed |= 1 << button;
+            if let Some(slot) = self.through.get_mut(usize::from(button)) {
+                *slot = Some(target);
+            }
+            let mut d = Decision::swallow();
+            d.outcomes.push(Outcome::HoldThrough {
+                cg_button: target,
+                down: true,
+            });
+            return d;
+        }
+        if !remaps.is_bound() {
             // A fresh down proves the previous up was missed (it went to the
             // OS while the tap was off), so its stale bit must not eat this up.
             self.swallowed &= !(1 << button);
@@ -233,16 +452,24 @@ impl ButtonRouter {
             .current()
             .is_some_and(|c| c.press.button == button && c.press.sender_id == sender_id && !c.down);
         if !continues {
+            self.let_go(&mut d.outcomes);
             self.finish(&mut d.outcomes);
         }
-        let press = self.cycle.press(button, sender_id, max);
+        let press = self
+            .cycle
+            .press(button, sender_id, remaps.max_click_level().max(1));
         self.swallowed |= 1 << button;
+        self.track = DragTrack::default();
+        self.acted = false;
+        if remaps.drag.is_some() {
+            d.outcomes.push(Outcome::WantsMotion(true));
+        }
         self.arm(TimerKind::Expiry, &mut d.outcomes);
         let has_hold = remaps.has_hold(press.level);
         if has_hold {
             self.arm(TimerKind::Hold, &mut d.outcomes);
         }
-        if !has_hold && !remaps.has_higher_level(press.level) {
+        if !has_hold && !remaps.has_higher_level(press.level) && !remaps.waits_for_release() {
             self.emit_click(press, &mut d.outcomes);
             self.cycle.mark_click_fired();
         }
@@ -250,6 +477,19 @@ impl ButtonRouter {
     }
 
     fn up(&mut self, button: u8, sender_id: u64) -> Decision {
+        if let Some(target) = self
+            .through
+            .get_mut(usize::from(button))
+            .and_then(Option::take)
+        {
+            self.swallowed &= !(1 << button);
+            let mut d = Decision::swallow();
+            d.outcomes.push(Outcome::HoldThrough {
+                cg_button: target,
+                down: false,
+            });
+            return d;
+        }
         let bit = 1 << button;
         if self.swallowed & bit == 0 {
             return Decision::pass();
@@ -267,6 +507,21 @@ impl ButtonRouter {
         self.cycle.release();
         self.disarm(TimerKind::Hold, &mut d.outcomes);
         let remaps = self.remaps.button(button);
+        if remaps.drag.is_some() {
+            d.outcomes.push(Outcome::WantsMotion(false));
+        }
+        if self.track.axis.is_some() || self.acted {
+            if self.track.axis.is_some() {
+                d.outcomes.push(Outcome::DragEnd);
+            }
+            if self.acted && remaps.scroll.is_some() {
+                d.outcomes.push(Outcome::ModifierReleased);
+            }
+            self.track = DragTrack::default();
+            self.acted = false;
+            self.end(&mut d.outcomes);
+            return d;
+        }
         if c.hold_fired || c.click_fired {
             self.end(&mut d.outcomes);
         } else if remaps.has_higher_level(c.press.level) && !c.expired {
@@ -713,6 +968,345 @@ mod tests {
         );
         assert_eq!(timer(&mut r, TimerKind::Hold), vec![]);
         assert_eq!(up(&mut r, MIDDLE), (Verdict::Swallow, vec![]));
+    }
+
+    use crate::config::schema::{
+        DragBinding, DragEffect, HoldThrough, MouseButton, ScrollBinding, ScrollEffect,
+    };
+    use crate::input::remaps::{OutputSupport, SwipeKind, compile_with};
+
+    fn router_with(
+        f: impl FnOnce(&mut crate::config::schema::Buttons),
+        support: OutputSupport,
+    ) -> ButtonRouter {
+        let mut c = Config {
+            buttons: crate::test_support::phase4_buttons(),
+            ..Config::default()
+        };
+        c.buttons
+            .remaps
+            .retain(|r| r.trigger.button != 3 || r.trigger.duration == TriggerDuration::Click);
+        f(&mut c.buttons);
+        ButtonRouter::new(compile_with(&c, support))
+    }
+
+    /// B3: click → Mission Control, drag → dock swipe.
+    fn swipe_router() -> ButtonRouter {
+        router_with(
+            |b| {
+                b.drags = vec![DragBinding {
+                    button: 3,
+                    effect: DragEffect::SpacesAndMissionControl,
+                }]
+            },
+            OutputSupport {
+                dock_swipe: true,
+                magnify: false,
+            },
+        )
+    }
+
+    fn outcomes(d: Decision) -> Vec<Outcome> {
+        d.outcomes.iter().collect()
+    }
+
+    #[test]
+    fn a_still_press_of_a_drag_button_clicks_on_release() {
+        let mut r = swipe_router();
+        let (verdict, on_down) = down(&mut r, MIDDLE);
+        assert_eq!(verdict, Verdict::Swallow);
+        assert!(
+            !on_down.contains(&Outcome::Fire(MC)),
+            "a drag button doesn't click on down"
+        );
+        assert!(on_down.contains(&Outcome::WantsMotion(true)));
+        let (_, on_up) = up(&mut r, MIDDLE);
+        assert!(on_up.contains(&Outcome::Fire(MC)));
+        assert!(on_up.contains(&Outcome::WantsMotion(false)));
+    }
+
+    #[test]
+    fn six_pixels_is_still_a_click() {
+        let mut r = swipe_router();
+        down(&mut r, MIDDLE);
+        assert_eq!(outcomes(r.on_motion(4, 2)), vec![]);
+        assert_eq!(outcomes(r.on_motion(2, 0)), vec![], "6 px total");
+        assert!(up(&mut r, MIDDLE).1.contains(&Outcome::Fire(MC)));
+    }
+
+    #[test]
+    fn seven_pixels_starts_a_horizontal_drag_and_its_release_does_not_click() {
+        let mut r = swipe_router();
+        down(&mut r, MIDDLE);
+        // down armed only the expiry timer (B3 has no hold here), so the drag
+        // disarms just that one.
+        assert_eq!(
+            outcomes(r.on_motion(7, -2)),
+            vec![
+                Outcome::Disarm(TimerKind::Expiry),
+                Outcome::DragBegin {
+                    axis: DragAxis::Horizontal,
+                    swipe: Some(SwipeKind::SpacesAndMissionControl)
+                },
+                Outcome::DragMove { dx: 7, dy: -2 },
+            ]
+        );
+        assert_eq!(
+            outcomes(r.on_motion(5, 1)),
+            vec![Outcome::DragMove { dx: 5, dy: 1 }]
+        );
+        let (_, on_up) = up(&mut r, MIDDLE);
+        assert!(on_up.contains(&Outcome::DragEnd));
+        assert!(
+            !on_up
+                .iter()
+                .any(|o| matches!(o, Outcome::Fire(_) | Outcome::Click { .. }))
+        );
+    }
+
+    #[test]
+    fn the_axis_is_vertical_when_dy_wins() {
+        let mut r = swipe_router();
+        down(&mut r, MIDDLE);
+        assert!(outcomes(r.on_motion(3, -8)).contains(&Outcome::DragBegin {
+            axis: DragAxis::Vertical,
+            swipe: Some(SwipeKind::SpacesAndMissionControl)
+        }));
+    }
+
+    #[test]
+    fn movement_after_a_fired_hold_does_not_drag() {
+        let mut r = router_with(
+            |b| {
+                b.remaps.push(Remap {
+                    trigger: ClickTrigger {
+                        button: 3,
+                        level: 1,
+                        duration: TriggerDuration::Hold,
+                    },
+                    effect: Effect {
+                        action: config_action(DESKTOP),
+                    },
+                });
+                b.drags = vec![DragBinding {
+                    button: 3,
+                    effect: DragEffect::ScrollSwipe,
+                }];
+            },
+            OutputSupport::NONE,
+        );
+        down(&mut r, MIDDLE);
+        assert!(outcomes(r.on_timer(TimerKind::Hold)).contains(&Outcome::Fire(DESKTOP)));
+        assert_eq!(outcomes(r.on_motion(30, 0)), vec![]);
+    }
+
+    #[test]
+    fn separate_actions_fire_once_per_direction_past_40_px() {
+        // Unverified dock swipe → SpaceLeft/SpaceRight/MissionControl/AppExpose.
+        let mut r = router_with(
+            |b| {
+                b.drags = vec![DragBinding {
+                    button: 3,
+                    effect: DragEffect::SpacesAndMissionControl,
+                }]
+            },
+            OutputSupport::NONE,
+        );
+        down(&mut r, MIDDLE);
+        let right = CompiledAction::SymbolicHotkey(SymbolicHotkeyId::SpaceRight);
+        let begin = outcomes(r.on_motion(10, 0));
+        assert!(begin.contains(&Outcome::DragBegin {
+            axis: DragAxis::Horizontal,
+            swipe: None
+        }));
+        assert!(!begin.contains(&Outcome::Fire(right)));
+        assert_eq!(outcomes(r.on_motion(29, 0)), vec![], "39 px");
+        assert_eq!(
+            outcomes(r.on_motion(1, 0)),
+            vec![Outcome::Fire(right)],
+            "40 px"
+        );
+        assert_eq!(outcomes(r.on_motion(50, 0)), vec![], "once per drag");
+        assert_eq!(
+            outcomes(r.on_motion(-130, 0)),
+            vec![Outcome::Fire(CompiledAction::SymbolicHotkey(
+                SymbolicHotkeyId::SpaceLeft
+            ))],
+            "back past −40 px: left fires once too"
+        );
+    }
+
+    #[test]
+    fn a_scroll_binding_used_while_held_means_no_click() {
+        let mut r = router_with(
+            |b| {
+                b.scroll_bindings = vec![ScrollBinding {
+                    button: 4,
+                    effect: ScrollEffect::Zoom,
+                }]
+            },
+            OutputSupport::NONE,
+        );
+        // B4 (CG 3) clicks → Back when no scroll happens.
+        down(&mut r, 3);
+        assert_eq!(r.held_scroll_effect(), Some(ScrollEffect::Zoom));
+        r.acted_as_modifier();
+        let (_, on_up) = up(&mut r, 3);
+        assert!(!on_up.contains(&Outcome::Fire(BACK)));
+        assert!(on_up.contains(&Outcome::ModifierReleased));
+        assert_eq!(r.held_scroll_effect(), None);
+    }
+
+    #[test]
+    fn hold_through_bypasses_the_click_cycle() {
+        let mut r = router_with(
+            |b| {
+                b.hold_through = vec![HoldThrough {
+                    button: 6,
+                    acts_as: MouseButton::Middle,
+                }]
+            },
+            OutputSupport::NONE,
+        );
+        assert_eq!(
+            down(&mut r, 5),
+            (
+                Verdict::Swallow,
+                vec![Outcome::HoldThrough {
+                    cg_button: 2,
+                    down: true
+                }]
+            )
+        );
+        assert_eq!(
+            up(&mut r, 5),
+            (
+                Verdict::Swallow,
+                vec![Outcome::HoldThrough {
+                    cg_button: 2,
+                    down: false
+                }]
+            )
+        );
+    }
+
+    #[test]
+    fn release_all_ends_a_drag_and_lets_go_of_held_through_buttons() {
+        let mut r = router_with(
+            |b| {
+                b.drags = vec![DragBinding {
+                    button: 3,
+                    effect: DragEffect::ScrollSwipe,
+                }];
+                b.hold_through = vec![HoldThrough {
+                    button: 6,
+                    acts_as: MouseButton::Left,
+                }];
+            },
+            OutputSupport::NONE,
+        );
+        down(&mut r, 5);
+        down(&mut r, MIDDLE);
+        r.on_motion(0, 9);
+        let released = outcomes(r.release_all());
+        assert!(released.contains(&Outcome::DragEnd));
+        assert!(released.contains(&Outcome::HoldThrough {
+            cg_button: 0,
+            down: false
+        }));
+        assert!(released.contains(&Outcome::WantsMotion(false)));
+        assert_eq!(outcomes(r.release_all()), vec![], "nothing left to release");
+    }
+
+    #[test]
+    fn release_all_lets_go_of_at_most_five_held_through_buttons_per_call() {
+        let mut r = router_with(
+            |b| {
+                b.remaps.clear();
+                b.hold_through = (3..=9)
+                    .map(|button| HoldThrough {
+                        button,
+                        acts_as: MouseButton::Left,
+                    })
+                    .collect();
+            },
+            OutputSupport::NONE,
+        );
+        for cg in 2..=8 {
+            down(&mut r, cg);
+        }
+        let left_up = Outcome::HoldThrough {
+            cg_button: 0,
+            down: false,
+        };
+        assert_eq!(outcomes(r.release_all()), vec![left_up; 5]);
+        assert_eq!(outcomes(r.release_all()), vec![left_up; 2]);
+        assert_eq!(outcomes(r.release_all()), vec![], "all 7 released");
+    }
+
+    #[test]
+    fn a_hold_through_up_is_swallowed_even_after_the_bindings_change() {
+        let mut r = router_with(
+            |b| {
+                b.hold_through = vec![HoldThrough {
+                    button: 6,
+                    acts_as: MouseButton::Middle,
+                }]
+            },
+            OutputSupport::NONE,
+        );
+        down(&mut r, 5);
+        r.set_remaps(compile(&Config::default()));
+        assert_eq!(
+            up(&mut r, 5),
+            (
+                Verdict::Swallow,
+                vec![Outcome::HoldThrough {
+                    cg_button: 2,
+                    down: false
+                }]
+            )
+        );
+    }
+
+    #[test]
+    fn another_button_pressed_mid_drag_ends_the_drag_first() {
+        let mut r = swipe_router();
+        down(&mut r, MIDDLE);
+        r.on_motion(9, 0);
+        let (_, on_down) = down(&mut r, 3);
+        assert_eq!(
+            &on_down[..2],
+            &[Outcome::DragEnd, Outcome::WantsMotion(false)]
+        );
+        assert!(on_down.contains(&Outcome::Fire(BACK)), "B4 still clicks");
+        assert_eq!(
+            outcomes(r.release_all()),
+            vec![Outcome::Disarm(TimerKind::Expiry)],
+            "the drag is already over; only B4's expiry timer is left"
+        );
+    }
+
+    #[test]
+    fn a_capture_mid_drag_ends_the_drag() {
+        let mut r = swipe_router();
+        down(&mut r, MIDDLE);
+        r.on_motion(9, 0);
+        assert_eq!(
+            split(r.on_captured_down(3)),
+            (
+                Verdict::Swallow,
+                vec![Outcome::DragEnd, Outcome::WantsMotion(false)]
+            )
+        );
+    }
+
+    #[test]
+    fn the_router_reports_whether_drags_freeze_the_pointer() {
+        let mut config = Config::default();
+        config.general.freeze_pointer_during_drag = false;
+        assert!(!ButtonRouter::new(compile(&config)).freeze_pointer());
+        assert!(ButtonRouter::new(compile(&Config::default())).freeze_pointer());
     }
 
     #[test]

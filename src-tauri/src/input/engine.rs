@@ -260,6 +260,12 @@ impl<C: TapController> InputEngine<C> {
                 Outcome::Disarm(kind) => self.timers.disarm(kind),
                 Outcome::Fire(action) => self.submit(Job::Perform(action)),
                 Outcome::Click { button } => self.submit(Job::Click { button }),
+                Outcome::DragBegin { .. }
+                | Outcome::DragMove { .. }
+                | Outcome::DragEnd
+                | Outcome::HoldThrough { .. }
+                | Outcome::WantsMotion(_)
+                | Outcome::ModifierReleased => {} // Task 5 routes these.
             }
         }
         decision.verdict

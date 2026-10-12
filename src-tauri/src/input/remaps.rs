@@ -129,10 +129,6 @@ impl ButtonRemaps {
 
     /// The click must wait for the release: the press may turn into a
     /// drag or a scroll modifier first.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the router uses it from Phase 6 Task 3")
-    )]
     pub fn waits_for_release(&self) -> bool {
         self.drag.is_some() || self.scroll.is_some()
     }
