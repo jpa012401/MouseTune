@@ -3,6 +3,8 @@
 //! defaults (`load::merge_defaults`), so later phases can add fields without
 //! a version bump (design §1).
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
@@ -17,6 +19,9 @@ pub struct Config {
     pub general: General,
     pub buttons: Buttons,
     pub scroll: Scroll,
+    pub timing: Timing,
+    /// Per-app Back/Forward strategy, keyed by bundle ID (spec §7.3).
+    pub nav_overrides: BTreeMap<String, NavStrategy>,
 }
 
 impl Default for Config {
@@ -26,6 +31,8 @@ impl Default for Config {
             general: General::default(),
             buttons: Buttons::default(),
             scroll: Scroll::default(),
+            timing: Timing::default(),
+            nav_overrides: default_nav_overrides(),
         }
     }
 }
@@ -137,6 +144,101 @@ pub enum Action {
         modifiers: Vec<KeyModifier>,
         key_label: String,
     },
+    /// A full click of another button, 1 or 2 clicks.
+    MouseClick {
+        button: MouseButton,
+        clicks: u8,
+    },
+    SystemKey {
+        key: SystemKey,
+    },
+}
+
+/// Clicks a remap can post (Phase 4c design §1). Named, not numbered, so the
+/// file reads clearly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub enum MouseButton {
+    Left,
+    Right,
+    Middle,
+    /// Button 4.
+    Back,
+    /// Button 5.
+    Forward,
+}
+
+impl MouseButton {
+    /// The CoreGraphics button number (left = 0).
+    // Task 2 removes this: the executor becomes the first caller.
+    #[allow(dead_code)]
+    pub fn cg_button(self) -> u8 {
+        match self {
+            Self::Left => 0,
+            Self::Right => 1,
+            Self::Middle => 2,
+            Self::Back => 3,
+            Self::Forward => 4,
+        }
+    }
+}
+
+/// Media and brightness keys (spec §7.4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub enum SystemKey {
+    PlayPause,
+    Next,
+    Previous,
+    VolumeUp,
+    VolumeDown,
+    Mute,
+    BrightnessUp,
+    BrightnessDown,
+}
+
+/// The click-cycle timers (spec §5.1). Both within `TIMING_MS`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct Timing {
+    /// How long a press must last to fire a Hold action.
+    pub hold_ms: u32,
+    /// How soon the next press must come to count as a double or triple click.
+    pub double_click_ms: u32,
+}
+
+impl Default for Timing {
+    fn default() -> Self {
+        Self {
+            hold_ms: 250,
+            double_click_ms: 260,
+        }
+    }
+}
+
+/// Allowed `timing` values, in ms.
+pub const TIMING_MS: std::ops::RangeInclusive<u32> = 150..=600;
+
+/// How Back/Forward reach an app (spec §7.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub enum NavStrategy {
+    /// ⌘[ / ⌘].
+    CmdBracket,
+    /// Synthesized buttons 4 / 5.
+    MouseButtons,
+}
+
+/// Apps where ⌘[ / ⌘] means back / forward. Xcode and Notes stay off the
+/// list: there ⌘[ edits text.
+fn default_nav_overrides() -> BTreeMap<String, NavStrategy> {
+    [
+        "com.apple.Safari",
+        "com.apple.finder",
+        "com.apple.Music",
+        "com.apple.AppStore",
+        "com.apple.systempreferences",
+        "com.apple.Preview",
+    ]
+    .into_iter()
+    .map(|id| (id.to_owned(), NavStrategy::CmdBracket))
+    .collect()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -292,6 +394,8 @@ mod tests {
             },
             buttons: Buttons::default(),
             scroll: Scroll::default(),
+            timing: Timing::default(),
+            nav_overrides: default_nav_overrides(),
         }
     }
 
@@ -361,7 +465,9 @@ mod tests {
                 "version": 1,
                 "general": { "buttons_enabled": true, "scroll_enabled": false },
                 "buttons": serde_json::to_value(Buttons::default()).unwrap(),
-                "scroll": serde_json::to_value(Scroll::default()).unwrap()
+                "scroll": serde_json::to_value(Scroll::default()).unwrap(),
+                "timing": { "hold_ms": 250, "double_click_ms": 260 },
+                "nav_overrides": serde_json::to_value(default_nav_overrides()).unwrap()
             })
         );
     }
@@ -403,6 +509,54 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&action).unwrap(),
             serde_json::json!({ "type": "KeyCombo", "key_code": 1, "modifiers": ["Command", "Shift"], "key_label": "S" })
+        );
+    }
+
+    #[test]
+    fn the_new_actions_have_the_design_wire_shape() {
+        let click = Action::MouseClick {
+            button: MouseButton::Middle,
+            clicks: 1,
+        };
+        assert_eq!(
+            serde_json::to_value(&click).unwrap(),
+            serde_json::json!({ "type": "MouseClick", "button": "Middle", "clicks": 1 })
+        );
+        let key = Action::SystemKey {
+            key: SystemKey::PlayPause,
+        };
+        assert_eq!(
+            serde_json::to_value(&key).unwrap(),
+            serde_json::json!({ "type": "SystemKey", "key": "PlayPause" })
+        );
+    }
+
+    #[test]
+    fn mouse_buttons_map_to_cg_numbers() {
+        use MouseButton::*;
+        let cg: Vec<u8> = [Left, Right, Middle, Back, Forward]
+            .map(MouseButton::cg_button)
+            .to_vec();
+        assert_eq!(cg, [0, 1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn default_timing_and_nav_overrides_are_the_design_shape() {
+        let c = Config::default();
+        assert_eq!(
+            serde_json::to_value(c.timing).unwrap(),
+            serde_json::json!({ "hold_ms": 250, "double_click_ms": 260 })
+        );
+        assert_eq!(
+            serde_json::to_value(&c.nav_overrides).unwrap(),
+            serde_json::json!({
+                "com.apple.AppStore": "CmdBracket",
+                "com.apple.Music": "CmdBracket",
+                "com.apple.Preview": "CmdBracket",
+                "com.apple.Safari": "CmdBracket",
+                "com.apple.finder": "CmdBracket",
+                "com.apple.systempreferences": "CmdBracket"
+            })
         );
     }
 

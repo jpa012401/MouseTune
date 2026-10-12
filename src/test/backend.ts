@@ -1,5 +1,5 @@
 import { mockIPC } from "@tauri-apps/api/mocks";
-import type { Config, ConfigView, CurvePreview, Device, General as GeneralSettings, InputStatus, Remap, Scroll as ScrollSettings, Status } from "../bindings";
+import type { Config, ConfigView, CurvePreview, Device, General as GeneralSettings, InputStatus, Remap, Scroll as ScrollSettings, Status, Timing } from "../bindings";
 
 export function device(overrides: Partial<Device> = {}): Device {
   return { id: "1a", name: "MX Master 3", manufacturer: "Logitech", button_count: 5, has_wheel: true, ...overrides };
@@ -48,7 +48,21 @@ export function config(overrides: Partial<GeneralSettings> = {}): Config {
       precise: false,
       keyboard_modifiers: { horizontal: "Shift", precise: "Option", swift: null },
     },
+    timing: { hold_ms: 250, double_click_ms: 260 },
+    nav_overrides: {
+      "com.apple.AppStore": "CmdBracket",
+      "com.apple.Music": "CmdBracket",
+      "com.apple.Preview": "CmdBracket",
+      "com.apple.Safari": "CmdBracket",
+      "com.apple.finder": "CmdBracket",
+      "com.apple.systempreferences": "CmdBracket",
+    },
   };
+}
+
+/** The default config with other timing. */
+export function timingConfig(timing: Timing): Config {
+  return { ...config(), timing };
 }
 
 /** The default config with some scroll settings changed. */

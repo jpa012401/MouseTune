@@ -85,6 +85,38 @@ mod tests {
     }
 
     #[test]
+    fn a_phase_5b_file_gets_the_timing_and_nav_defaults() {
+        let outcome = parse_config(Some(r#"{ "version": 1, "scroll": { "precise": true } }"#));
+        assert!(!outcome.recover);
+        assert_eq!(
+            outcome.config.timing,
+            crate::config::schema::Timing::default()
+        );
+        assert_eq!(
+            outcome.config.nav_overrides,
+            Config::default().nav_overrides
+        );
+    }
+
+    #[test]
+    fn a_file_nav_entry_adds_an_app_or_overrides_a_default() {
+        use crate::config::schema::NavStrategy::{CmdBracket, MouseButtons};
+        let outcome = parse_config(Some(
+            r#"{ "version": 1, "nav_overrides": { "com.apple.dt.Xcode": "CmdBracket", "com.apple.Safari": "MouseButtons" } }"#,
+        ));
+        assert!(!outcome.recover);
+        let nav = &outcome.config.nav_overrides;
+        assert_eq!(nav.get("com.apple.dt.Xcode"), Some(&CmdBracket));
+        assert_eq!(nav.get("com.apple.Safari"), Some(&MouseButtons));
+        assert_eq!(
+            nav.get("com.apple.finder"),
+            Some(&CmdBracket),
+            "defaults stay"
+        );
+        assert_eq!(nav.len(), 7);
+    }
+
+    #[test]
     fn a_null_binding_in_the_file_stays_unbound() {
         let outcome = parse_config(Some(
             r#"{ "version": 1, "scroll": { "keyboard_modifiers": { "horizontal": null } } }"#,

@@ -45,6 +45,11 @@ export function actionValue(action: Action): string {
       return `nav:${action.direction}`;
     case "KeyCombo":
       return "keys";
+    // The picker learns these in a later Phase 4c task; this keeps the switch exhaustive.
+    case "MouseClick":
+      return `click:${action.button}:${action.clicks}`;
+    case "SystemKey":
+      return `key:${action.key}`;
   }
 }
 

@@ -36,6 +36,10 @@ impl From<&Action> for CompiledAction {
                 key_code: *key_code,
                 modifiers: modifier_mask(modifiers),
             }),
+            // Task 2 replaces this.
+            Action::MouseClick { .. } | Action::SystemKey { .. } => {
+                Self::Navigate(NavDirection::Back)
+            }
         }
     }
 }

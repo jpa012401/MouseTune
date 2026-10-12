@@ -7,7 +7,9 @@ use crate::config::{
     file::ConfigFile,
     load::parse_config,
     schema::{CURRENT_VERSION, Config, KeyModifier},
-    validate::{RemapProblem, duplicate_scroll_modifier, validate_remaps},
+    validate::{
+        RemapProblem, TimingField, check_timing, duplicate_scroll_modifier, validate_remaps,
+    },
 };
 
 /// Called after a change has been saved. Runs while the store is locked:
@@ -27,6 +29,8 @@ pub enum ConfigError {
     InvalidRemap { index: u32, reason: RemapProblem },
     #[error("{key:?} is bound to two scroll effects")]
     DuplicateScrollModifier { key: KeyModifier },
+    #[error("{field:?} timing of {ms} ms is out of range")]
+    TimingOutOfRange { field: TimingField, ms: u32 },
 }
 
 /// The settings file couldn't be used at startup.
@@ -96,6 +100,12 @@ impl ConfigStore {
             && let Some(key) = duplicate_scroll_modifier(&new.scroll.keyboard_modifiers)
         {
             return Err(ConfigError::DuplicateScrollModifier { key });
+        }
+        // Only a changed value is checked, so a bad hand-edited one still loads.
+        if new.timing != self.current.timing
+            && let Err((field, ms)) = check_timing(&new.timing)
+        {
+            return Err(ConfigError::TimingOutOfRange { field, ms });
         }
         if new == self.current {
             return Ok(new);
@@ -334,6 +344,38 @@ mod tests {
         assert!(
             store.update(next).is_ok(),
             "an unchanged binding isn't re-checked"
+        );
+        assert_eq!(file.writes().len(), 1);
+    }
+
+    #[test]
+    fn out_of_range_timing_is_rejected_without_writing() {
+        let file = FakeConfigFile::missing();
+        let mut store = ConfigStore::load(Box::new(file.clone()));
+        let mut next = store.current().clone();
+        next.timing.hold_ms = 700;
+        assert_eq!(
+            store.update(next),
+            Err(ConfigError::TimingOutOfRange {
+                field: TimingField::Hold,
+                ms: 700
+            })
+        );
+        assert!(file.writes().is_empty());
+    }
+
+    #[test]
+    fn a_hand_edited_out_of_range_timing_still_loads_and_other_settings_save() {
+        let file = FakeConfigFile::with(
+            r#"{ "version": 1, "timing": { "hold_ms": 50, "double_click_ms": 260 } }"#,
+        );
+        let mut store = ConfigStore::load(Box::new(file.clone()));
+        assert_eq!(store.current().timing.hold_ms, 50);
+        let mut next = store.current().clone();
+        next.general.buttons_enabled = false;
+        assert!(
+            store.update(next).is_ok(),
+            "unchanged timing isn't re-checked"
         );
         assert_eq!(file.writes().len(), 1);
     }

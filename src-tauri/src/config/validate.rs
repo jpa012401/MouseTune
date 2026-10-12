@@ -7,7 +7,9 @@ use specta::Type;
 
 use crate::{
     actions::keys::is_modifier_key,
-    config::schema::{Action, KeyModifier, Remap, ScrollModifiers, TriggerDuration},
+    config::schema::{
+        Action, KeyModifier, Remap, ScrollModifiers, TIMING_MS, Timing, TriggerDuration,
+    },
     input::remaps::{MAX_BUTTONS, MAX_LEVEL},
 };
 
@@ -29,6 +31,7 @@ pub enum RemapProblem {
     ButtonOutOfRange,
     LevelOutOfRange,
     EmptyKeyCombo,
+    ClicksOutOfRange,
 }
 
 /// The per-entry rules shared with `compile` (which skips what fails).
@@ -47,6 +50,30 @@ pub fn check_remap(remap: &Remap) -> Result<(), RemapProblem> {
         && (is_modifier_key(key_code) || key_code >= 128)
     {
         return Err(RemapProblem::EmptyKeyCombo);
+    }
+    if let Action::MouseClick { clicks, .. } = remap.effect.action
+        && !(1..=2).contains(&clicks)
+    {
+        return Err(RemapProblem::ClicksOutOfRange);
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub enum TimingField {
+    Hold,
+    DoubleClick,
+}
+
+/// The first timing value outside `TIMING_MS`, if any (Phase 4c design §1).
+pub fn check_timing(t: &Timing) -> Result<(), (TimingField, u32)> {
+    for (field, ms) in [
+        (TimingField::Hold, t.hold_ms),
+        (TimingField::DoubleClick, t.double_click_ms),
+    ] {
+        if !TIMING_MS.contains(&ms) {
+            return Err((field, ms));
+        }
     }
     Ok(())
 }
@@ -122,6 +149,48 @@ mod tests {
                 },
             },
         }
+    }
+
+    #[test]
+    fn a_mouse_click_of_three_clicks_is_invalid() {
+        use crate::config::schema::MouseButton;
+        let mut r = remap(5, 1, TriggerDuration::Click);
+        r.effect.action = Action::MouseClick {
+            button: MouseButton::Left,
+            clicks: 3,
+        };
+        assert_eq!(check_remap(&r), Err(RemapProblem::ClicksOutOfRange));
+        r.effect.action = Action::MouseClick {
+            button: MouseButton::Left,
+            clicks: 2,
+        };
+        assert_eq!(check_remap(&r), Ok(()));
+    }
+
+    #[test]
+    fn timing_outside_150_to_600_ms_is_named() {
+        use crate::config::schema::Timing;
+        assert_eq!(
+            check_timing(&Timing {
+                hold_ms: 150,
+                double_click_ms: 600
+            }),
+            Ok(())
+        );
+        assert_eq!(
+            check_timing(&Timing {
+                hold_ms: 149,
+                double_click_ms: 260
+            }),
+            Err((TimingField::Hold, 149))
+        );
+        assert_eq!(
+            check_timing(&Timing {
+                hold_ms: 250,
+                double_click_ms: 601
+            }),
+            Err((TimingField::DoubleClick, 601))
+        );
     }
 
     #[test]

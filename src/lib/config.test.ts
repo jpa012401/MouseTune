@@ -31,4 +31,17 @@ describe("configErrorMessage", () => {
       "Couldn’t save your settings: ⌥ Option is already used for another scroll modifier.",
     );
   });
+  it("explains out-of-range timing", () => {
+    expect(configErrorMessage({ kind: "TimingOutOfRange", field: "Hold", ms: 700 })).toBe(
+      "Couldn’t save your settings: Hold delay must be between 150 and 600 ms.",
+    );
+    expect(configErrorMessage({ kind: "TimingOutOfRange", field: "DoubleClick", ms: 100 })).toBe(
+      "Couldn’t save your settings: Double-click speed must be between 150 and 600 ms.",
+    );
+  });
+  it("explains a mouse click with too many clicks", () => {
+    expect(configErrorMessage({ kind: "InvalidRemap", index: 0, reason: "ClicksOutOfRange" })).toBe(
+      "Couldn’t save your settings: a mouse click can only be single or double.",
+    );
+  });
 });
