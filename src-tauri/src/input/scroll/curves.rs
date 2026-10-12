@@ -113,7 +113,8 @@ impl Curve {
 
     /// Position at `t` seconds, clamped to the curve's start and end.
     pub fn position(&self, t: f64) -> f64 {
-        let t = t.clamp(0.0, self.duration());
+        // Not `clamp`, which panics if the duration is NaN or negative.
+        let t = t.max(0.0).min(self.duration());
         let u = (t / self.base_secs).min(1.0);
         match self.shape {
             Shape::EaseOut => self.distance * (1.0 - (1.0 - u).powi(3)),
@@ -243,6 +244,29 @@ mod tests {
 
     fn close(a: f64, b: f64, tolerance: f64) -> bool {
         (a - b).abs() < tolerance
+    }
+
+    #[test]
+    fn a_degenerate_duration_never_panics_on_the_frame_path() {
+        // Unreachable from the §8.3 table, but `position` runs on every frame.
+        let negative = Curve::new(
+            10.0,
+            CurveParams {
+                base_secs: -0.01,
+                drag: None,
+            },
+        );
+        // t = max(0.05, 0) then min(−0.01) = −0.01; u = −0.01 / −0.01 = 1,
+        // so 10 · (1 − 0³) = 10: it lands on its distance.
+        assert_eq!(negative.position(0.05), 10.0);
+        let nan = Curve::new(
+            10.0,
+            CurveParams {
+                base_secs: f64::NAN,
+                drag: None,
+            },
+        );
+        let _ = nan.position(0.05);
     }
 
     #[test]
