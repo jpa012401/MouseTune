@@ -4,6 +4,8 @@
 // Wired into the app in Task 5, which removes this allow.
 #![allow(dead_code)]
 
+pub mod file;
 pub mod load;
 pub mod migrate;
 pub mod schema;
+pub mod store;

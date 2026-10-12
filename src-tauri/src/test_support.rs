@@ -90,6 +90,7 @@ pub fn apple_trackpad(id: u64) -> DeviceInfo {
     }
 }
 
+use crate::config::file::ConfigFile;
 use crate::input::taps::{TapController, TapKind, TapSet};
 
 #[derive(Default)]
@@ -154,5 +155,73 @@ impl TapController for FakeTapController {
     }
     fn is_enabled(&self, kind: TapKind) -> bool {
         self.0.lock().unwrap().enabled.get(kind)
+    }
+}
+
+#[derive(Default)]
+struct FakeConfigState {
+    contents: Option<String>,
+    read_fails: bool,
+    write_fails: bool,
+    backup_fails: bool,
+    writes: Vec<String>,
+    backups: usize,
+}
+
+/// In-memory settings file. Clones share state.
+#[derive(Clone, Default)]
+pub struct FakeConfigFile(Arc<Mutex<FakeConfigState>>);
+
+impl FakeConfigFile {
+    pub fn missing() -> Self {
+        Self::default()
+    }
+    pub fn with(contents: &str) -> Self {
+        let fake = Self::default();
+        fake.0.lock().unwrap().contents = Some(contents.to_owned());
+        fake
+    }
+    pub fn fail_reads(&self) {
+        self.0.lock().unwrap().read_fails = true;
+    }
+    pub fn fail_writes(&self) {
+        self.0.lock().unwrap().write_fails = true;
+    }
+    pub fn fail_backups(&self) {
+        self.0.lock().unwrap().backup_fails = true;
+    }
+    pub fn writes(&self) -> Vec<String> {
+        self.0.lock().unwrap().writes.clone()
+    }
+    pub fn backups(&self) -> usize {
+        self.0.lock().unwrap().backups
+    }
+}
+
+impl ConfigFile for FakeConfigFile {
+    fn read(&self) -> io::Result<Option<String>> {
+        let state = self.0.lock().unwrap();
+        if state.read_fails {
+            return Err(io::Error::other("read failed"));
+        }
+        Ok(state.contents.clone())
+    }
+    fn write_atomic(&self, contents: &str) -> io::Result<()> {
+        let mut state = self.0.lock().unwrap();
+        if state.write_fails {
+            return Err(io::Error::other("disk full"));
+        }
+        state.contents = Some(contents.to_owned());
+        state.writes.push(contents.to_owned());
+        Ok(())
+    }
+    fn backup(&self) -> io::Result<String> {
+        let mut state = self.0.lock().unwrap();
+        if state.backup_fails {
+            return Err(io::Error::other("backup failed"));
+        }
+        state.backups += 1;
+        state.contents = None;
+        Ok("config.1760000000.bak.json".to_owned())
     }
 }
