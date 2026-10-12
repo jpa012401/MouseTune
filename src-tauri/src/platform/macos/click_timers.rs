@@ -122,6 +122,10 @@ fn fire(info: *mut c_void, kind: TimerKind) {
         let Some(handler) = context.handler.get() else {
             return;
         };
+        // Unreachable today (nothing runs the run loop while the handler is
+        // borrowed). If it ever happens, the dropped tick leaves the router's
+        // armed flag set, so that timer stays inert until the next button
+        // event re-arms or ends the cycle.
         let Ok(mut handler) = handler.try_borrow_mut() else {
             return;
         };
@@ -188,6 +192,13 @@ mod tests {
         timers.arm(TimerKind::Hold, Duration::from_millis(10));
         run_for(0.1);
         assert_eq!(*fired.borrow(), [TimerKind::Hold, TimerKind::Hold]);
+
+        // A later arm replaces a pending fire rather than adding one.
+        timers.arm(TimerKind::Hold, Duration::from_millis(10));
+        timers.arm(TimerKind::Hold, Duration::from_millis(500));
+        run_for(0.1);
+        assert_eq!(*fired.borrow(), [TimerKind::Hold, TimerKind::Hold]);
+        timers.disarm(TimerKind::Hold);
         drop(timers); // invalidates both before `context` goes
     }
 }

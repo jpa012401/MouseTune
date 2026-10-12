@@ -7,7 +7,9 @@ pub const QUEUE_CAPACITY: usize = 64;
 pub struct ChannelSink(crossbeam_channel::Sender<Job>);
 
 impl ActionSink for ChannelSink {
-    /// Never blocks or allocates: the channel's buffer is preallocated.
+    /// Never waits for queue space (a full queue refuses at once) and never
+    /// allocates: the bounded channel's buffer is preallocated. crossbeam may
+    /// still briefly take an internal lock and unpark a waiting receiver.
     fn submit(&self, job: Job) -> bool {
         self.0.try_send(job).is_ok()
     }
@@ -30,7 +32,8 @@ mod tests {
         }
         let started = std::time::Instant::now();
         assert!(!sink.submit(Job::Click { button: 2 }));
-        assert!(started.elapsed() < std::time::Duration::from_millis(10));
+        // Generous bound: only a blocked send would take this long.
+        assert!(started.elapsed() < std::time::Duration::from_millis(100));
     }
 
     #[test]
