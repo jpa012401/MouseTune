@@ -6,7 +6,7 @@ Built with [Tauri v2](https://v2.tauri.app) (Rust) and React. Runs as a menu bar
 
 > Inspired by [Mac Mouse Fix](https://github.com/noah-nuebling/mac-mouse-fix) by Noah Nuebling. MouseTune is an independent, clean-room implementation and contains no Mac Mouse Fix source code.
 
-**Status:** Phase 0 (scaffold). See the [technical specification](macos_mouse_utility_technical_specification.md) for the design and roadmap.
+**Status:** Phases 0–7a are merged; Phase 7b (release build) is on its branch. Phases 2–7 await manual hardware acceptance (see AGENTS.md "Current state"). See the [technical specification](macos_mouse_utility_technical_specification.md) for the design and roadmap.
 
 ## Requirements
 
@@ -35,11 +35,84 @@ Logs: `~/Library/Logs/com.johnpaulalabe.mousetune/`
 MouseTune needs Accessibility access to intercept mouse input.
 
 - **`pnpm tauri dev`** runs an unbundled binary, so macOS attributes the permission to the app that launched it. Grant Accessibility to your terminal or VS Code.
-- **Bundled builds** (`pnpm tauri build`) need a stable signing identity. Otherwise each rebuild looks like a new app and the grant stops working. Set `bundle.macOS.signingIdentity` to your Apple Development certificate. To clear a stale entry:
+- **Bundled builds** need a stable signing identity, or each rebuild looks like a new app and the grant stops working. `pnpm release` (see [Release](#release)) refuses to build without one. To clear a stale entry:
 
   ```sh
   tccutil reset Accessibility com.johnpaulalabe.mousetune
   ```
+
+## Release
+
+`pnpm release` builds a signed, universal (Apple Silicon and Intel) `MouseTune.app` and `.dmg`.
+
+**Before the first run**
+
+- Xcode command-line tools, and both Rust targets: `rustup target add aarch64-apple-darwin x86_64-apple-darwin`.
+- Find your signing identity: `security find-identity -v -p codesigning`.
+
+**Run it**
+
+```sh
+APPLE_SIGNING_IDENTITY="Apple Development: <Name> (<TEAM>)" pnpm release
+```
+
+In order, it:
+
+1. Reads the signing setup and refuses one that would give a broken or misleading build: no identity (the build would be ad-hoc signed and lose its Accessibility grant on every rebuild), an identity that isn't Apple Development or Developer ID Application, a Developer ID identity without notarization variables, an Apple Development identity with them, or a partial or doubled set of notarization variables.
+2. Checks the git tree is clean, so the build traces to a commit.
+3. Runs the CI checks: `pnpm typecheck`, `pnpm test`, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, and that `src/bindings.ts` is unchanged.
+4. Runs `pnpm tauri build --target universal-apple-darwin`.
+5. Checks the output: the signature, the signer, Hardened Runtime, the bundle ID, both architectures, and a minimum of macOS 12.0. A public build also checks the notarization ticket and Gatekeeper. It stops at the first failure and says what to do.
+6. Prints the mode, commit, identity, both paths and the DMG's SHA-256.
+
+The outputs are in `src-tauri/target/universal-apple-darwin/release/bundle/`:
+
+- `macos/MouseTune.app`
+- `dmg/MouseTune_<version>_universal.dmg`
+
+**Prompts**
+
+- `codesign` asks for keychain access the first time. Choose **Always Allow**.
+- Building the DMG may ask to let Terminal (or your editor) control Finder. Allow it.
+
+**Install**
+
+Open the DMG, drag MouseTune to Applications, launch it, and grant Accessibility once to `/Applications/MouseTune.app`. Rebuilds signed with the same identity keep the grant.
+
+**On another of your Macs**
+
+A personal build isn't notarized, so the first launch needs a Gatekeeper bypass. On macOS 12–14: right-click the app → Open. On macOS 15 and later: open it once, then go to System Settings → Privacy & Security → Open Anyway.
+
+## Release checklist
+
+Fill in ✓ or ✗ and the date as each machine becomes available. Each column is a phase's acceptance section below (column 5 covers 5a and 5b).
+
+| macOS | Chip | Phase 2 | 4a | 4c | 5 | 6 | 7a | 7b | Date |
+|---|---|---|---|---|---|---|---|---|---|
+| 12 | Apple Silicon |  |  |  |  |  |  |  |  |
+| 12 | Intel |  |  |  |  |  |  |  |  |
+| 13 | Apple Silicon |  |  |  |  |  |  |  |  |
+| 13 | Intel |  |  |  |  |  |  |  |  |
+| 14 | Apple Silicon |  |  |  |  |  |  |  |  |
+| 14 | Intel |  |  |  |  |  |  |  |  |
+| 15 | Apple Silicon |  |  |  |  |  |  |  |  |
+| 15 | Intel |  |  |  |  |  |  |  |  |
+| 26 | Apple Silicon |  |  |  |  |  |  |  |  |
+| 26 | Intel |  |  |  |  |  |  |  |  |
+| 27 | Apple Silicon |  |  |  |  |  |  |  |  |
+| 27 | Intel |  |  |  |  |  |  |  |  |
+
+## Going public later
+
+1. Join the Apple Developer Program.
+2. Create a **Developer ID Application** certificate, and an App Store Connect API key (Users and Access → Integrations → Team Keys, role *Developer*).
+3. Set `APPLE_SIGNING_IDENTITY="Developer ID Application: …"`, `APPLE_API_KEY`, `APPLE_API_ISSUER` and `APPLE_API_KEY_PATH`.
+4. `pnpm release` then notarizes, staples, and checks Gatekeeper.
+5. Before publishing, settle the licence and trademark questions in AGENTS.md "Open, for the maintainer".
+
+## Acceptance
+
+Manual checks on real hardware, one per phase; record results in the Release checklist.
 
 ### Verifying the input engine (Phase 2)
 
@@ -153,11 +226,15 @@ Steps 1–3 need an app bundle signed with a stable identity. In `pnpm tauri dev
 5. Open logs folder shows the folder in Finder. The About link opens the browser.
 6. Turn launch at login off in MouseTune, then on again; it still works (checks the `notFound` mapping).
 
-## Building
+### Verifying the release build (Phase 7b acceptance, macOS 27)
 
-```sh
-pnpm tauri build --target universal-apple-darwin
-```
+1. `APPLE_SIGNING_IDENTITY="Apple Development: <Name> (<TEAM>)" pnpm release`. Answer the prompts. The run ends with the report and every check passed.
+2. Open the DMG, drag MouseTune to Applications, launch it, and grant Accessibility.
+3. Run "Phase 7a acceptance" steps 1–6 on this installed app.
+4. Rebuild with `pnpm release` and reinstall. Accessibility is still granted.
+5. Paste the release report and the results. They get recorded in AGENTS.md and the checklist.
+
+Not covered: public mode (no Developer ID credentials yet), Intel and macOS 12–26 (the checklist), and the DMG on another Mac.
 
 ## License
 

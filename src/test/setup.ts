@@ -7,6 +7,8 @@ import { useLoginItemStore } from "../store/loginItem";
 import { useStatusStore } from "../store/status";
 
 afterEach(async () => {
+  // Node-environment tests (scripts/) have no DOM or Tauri mocks to tear down.
+  if (typeof window === "undefined") return;
   cleanup();
   // Let async unlisten() calls from unmounted components settle before the
   // mocked event internals are torn down.
