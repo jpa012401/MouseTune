@@ -21,7 +21,7 @@ use crate::{
         capture::Clock,
         router::{ClickTimers, TimerKind},
     },
-    login_item::{LoginItem, LoginItemError, LoginItemStatus},
+    login_item::{AgentFile, LoginItem, LoginItemError, LoginItemStatus},
 };
 
 /// The Phase 4 default buttons: B3 click → Mission Control, B3 hold → Show
@@ -689,5 +689,48 @@ impl LoginItem for FakeLoginItem {
         }
         s.status = LoginItemStatus::Off;
         Ok(())
+    }
+}
+
+/// A LaunchAgent plist on an in-memory disk. Clones share the file.
+#[derive(Clone, Default)]
+pub struct FakeAgentFile {
+    contents: Arc<Mutex<Option<String>>>,
+    write_fails: bool,
+}
+
+impl FakeAgentFile {
+    pub fn holding(text: &str) -> Self {
+        let file = Self::default();
+        *file.contents.lock().unwrap() = Some(text.to_owned());
+        file
+    }
+
+    pub fn write_fails(mut self) -> Self {
+        self.write_fails = true;
+        self
+    }
+
+    pub fn contents(&self) -> Option<String> {
+        self.contents.lock().unwrap().clone()
+    }
+}
+
+impl AgentFile for FakeAgentFile {
+    fn read(&self) -> Option<String> {
+        self.contents()
+    }
+    fn write(&self, contents: &str) -> io::Result<()> {
+        if self.write_fails {
+            return Err(io::Error::other("disk full"));
+        }
+        *self.contents.lock().unwrap() = Some(contents.to_owned());
+        Ok(())
+    }
+    fn remove(&self) -> io::Result<()> {
+        match self.contents.lock().unwrap().take() {
+            Some(_) => Ok(()),
+            None => Err(io::Error::from(io::ErrorKind::NotFound)),
+        }
     }
 }
