@@ -9,7 +9,6 @@ use objc2_service_management::{SMAppService, SMAppServiceStatus};
 use crate::login_item::{AgentFile, LoginItem, LoginItemError, LoginItemStatus};
 
 /// `SMAppService.mainApp`. Build this only on macOS 13+.
-#[allow(dead_code)] // wired in Task 6
 pub struct MacAppService;
 
 impl LoginItem for MacAppService {
@@ -45,12 +44,10 @@ impl LoginItem for MacAppService {
 }
 
 /// `~/Library/LaunchAgents/<bundle id>.plist`.
-#[allow(dead_code)] // wired in Task 6
 pub struct MacAgentFile {
     path: PathBuf,
 }
 
-#[allow(dead_code)] // wired in Task 6
 impl MacAgentFile {
     pub fn new(path: PathBuf) -> Self {
         Self { path }

@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex, PoisonError, atomic::Ordering};
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 
 use crate::{
     accessibility::{self, Accessibility},
@@ -22,10 +22,14 @@ use crate::{
         taps::TapSet,
         thread::{Control, InputHandle},
     },
+    login_item::{self, LoginItem, LoginItemError, LoginItemStatus},
+    opener::{self, AboutLink, OpenError, Opener},
     platform::os_version,
 };
 
 type AccessibilityState<'a> = State<'a, Arc<dyn Accessibility>>;
+type LoginItemState<'a> = State<'a, Arc<dyn LoginItem>>;
+type OpenerState<'a> = State<'a, Arc<dyn Opener>>;
 // Commands using this must stay synchronous: observers (tray `set_checked`,
 // `emit`) dispatch to the main thread while the store lock is held, which is
 // only safe because sync commands and menu events already run there.
@@ -323,4 +327,35 @@ pub fn stop_key_capture(input: State<'_, Arc<InputHandle>>) {
 #[specta::specta]
 pub fn scroll_curve_preview(scroll: Scroll) -> CurvePreview {
     curve_preview(&scroll)
+}
+
+/// Read from macOS on every call: System Settings can change it at any time.
+#[tauri::command]
+#[specta::specta]
+pub fn get_launch_at_login(item: LoginItemState<'_>) -> LoginItemStatus {
+    item.status()
+}
+
+/// Returns what macOS has afterwards.
+#[tauri::command]
+#[specta::specta]
+pub fn set_launch_at_login(
+    item: LoginItemState<'_>,
+    enabled: bool,
+) -> Result<LoginItemStatus, LoginItemError> {
+    tracing::info!(enabled, "setting launch at login");
+    login_item::set_launch_at_login(item.as_ref(), enabled)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn open_logs_folder(app: AppHandle, opener: OpenerState<'_>) -> Result<(), OpenError> {
+    let dir = app.path().app_log_dir().map_err(|err| err.to_string());
+    opener::open_logs_folder(opener.as_ref(), dir)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn open_about_link(opener: OpenerState<'_>, link: AboutLink) -> Result<(), OpenError> {
+    opener::open_about_link(opener.as_ref(), link)
 }

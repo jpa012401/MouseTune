@@ -50,6 +50,10 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             ipc::start_key_capture,
             ipc::stop_key_capture,
             ipc::scroll_curve_preview,
+            ipc::get_launch_at_login,
+            ipc::set_launch_at_login,
+            ipc::open_logs_folder,
+            ipc::open_about_link,
         ])
         .events(tauri_specta::collect_events![
             events::PermissionChanged,
@@ -90,6 +94,25 @@ pub fn run() {
 
             let accessibility: Arc<dyn Accessibility> = Arc::new(SystemAccessibility);
             app.manage(Arc::clone(&accessibility));
+            let bundle_id = app.config().identifier.clone();
+            let agent_path = app
+                .path()
+                .home_dir()?
+                .join("Library/LaunchAgents")
+                .join(format!("{bundle_id}.plist"));
+            let program = std::env::current_exe()
+                .expect("the running executable has a path, needed for the launch agent");
+            let agent = Arc::new(login_item::LaunchAgentLoginItem::new(
+                Box::new(platform::login_item::MacAgentFile::new(agent_path)),
+                &bundle_id,
+                &program,
+            ));
+            // SMAppService exists from macOS 13 (spec §3.4).
+            let modern = platform::os_version::current().at_least(13, 0).then(|| {
+                Arc::new(platform::login_item::MacAppService) as Arc<dyn login_item::LoginItem>
+            });
+            app.manage(login_item::startup(modern, agent));
+            app.manage(Arc::new(platform::opener::MacOpener) as Arc<dyn opener::Opener>);
 
             let config_path = app.path().app_config_dir()?.join("config.json");
             let mut store = config::store::ConfigStore::load(Box::new(

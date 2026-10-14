@@ -9,7 +9,6 @@ use serde::Serialize;
 use specta::Type;
 
 /// Whether MouseTune starts at login, as macOS sees it.
-#[allow(dead_code)] // wired in Task 6
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
 pub enum LoginItemStatus {
     Off,
@@ -20,7 +19,6 @@ pub enum LoginItemStatus {
     Unavailable,
 }
 
-#[allow(dead_code)] // wired in Task 6
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Type, thiserror::Error)]
 #[serde(tag = "kind")]
 pub enum LoginItemError {
@@ -35,7 +33,6 @@ pub enum LoginItemError {
 }
 
 /// OS operations for starting the app at login.
-#[allow(dead_code)] // wired in Task 6
 pub trait LoginItem: Send + Sync {
     fn status(&self) -> LoginItemStatus;
     fn enable(&self) -> Result<(), LoginItemError>;
@@ -44,7 +41,6 @@ pub trait LoginItem: Send + Sync {
 
 /// Turns launch at login on or off and returns what macOS has afterwards,
 /// so the UI shows what happened rather than what was asked.
-#[allow(dead_code)] // wired in Task 6
 pub fn set_launch_at_login(
     item: &dyn LoginItem,
     enabled: bool,
@@ -61,7 +57,6 @@ pub fn set_launch_at_login(
 /// `SMAppService` so the app starts once per login (spec §3.4). The legacy
 /// item is removed only once the modern one is registered, so a failure
 /// still leaves the app starting at login.
-#[allow(dead_code)] // wired in Task 6
 pub fn migrate_legacy(
     legacy: &dyn LoginItem,
     modern: &dyn LoginItem,
@@ -84,7 +79,6 @@ pub trait AgentFile: Send + Sync {
 
 /// The plist that starts `program` at login. `ProcessType=Interactive` keeps
 /// launchd from throttling an app that sits in the input path (spec §3.4).
-#[allow(dead_code)] // wired in Task 6
 pub fn launch_agent_plist(label: &str, program: &Path) -> String {
     format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
@@ -115,13 +109,11 @@ fn xml_escape(text: &str) -> String {
 }
 
 /// Launch at login on macOS 12: a plist launchd reads at login.
-#[allow(dead_code)] // wired in Task 6
 pub struct LaunchAgentLoginItem {
     file: Box<dyn AgentFile>,
     plist: String,
 }
 
-#[allow(dead_code)] // wired in Task 6
 impl LaunchAgentLoginItem {
     pub fn new(file: Box<dyn AgentFile>, label: &str, program: &Path) -> Self {
         Self {
@@ -140,7 +132,6 @@ impl LaunchAgentLoginItem {
     }
 }
 
-#[allow(dead_code)] // wired in Task 6
 impl LoginItem for LaunchAgentLoginItem {
     fn status(&self) -> LoginItemStatus {
         if self.file.read().is_some() {
@@ -171,7 +162,6 @@ impl LoginItem for LaunchAgentLoginItem {
 /// The login item for this Mac (`modern` is `Some` on macOS 13+), after
 /// tidying up what earlier versions or an app move left behind. Failures
 /// are logged and never block startup.
-#[allow(dead_code)] // wired in Task 6
 pub fn startup(
     modern: Option<Arc<dyn LoginItem>>,
     agent: Arc<LaunchAgentLoginItem>,

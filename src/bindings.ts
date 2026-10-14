@@ -29,6 +29,12 @@ export const commands = {
 	 *  settings (spec §10). Pure; no engine state.
 	 */
 	scrollCurvePreview: (scroll: Scroll) => __TAURI_INVOKE<CurvePreview>("scroll_curve_preview", { scroll }),
+	/**  Read from macOS on every call: System Settings can change it at any time. */
+	getLaunchAtLogin: () => __TAURI_INVOKE<LoginItemStatus>("get_launch_at_login"),
+	/**  Returns what macOS has afterwards. */
+	setLaunchAtLogin: (enabled: boolean) => typedError<LoginItemStatus, LoginItemError>(__TAURI_INVOKE("set_launch_at_login", { enabled })),
+	openLogsFolder: () => typedError<null, OpenError>(__TAURI_INVOKE("open_logs_folder")),
+	openAboutLink: (link: AboutLink) => typedError<null, OpenError>(__TAURI_INVOKE("open_about_link", { link })),
 };
 
 /** Events */
@@ -42,6 +48,9 @@ export const events = {
 };
 
 /* Types */
+/**  Links the About page may open. */
+export type AboutLink = "MacMouseFix";
+
 /**  What a remap does (spec §7.1, §9.2). */
 export type Action = { type: "SymbolicHotkey"; id: SymbolicHotkeyId } | { type: "Navigate"; direction: NavDirection } | 
 /**  A keyboard shortcut to post. `key_label` is only for display. */
@@ -185,6 +194,15 @@ export type KeyCaptured = {
 
 export type KeyModifier = "Command" | "Shift" | "Option" | "Control";
 
+export type LoginItemError = { kind: "Register"; message: string } | { kind: "Unregister"; message: string } | { kind: "WriteAgent"; message: string } | { kind: "RemoveAgent"; message: string };
+
+/**  Whether MouseTune starts at login, as macOS sees it. */
+export type LoginItemStatus = "Off" | "On" | 
+/**  Registered, but the user must allow it in Login Items (macOS 13+). */
+"RequiresApproval" | 
+/**  macOS can't register this copy, e.g. a dev build that isn't an app bundle. */
+"Unavailable";
+
 /**
  *  Clicks a remap can post (Phase 4c design §1). Named, not numbered, so the
  *  file reads clearly.
@@ -203,6 +221,8 @@ export type NavStrategy =
 "CmdBracket" | 
 /**  Synthesized buttons 4 / 5. */
 "MouseButtons";
+
+export type OpenError = { kind: "Refused"; target: string } | { kind: "NoLogsFolder"; message: string };
 
 export type OsVersion = {
 	major: number,

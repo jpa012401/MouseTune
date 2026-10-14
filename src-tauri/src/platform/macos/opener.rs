@@ -7,7 +7,6 @@ use objc2_foundation::{NSString, NSURL};
 
 use crate::opener::Opener;
 
-#[allow(dead_code)] // wired in Task 6
 pub struct MacOpener;
 
 impl Opener for MacOpener {

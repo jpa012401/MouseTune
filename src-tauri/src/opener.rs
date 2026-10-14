@@ -15,14 +15,12 @@ pub trait Opener: Send + Sync {
 }
 
 /// Links the About page may open.
-#[allow(dead_code)] // wired in Task 6
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub enum AboutLink {
     MacMouseFix,
 }
 
 impl AboutLink {
-    #[allow(dead_code)] // wired in Task 6
     fn url(self) -> &'static str {
         match self {
             Self::MacMouseFix => "https://github.com/noah-nuebling/mac-mouse-fix",
@@ -30,7 +28,6 @@ impl AboutLink {
     }
 }
 
-#[allow(dead_code)] // wired in Task 6
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Type, thiserror::Error)]
 #[serde(tag = "kind")]
 pub enum OpenError {
@@ -40,7 +37,6 @@ pub enum OpenError {
     NoLogsFolder { message: String },
 }
 
-#[allow(dead_code)] // wired in Task 6
 pub fn open_about_link(opener: &dyn Opener, link: AboutLink) -> Result<(), OpenError> {
     let url = link.url();
     if opener.open_url(url) {
@@ -53,7 +49,6 @@ pub fn open_about_link(opener: &dyn Opener, link: AboutLink) -> Result<(), OpenE
 }
 
 /// `dir` is where Tauri says the logs are, or why it couldn't say.
-#[allow(dead_code)] // wired in Task 6
 pub fn open_logs_folder(
     opener: &dyn Opener,
     dir: Result<PathBuf, String>,
