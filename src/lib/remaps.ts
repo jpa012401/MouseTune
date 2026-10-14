@@ -31,8 +31,8 @@ export function waitsForDoubleClick(remaps: Remap[], button: number): boolean {
   return remaps.some((r) => r.trigger.button === button && r.trigger.level >= 2);
 }
 
-const remap = (button: number, duration: TriggerDuration, action: Action): Remap => ({
-  trigger: { button, level: 1, duration },
+const remap = (button: number, duration: TriggerDuration, action: Action, level = 1): Remap => ({
+  trigger: { button, level, duration },
   effect: { action },
 });
 
@@ -41,7 +41,7 @@ const remap = (button: number, duration: TriggerDuration, action: Action): Remap
  * Rust fact in the UI. A test pins it to the shared fixture; change both together.
  */
 export const defaultButtonRemaps: Remap[] = [
-  remap(3, "click", { type: "SymbolicHotkey", id: "MissionControl" }),
+  remap(3, "click", { type: "SymbolicHotkey", id: "Launchpad" }, 2),
   remap(4, "click", { type: "Navigate", direction: "Back" }),
   remap(5, "click", { type: "Navigate", direction: "Forward" }),
 ];
