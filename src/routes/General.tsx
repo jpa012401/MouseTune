@@ -127,7 +127,7 @@ export function General() {
               help={
                 view.config.general.show_menu_bar_item
                   ? "MouseTune’s status and switches in the menu bar."
-                  : "Open MouseTune again from Applications or Spotlight to get back here."
+                  : "Open MouseTune from Applications or Spotlight to get back here."
               }
               on={view.config.general.show_menu_bar_item}
               onToggle={() => void setGeneral({ show_menu_bar_item: !view.config.general.show_menu_bar_item })}
@@ -188,6 +188,9 @@ export function General() {
       <h2 className="mb-2 mt-6 text-sm font-semibold">Troubleshooting</h2>
       <button type="button" className={buttonClass} onClick={() => void openLogs()}>
         Open logs folder
+      </button>
+      <button type="button" className={`${buttonClass} ml-2`} onClick={() => void commands.quitApp()}>
+        Quit MouseTune
       </button>
       {openLogsError && (
         <p role="alert" className="mt-2 text-sm text-red-600">

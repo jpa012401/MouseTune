@@ -359,3 +359,11 @@ pub fn open_logs_folder(app: AppHandle, opener: OpenerState<'_>) -> Result<(), O
 pub fn open_about_link(opener: OpenerState<'_>, link: AboutLink) -> Result<(), OpenError> {
     opener::open_about_link(opener.as_ref(), link)
 }
+
+/// Quit from Settings, for when the menu bar item (and its Quit) is hidden.
+/// An explicit exit code passes the `ExitRequested { code: None }` guard in `lib.rs`.
+#[tauri::command]
+#[specta::specta]
+pub fn quit_app(app: tauri::AppHandle) {
+    app.exit(0);
+}

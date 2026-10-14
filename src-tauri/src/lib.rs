@@ -54,6 +54,7 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             ipc::set_launch_at_login,
             ipc::open_logs_folder,
             ipc::open_about_link,
+            ipc::quit_app,
         ])
         .events(tauri_specta::collect_events![
             events::PermissionChanged,
@@ -181,7 +182,7 @@ pub fn run() {
                 "MouseTune started"
             );
 
-            if window::opens_at_launch(trusted) {
+            if window::opens_at_launch(trusted, config.general.show_menu_bar_item) {
                 window::open_settings(app.handle());
             }
             Ok(())

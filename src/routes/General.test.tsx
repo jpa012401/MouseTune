@@ -365,8 +365,15 @@ describe("General page: startup", () => {
     });
     renderGeneral();
     fireEvent.click(await screen.findByRole("switch", { name: "Show menu bar item" }));
-    expect(await screen.findByText("Open MouseTune again from Applications or Spotlight to get back here.")).toBeTruthy();
+    expect(await screen.findByText("Open MouseTune from Applications or Spotlight to get back here.")).toBeTruthy();
     expect(saved?.general.show_menu_bar_item).toBe(false);
+  });
+
+  it("quits MouseTune from Troubleshooting", async () => {
+    const calls = mockBackend({ get_status: () => status(), quit_app: () => null });
+    renderGeneral();
+    fireEvent.click(await screen.findByRole("button", { name: "Quit MouseTune" }));
+    await waitFor(() => expect(calls).toContain("quit_app"));
   });
 
   it("opens the logs folder", async () => {

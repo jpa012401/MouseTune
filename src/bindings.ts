@@ -35,6 +35,11 @@ export const commands = {
 	setLaunchAtLogin: (enabled: boolean) => typedError<LoginItemStatus, LoginItemError>(__TAURI_INVOKE("set_launch_at_login", { enabled })),
 	openLogsFolder: () => typedError<null, OpenError>(__TAURI_INVOKE("open_logs_folder")),
 	openAboutLink: (link: AboutLink) => typedError<null, OpenError>(__TAURI_INVOKE("open_about_link", { link })),
+	/**
+	 *  Quit from Settings, for when the menu bar item (and its Quit) is hidden.
+	 *  An explicit exit code passes the `ExitRequested { code: None }` guard in `lib.rs`.
+	 */
+	quitApp: () => __TAURI_INVOKE<void>("quit_app"),
 };
 
 /** Events */

@@ -47,10 +47,11 @@ pub fn open_settings(app: &AppHandle) {
     }
 }
 
-/// Settings opens by itself only when MouseTune needs the user, so a login
-/// launch puts nothing on screen (Phase 7a design §3).
-pub fn opens_at_launch(trusted: bool) -> bool {
-    !trusted
+/// Settings opens by itself when MouseTune needs the user or has no menu bar
+/// icon to be reached through; otherwise a login launch puts nothing on screen
+/// (spec §3.2, Phase 7a design §3).
+pub fn opens_at_launch(trusted: bool, show_menu_bar_item: bool) -> bool {
+    !trusted || !show_menu_bar_item
 }
 
 /// With the menu bar icon hidden, lost Accessibility would stop input with
@@ -91,9 +92,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn settings_opens_at_launch_only_while_accessibility_is_missing() {
-        assert!(opens_at_launch(false));
-        assert!(!opens_at_launch(true));
+    fn settings_opens_at_launch_while_accessibility_is_missing() {
+        assert!(opens_at_launch(false, true));
+        assert!(opens_at_launch(false, false));
+    }
+
+    #[test]
+    fn settings_opens_at_launch_when_the_menu_bar_item_is_hidden() {
+        assert!(opens_at_launch(true, false));
+    }
+
+    #[test]
+    fn settings_stays_closed_at_launch_when_trusted_with_the_menu_bar_item_shown() {
+        assert!(!opens_at_launch(true, true));
     }
 
     #[test]
