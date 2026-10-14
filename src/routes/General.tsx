@@ -1,8 +1,12 @@
-import { useEffect } from "react";
-import type { Device } from "../bindings";
+import { useEffect, useState } from "react";
+import { commands, type Device } from "../bindings";
+import { buttonClass } from "../components/buttonStyles";
 import { listClass, muted, rowClass } from "../components/rowStyles";
 import { SwitchRow } from "../components/SwitchRow";
+import { launchAtLoginHelp, launchAtLoginOn } from "../lib/loginItem";
+import { openErrorText } from "../lib/open";
 import { useConfigStore } from "../store/config";
+import { useLoginItemStore } from "../store/loginItem";
 import { useStatusStore } from "../store/status";
 
 const POLL_MS = 1000;
@@ -38,6 +42,23 @@ export function General() {
   const saveError = useConfigStore((s) => s.error);
   const loadError = useConfigStore((s) => s.loadError);
   const { setGeneral } = useConfigStore.getState();
+  const loginStatus = useLoginItemStore((s) => s.status);
+  const loginPending = useLoginItemStore((s) => s.pending);
+  const loginError = useLoginItemStore((s) => s.error);
+  const [openLogsError, setOpenLogsError] = useState<string | null>(null);
+
+  const openLogs = async () => {
+    const result = await commands.openLogsFolder();
+    setOpenLogsError(result.status === "error" ? `Couldn’t open the logs folder: ${openErrorText(result.error)}` : null);
+  };
+
+  useEffect(() => {
+    const load = () => void useLoginItemStore.getState().load();
+    load();
+    // System Settings can change the login item while the window is in the background.
+    window.addEventListener("focus", load);
+    return () => window.removeEventListener("focus", load);
+  }, []);
 
   // The engine pushes taps and devices as events, but scroll counters change
   // on every wheel tick, so they are polled instead.
@@ -92,6 +113,32 @@ export function General() {
             </p>
           )}
           <div className="mb-6" />
+          <h2 className="mb-2 text-sm font-semibold">Startup</h2>
+          <ul aria-label="Startup" className="divide-y divide-black/10 text-sm dark:divide-white/10">
+            <SwitchRow
+              label="Launch at login"
+              help={launchAtLoginHelp(loginStatus ?? "Off")}
+              on={loginStatus !== null && launchAtLoginOn(loginStatus)}
+              disabled={loginStatus === null || loginStatus === "Unavailable" || loginPending}
+              onToggle={() => void useLoginItemStore.getState().set(!(loginStatus !== null && launchAtLoginOn(loginStatus)))}
+            />
+            <SwitchRow
+              label="Show menu bar item"
+              help={
+                view.config.general.show_menu_bar_item
+                  ? "MouseTune’s status and switches in the menu bar."
+                  : "Open MouseTune again from Applications or Spotlight to get back here."
+              }
+              on={view.config.general.show_menu_bar_item}
+              onToggle={() => void setGeneral({ show_menu_bar_item: !view.config.general.show_menu_bar_item })}
+            />
+          </ul>
+          {loginError && (
+            <p role="alert" className="mt-2 text-sm text-red-600">
+              {loginError}
+            </p>
+          )}
+          <div className="mb-6" />
         </>
       )}
 
@@ -137,6 +184,16 @@ export function General() {
         Dropped means MouseTune was too busy and skipped an action. Failed means macOS refused it;
         check the logs.
       </p>
+
+      <h2 className="mb-2 mt-6 text-sm font-semibold">Troubleshooting</h2>
+      <button type="button" className={buttonClass} onClick={() => void openLogs()}>
+        Open logs folder
+      </button>
+      {openLogsError && (
+        <p role="alert" className="mt-2 text-sm text-red-600">
+          {openLogsError}
+        </p>
+      )}
     </>
   );
 }

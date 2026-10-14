@@ -261,3 +261,127 @@ describe("General page — Input switches", () => {
     expect(within(engine).getByText("Drag").nextSibling?.textContent).toBe("On");
   });
 });
+
+describe("General page: startup", () => {
+  it("shows launch at login as macOS reports it", async () => {
+    mockBackend({ get_status: () => status(), get_launch_at_login: () => "On" });
+    renderGeneral();
+    const toggle = await screen.findByRole("switch", { name: "Launch at login" });
+    await waitFor(() => expect(toggle.getAttribute("aria-checked")).toBe("true"));
+  });
+
+  it("asks for approval in Login Items when macOS needs it", async () => {
+    mockBackend({ get_status: () => status(), get_launch_at_login: () => "RequiresApproval" });
+    renderGeneral();
+    expect(await screen.findByText("Allow MouseTune in System Settings → General → Login Items.")).toBeTruthy();
+    expect(screen.getByRole("switch", { name: "Launch at login" }).getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("disables the switch for a copy that can't launch at login", async () => {
+    mockBackend({ get_status: () => status(), get_launch_at_login: () => "Unavailable" });
+    renderGeneral();
+    await screen.findByText("Launch at login isn’t available for this copy of MouseTune.");
+    expect((screen.getByRole("switch", { name: "Launch at login" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("turns launch at login on and shows what macOS did", async () => {
+    let sent: unknown;
+    mockBackend({
+      get_status: () => status(),
+      get_launch_at_login: () => "Off",
+      set_launch_at_login: (args) => {
+        sent = args;
+        return "RequiresApproval";
+      },
+    });
+    renderGeneral();
+    const toggle = await screen.findByRole("switch", { name: "Launch at login" });
+    await waitFor(() => expect(toggle.getAttribute("aria-checked")).toBe("false"));
+    fireEvent.click(toggle);
+    expect(await screen.findByText("Allow MouseTune in System Settings → General → Login Items.")).toBeTruthy();
+    expect(sent).toEqual({ enabled: true });
+  });
+
+  it("shows a refused change and what macOS still has", async () => {
+    mockBackend({
+      get_status: () => status(),
+      get_launch_at_login: () => "Off",
+      set_launch_at_login: () => {
+        throw { kind: "Register", message: "Operation not permitted" };
+      },
+    });
+    renderGeneral();
+    const toggle = await screen.findByRole("switch", { name: "Launch at login" });
+    await waitFor(() => expect(toggle.getAttribute("aria-checked")).toBe("false"));
+    fireEvent.click(toggle);
+    expect(await screen.findByText("Couldn’t turn on launch at login: Operation not permitted")).toBeTruthy();
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+  });
+
+  it("can't send a second change while one is in flight", async () => {
+    let calls = 0;
+    let finish: (value: unknown) => void = () => {};
+    mockBackend({
+      get_status: () => status(),
+      get_launch_at_login: () => "Off",
+      set_launch_at_login: () => {
+        calls += 1;
+        return new Promise((resolve) => (finish = resolve));
+      },
+    });
+    renderGeneral();
+    const toggle = (await screen.findByRole("switch", { name: "Launch at login" })) as HTMLButtonElement;
+    await waitFor(() => expect(toggle.getAttribute("aria-checked")).toBe("false"));
+    fireEvent.click(toggle);
+    await waitFor(() => expect(toggle.disabled).toBe(true));
+    fireEvent.click(toggle);
+    expect(calls).toBe(1);
+    await act(async () => finish("On"));
+    await waitFor(() => expect(toggle.disabled).toBe(false));
+  });
+
+  it("re-reads launch at login when the window regains focus", async () => {
+    let current = "Off";
+    mockBackend({ get_status: () => status(), get_launch_at_login: () => current });
+    renderGeneral();
+    const toggle = await screen.findByRole("switch", { name: "Launch at login" });
+    await waitFor(() => expect(toggle.getAttribute("aria-checked")).toBe("false"));
+    current = "On"; // changed in System Settings while away
+    await act(async () => void window.dispatchEvent(new Event("focus")));
+    await waitFor(() => expect(toggle.getAttribute("aria-checked")).toBe("true"));
+  });
+
+  it("hides the menu bar item and says how to get back", async () => {
+    let saved: Config | undefined;
+    mockBackend({
+      get_status: () => status(),
+      set_config: (args) => {
+        saved = (args as { config: Config }).config;
+        return saved;
+      },
+    });
+    renderGeneral();
+    fireEvent.click(await screen.findByRole("switch", { name: "Show menu bar item" }));
+    expect(await screen.findByText("Open MouseTune again from Applications or Spotlight to get back here.")).toBeTruthy();
+    expect(saved?.general.show_menu_bar_item).toBe(false);
+  });
+
+  it("opens the logs folder", async () => {
+    const calls = mockBackend({ get_status: () => status(), open_logs_folder: () => null });
+    renderGeneral();
+    fireEvent.click(await screen.findByRole("button", { name: "Open logs folder" }));
+    await waitFor(() => expect(calls).toContain("open_logs_folder"));
+  });
+
+  it("says when the logs folder couldn't be opened", async () => {
+    mockBackend({
+      get_status: () => status(),
+      open_logs_folder: () => {
+        throw { kind: "Refused", target: "/Users/me/Library/Logs/x" };
+      },
+    });
+    renderGeneral();
+    fireEvent.click(await screen.findByRole("button", { name: "Open logs folder" }));
+    expect(await screen.findByText("Couldn’t open the logs folder: macOS refused to open /Users/me/Library/Logs/x")).toBeTruthy();
+  });
+});
