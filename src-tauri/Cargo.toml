@@ -44,6 +44,13 @@ opt-level = 3
 panic = "unwind"
 strip = true
 
+# Proc macros and build scripts run on the build machine and are never shipped.
+# Stripping them on macOS leaves proc-macro dylibs rustc can't load (E0463
+# "can't find crate for `phf_macros`") once `--target` is passed, which the
+# universal release build does.
+[profile.release.build-override]
+strip = false
+
 [lints.clippy]
 # Every `unsafe` block explains why it's sound (AGENTS.md → Non-negotiables).
 undocumented_unsafe_blocks = "deny"
