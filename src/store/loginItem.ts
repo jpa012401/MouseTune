@@ -37,6 +37,7 @@ export const useLoginItemStore = create<LoginItemState>((set, get) => ({
       }
     } catch (err) {
       set({ error: loginItemErrorMessage(err, enabled) });
+      await get().load();
     } finally {
       set({ pending: false });
     }

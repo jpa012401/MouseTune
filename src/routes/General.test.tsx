@@ -302,11 +302,13 @@ describe("General page: startup", () => {
     expect(sent).toEqual({ enabled: true });
   });
 
-  it("shows a refused change and what macOS still has", async () => {
+  it("shows a refused change and what macOS actually has afterwards", async () => {
+    let current = "Off";
     mockBackend({
       get_status: () => status(),
-      get_launch_at_login: () => "Off",
+      get_launch_at_login: () => current,
       set_launch_at_login: () => {
+        current = "RequiresApproval"; // macOS changed state even though the call failed
         throw { kind: "Register", message: "Operation not permitted" };
       },
     });
@@ -315,7 +317,8 @@ describe("General page: startup", () => {
     await waitFor(() => expect(toggle.getAttribute("aria-checked")).toBe("false"));
     fireEvent.click(toggle);
     expect(await screen.findByText("Couldn’t turn on launch at login: Operation not permitted")).toBeTruthy();
-    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    await waitFor(() => expect(toggle.getAttribute("aria-checked")).toBe("true"));
+    expect(screen.getByText("Allow MouseTune in System Settings → General → Login Items.")).toBeTruthy();
   });
 
   it("can't send a second change while one is in flight", async () => {
