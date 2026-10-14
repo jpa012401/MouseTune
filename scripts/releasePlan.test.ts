@@ -1,6 +1,18 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
-import { planRelease } from "./releasePlan.ts";
+import {
+  judgeBundleId,
+  judgeGatekeeper,
+  judgeHardenedRuntime,
+  judgeIdentity,
+  judgeMinOs,
+  judgeUniversal,
+  parseCodesignDetails,
+  parseLipoArchs,
+  parseMinOs,
+  parseSpctl,
+  planRelease,
+} from "./releasePlan.ts";
 
 const DEV = "Apple Development: Jane Doe (ABCDE12345)";
 const DEVID = "Developer ID Application: Jane Doe (ABCDE12345)";
@@ -84,5 +96,156 @@ describe("planRelease", () => {
 
   it("ignores empty leftover notarization variables in a personal build", () => {
     expect(planRelease({ APPLE_SIGNING_IDENTITY: DEV, APPLE_ID: "", APPLE_PASSWORD: "  " })).toMatchObject({ kind: "plan", mode: "personal" });
+  });
+});
+
+const DEV_SIGNED = `Executable=/Applications/MouseTune.app/Contents/MacOS/mousetune
+Identifier=com.johnpaulalabe.mousetune
+Format=app bundle with Mach-O universal (x86_64 arm64)
+CodeDirectory v=20500 size=107613 flags=0x10000(runtime) hashes=3352+7 location=embedded
+Signature size=9068
+Authority=Apple Development: Jane Doe (ABCDE12345)
+Authority=Apple Worldwide Developer Relations Certification Authority
+Authority=Apple Root CA
+TeamIdentifier=ABCDE12345`;
+
+const NO_RUNTIME = DEV_SIGNED.replace("flags=0x10000(runtime)", "flags=0x0(none)");
+
+const ADHOC = `Executable=/tmp/mousetune
+Identifier=mousetune-45255279266372b4
+Format=Mach-O thin (arm64)
+CodeDirectory v=20400 size=310835 flags=0x20002(adhoc,linker-signed) hashes=9710+0 location=embedded
+Signature=adhoc
+TeamIdentifier=not set`;
+
+const VTOOL_12 = `/A/MouseTune.app/Contents/MacOS/mousetune (architecture x86_64):
+Load command 10
+      cmd LC_BUILD_VERSION
+  cmdsize 32
+ platform MACOS
+    minos 12.0
+      sdk 27.0
+/A/MouseTune.app/Contents/MacOS/mousetune (architecture arm64):
+Load command 10
+      cmd LC_BUILD_VERSION
+  cmdsize 32
+ platform MACOS
+    minos 12.0
+      sdk 27.0`;
+
+const VTOOL_MIXED = `/A/x (architecture x86_64):
+Load command 9
+      cmd LC_VERSION_MIN_MACOSX
+  cmdsize 16
+  version 10.9
+      sdk 10.9
+/A/x (architecture arm64):
+Load command 10
+      cmd LC_BUILD_VERSION
+  cmdsize 32
+ platform MACOS
+    minos 14.0
+      sdk 14.0`;
+
+describe("codesign details", () => {
+  it("reads the identifier, first authority and flags", () => {
+    expect(parseCodesignDetails(DEV_SIGNED)).toEqual({
+      identifier: "com.johnpaulalabe.mousetune",
+      authority: "Apple Development: Jane Doe (ABCDE12345)",
+      flags: ["runtime"],
+      adhoc: false,
+    });
+  });
+
+  it("recognises an ad-hoc signature", () => {
+    expect(parseCodesignDetails(ADHOC)).toEqual({
+      identifier: "mousetune-45255279266372b4",
+      authority: null,
+      flags: ["adhoc", "linker-signed"],
+      adhoc: true,
+    });
+  });
+
+  it("passes the identity the app was signed with", () => {
+    expect(judgeIdentity(parseCodesignDetails(DEV_SIGNED), "Apple Development: Jane Doe (ABCDE12345)")).toEqual({ ok: true });
+  });
+
+  it("names the signer when it isn't the expected identity", () => {
+    expect(judgeIdentity(parseCodesignDetails(DEV_SIGNED), "Apple Development: Someone Else (ZZZZZ99999)")).toEqual({
+      ok: false,
+      reason: 'The app is signed by "Apple Development: Jane Doe (ABCDE12345)", expected "Apple Development: Someone Else (ZZZZZ99999)".',
+    });
+  });
+
+  it("says so when the app is ad-hoc signed", () => {
+    expect(judgeIdentity(parseCodesignDetails(ADHOC), "Apple Development: Jane Doe (ABCDE12345)")).toEqual({
+      ok: false,
+      reason: 'The app is ad-hoc signed, not signed by "Apple Development: Jane Doe (ABCDE12345)". Check APPLE_SIGNING_IDENTITY.',
+    });
+  });
+
+  it("requires the hardened runtime", () => {
+    expect(judgeHardenedRuntime(parseCodesignDetails(DEV_SIGNED))).toEqual({ ok: true });
+    expect(judgeHardenedRuntime(parseCodesignDetails(NO_RUNTIME))).toEqual({
+      ok: false,
+      reason: "Hardened Runtime is off (CodeDirectory flags: none). Check bundle.macOS.hardenedRuntime in src-tauri/tauri.conf.json.",
+    });
+  });
+
+  it("checks the bundle ID", () => {
+    expect(judgeBundleId(parseCodesignDetails(DEV_SIGNED), "com.johnpaulalabe.mousetune")).toEqual({ ok: true });
+    expect(judgeBundleId(parseCodesignDetails(ADHOC), "com.johnpaulalabe.mousetune")).toEqual({
+      ok: false,
+      reason: "The app’s bundle ID is \"mousetune-45255279266372b4\", expected \"com.johnpaulalabe.mousetune\".",
+    });
+  });
+});
+
+describe("architectures", () => {
+  it("accepts arm64 and x86_64 in either order", () => {
+    expect(judgeUniversal(parseLipoArchs("x86_64 arm64\n"))).toEqual({ ok: true });
+    expect(judgeUniversal(parseLipoArchs("arm64 x86_64"))).toEqual({ ok: true });
+  });
+
+  it("rejects a single-architecture build", () => {
+    expect(judgeUniversal(parseLipoArchs("arm64\n"))).toEqual({
+      ok: false,
+      reason: "Expected a universal binary (arm64 and x86_64), found: arm64.",
+    });
+  });
+});
+
+describe("minimum macOS", () => {
+  it("reads one minimum per slice", () => {
+    expect(parseMinOs(VTOOL_12)).toEqual(["12.0", "12.0"]);
+  });
+
+  it("reads LC_VERSION_MIN_MACOSX slices too", () => {
+    expect(parseMinOs(VTOOL_MIXED)).toEqual(["10.9", "14.0"]);
+  });
+
+  it("requires every slice to target macOS 12.0", () => {
+    expect(judgeMinOs(["12.0", "12.0"], "12.0")).toEqual({ ok: true });
+    expect(judgeMinOs(parseMinOs(VTOOL_MIXED), "12.0")).toEqual({
+      ok: false,
+      reason: "Expected every slice to require macOS 12.0, found: 10.9, 14.0.",
+    });
+    expect(judgeMinOs([], "12.0")).toEqual({ ok: false, reason: "Expected every slice to require macOS 12.0, found: none." });
+  });
+});
+
+describe("Gatekeeper", () => {
+  it("accepts a notarized Developer ID app", () => {
+    const r = parseSpctl("/A/MouseTune.app: accepted\nsource=Notarized Developer ID\norigin=Developer ID Application: Jane Doe (ABCDE12345)\n");
+    expect(r).toEqual({ accepted: true, source: "Notarized Developer ID" });
+    expect(judgeGatekeeper(r)).toEqual({ ok: true });
+  });
+
+  it("rejects anything else", () => {
+    const r = parseSpctl("/A/MouseTune.app: rejected\nsource=Unnotarized Developer ID\n");
+    expect(judgeGatekeeper(r)).toEqual({
+      ok: false,
+      reason: "Gatekeeper doesn’t accept the app as notarized (rejected, source: Unnotarized Developer ID).",
+    });
   });
 });

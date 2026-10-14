@@ -70,3 +70,91 @@ export function planRelease(env: Env): Plan | Refusal {
     ? { kind: "plan", mode: "personal", identity, checks: PERSONAL_CHECKS }
     : { kind: "plan", mode: "public", identity, checks: [...PERSONAL_CHECKS, "stapled", "gatekeeper"] };
 }
+
+export type Verdict = { ok: true } | { ok: false; reason: string };
+export type CodesignDetails = { identifier: string | null; authority: string | null; flags: string[]; adhoc: boolean };
+export type SpctlResult = { accepted: boolean; source: string | null };
+
+const PASS: Verdict = { ok: true };
+const fail = (reason: string): Verdict => ({ ok: false, reason });
+
+function field(text: string, key: string): string | null {
+  const line = text.split("\n").find((l) => l.startsWith(`${key}=`));
+  return line ? line.slice(key.length + 1).trim() : null;
+}
+
+/** `codesign -dv --verbose=4` output (it prints to stderr). */
+export function parseCodesignDetails(text: string): CodesignDetails {
+  const flags = /^CodeDirectory .*flags=0x[0-9a-f]+\(([^)]*)\)/m.exec(text)?.[1] ?? "";
+  return {
+    identifier: field(text, "Identifier"),
+    // The first Authority line is the leaf certificate: the signer.
+    authority: field(text, "Authority"),
+    flags: flags && flags !== "none" ? flags.split(",") : [],
+    adhoc: field(text, "Signature") === "adhoc",
+  };
+}
+
+export function judgeIdentity(d: CodesignDetails, identity: string): Verdict {
+  if (d.adhoc || d.authority === null) {
+    return fail(`The app is ad-hoc signed, not signed by "${identity}". Check APPLE_SIGNING_IDENTITY.`);
+  }
+  return d.authority === identity ? PASS : fail(`The app is signed by "${d.authority}", expected "${identity}".`);
+}
+
+export function judgeHardenedRuntime(d: CodesignDetails): Verdict {
+  return d.flags.includes("runtime")
+    ? PASS
+    : fail(
+        `Hardened Runtime is off (CodeDirectory flags: ${d.flags.join(", ") || "none"}). Check bundle.macOS.hardenedRuntime in src-tauri/tauri.conf.json.`,
+      );
+}
+
+export function judgeBundleId(d: CodesignDetails, expected: string): Verdict {
+  return d.identifier === expected
+    ? PASS
+    : fail(`The app’s bundle ID is "${d.identifier ?? "none"}", expected "${expected}".`);
+}
+
+export function parseLipoArchs(text: string): string[] {
+  return text.trim().split(/\s+/).filter(Boolean);
+}
+
+export function judgeUniversal(archs: string[]): Verdict {
+  const universal = archs.length === 2 && archs.includes("arm64") && archs.includes("x86_64");
+  return universal ? PASS : fail(`Expected a universal binary (arm64 and x86_64), found: ${archs.join(" ") || "none"}.`);
+}
+
+/**
+ * `vtool -show-build`: one minimum per architecture slice. Newer binaries
+ * carry LC_BUILD_VERSION (`minos`); older toolchains LC_VERSION_MIN_MACOSX
+ * (`version`), which must count too, or an old slice would slip through.
+ */
+export function parseMinOs(text: string): string[] {
+  const versions: string[] = [];
+  let command = "";
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    const [key, val] = line.split(/\s+/, 2);
+    if (key === "cmd") command = val ?? "";
+    else if (key === "minos" && command === "LC_BUILD_VERSION") versions.push(val ?? "");
+    else if (key === "version" && command === "LC_VERSION_MIN_MACOSX") versions.push(val ?? "");
+  }
+  return versions;
+}
+
+export function judgeMinOs(versions: string[], expected: string): Verdict {
+  const ok = versions.length > 0 && versions.every((v) => v === expected);
+  return ok ? PASS : fail(`Expected every slice to require macOS ${expected}, found: ${versions.join(", ") || "none"}.`);
+}
+
+/** `spctl -a -vv -t exec` output (stderr). */
+export function parseSpctl(text: string): SpctlResult {
+  return { accepted: /: accepted$/m.test(text), source: field(text, "source") };
+}
+
+export function judgeGatekeeper(r: SpctlResult): Verdict {
+  return r.accepted && r.source === "Notarized Developer ID"
+    ? PASS
+    : fail(`Gatekeeper doesn’t accept the app as notarized (${r.accepted ? "accepted" : "rejected"}, source: ${r.source ?? "none"}).`);
+}
