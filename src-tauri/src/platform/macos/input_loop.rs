@@ -47,6 +47,12 @@ use crate::{
 
 /// How often the watchdog checks that the taps that should run are running.
 const WATCHDOG_INTERVAL_SECS: f64 = 5.0;
+/// How long `start` waits for `mt-input` to be ready before treating it as hung.
+/// Healthy start-up is not instant: creating the CVDisplayLink and the gesture
+/// outputs measured 0.7–1.6 s on an M-series Mac, and over 2 s for the first
+/// launch of a new binary under load (a busy login, a CI runner). The old 2 s
+/// limit turned that into a crash at launch.
+const STARTUP_DEADLINE: Duration = Duration::from_secs(10);
 /// `QOS_CLASS_USER_INTERACTIVE` from `<sys/qos.h>`.
 const QOS_CLASS_USER_INTERACTIVE: u32 = 0x21;
 
@@ -65,8 +71,8 @@ pub fn start(
         .spawn(move || run_input_thread(setup, rx, shared, waker_tx))
         .expect("failed to spawn the mt-input thread");
     let waker = waker_rx
-        .recv_timeout(Duration::from_secs(2))
-        .expect("mt-input didn't start its run loop within 2 s");
+        .recv_timeout(STARTUP_DEADLINE)
+        .expect("mt-input didn't start its run loop within 10 s");
     (join, waker)
 }
 
