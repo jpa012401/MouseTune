@@ -6,7 +6,7 @@ import { config, defaultRemaps } from "../test/backend";
 describe("remapLabel", () => {
   it("names the default remaps in plain words", () => {
     expect(defaultRemaps.map(remapLabel)).toEqual([
-      { trigger: "Middle button · Click", action: "Mission Control" },
+      { trigger: "Middle button · Double click", action: "Launchpad" },
       { trigger: "Button 4 · Click", action: "Back" },
       { trigger: "Button 5 · Click", action: "Forward" },
     ]);

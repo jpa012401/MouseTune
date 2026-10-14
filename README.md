@@ -127,8 +127,8 @@ Taps pass every event through unchanged in this phase (since Phase 4a the button
 
 ### Verifying the button engine (Phase 4a acceptance, 5-button mouse)
 
-1. Click the middle button (B3): Mission Control opens.
-2. Hold B3 for 250 ms or more: the desktop is shown.
+1. Double-click the middle button (B3): Launchpad opens.
+2. A single B3 click on a link opens it in a new tab, after a short wait for a possible double click.
 3. B4 and B5 go Back and Forward in Safari (`Cmd+[`) and in Chrome.
 4. B4 in Xcode and Notes does not change the text.
 5. Left and right clicks are unaffected.
@@ -191,7 +191,7 @@ Dock swipe and magnify are built but switched off until you verify them (see the
 1. Hold B3 and drag left or right: the Space follows your hand, one Space per drag, like a three-finger swipe. Drag left to bring in the Space on the right; drag right for the one on the left. Drag up: Mission Control opens. Drag down: App Exposé.
 2. Releasing a drag never leaves Mission Control half open.
 3. During a B3 drag the pointer stays still, and it moves again on release. Turn MouseTune off from the tray mid-drag, or unplug the mouse mid-drag: the pointer is free.
-4. A B3 click still opens Mission Control. A slow start with no movement does nothing until you release.
+4. A B3 double click still opens Launchpad. A slow start with no movement does nothing until you release.
 5. Set B5 · Drag to *Two-finger swipe*. In Safari a horizontal drag goes Back or Forward, and in Maps it pans.
 6. Set B4 · Scroll to *Zoom*. Holding B4 and scrolling zooms Preview in and out with ⌘= and ⌘-. A button-bound Zoom works with no ⌘ held.
 7. Set B4 · Scroll to *App Switcher*: hold B4, scroll to pick an app, release B4 to switch. ⌘ is released when you let go, so no ⌘ stays down.

@@ -27,7 +27,7 @@ export function status(overrides: Partial<Status> = {}): Status {
 }
 
 export const defaultRemaps: Remap[] = [
-  { trigger: { button: 3, level: 1, duration: "click" }, effect: { action: { type: "SymbolicHotkey", id: "MissionControl" } } },
+  { trigger: { button: 3, level: 2, duration: "click" }, effect: { action: { type: "SymbolicHotkey", id: "Launchpad" } } },
   { trigger: { button: 4, level: 1, duration: "click" }, effect: { action: { type: "Navigate", direction: "Back" } } },
   { trigger: { button: 5, level: 1, duration: "click" }, effect: { action: { type: "Navigate", direction: "Forward" } } },
 ];

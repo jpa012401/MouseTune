@@ -27,12 +27,12 @@ describe("Buttons page", () => {
     const list = await screen.findByRole("list", { name: "Button remaps" });
     const rows = within(list).getAllByRole("listitem").map((li) => li.textContent);
     expect(rows).toEqual([
-      expect.stringContaining("Mission Control"),
+      expect.stringContaining("Launchpad"),
       expect.stringContaining("Spaces & Mission Control"),
       expect.stringContaining("Back"),
       expect.stringContaining("Forward"),
     ]);
-    expect(rows[0]).toContain("Middle button · Click");
+    expect(rows[0]).toContain("Middle button · Double click");
   });
 
   it("says so when there are no remaps", async () => {
@@ -80,9 +80,9 @@ describe("Buttons page", () => {
     mockBackend({ get_status: tapsOn, start_capture: () => null, stop_capture: () => null });
     renderButtons();
     fireEvent.click(await screen.findByRole("button", { name: "+ Add remap" }));
-    await act(() => emit("button-captured", { button: 3 }));
+    await act(() => emit("button-captured", { button: 4 }));
     fireEvent.click(screen.getByRole("radio", { name: "Click" }));
-    expect(screen.getByText("Middle button · Click is already set to Mission Control. Change that row instead.")).toBeTruthy();
+    expect(screen.getByText("Button 4 · Click is already set to Back. Change that row instead.")).toBeTruthy();
     expect((screen.getByRole("button", { name: "Add" }) as HTMLButtonElement).disabled).toBe(true);
   });
 

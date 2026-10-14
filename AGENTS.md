@@ -203,7 +203,7 @@ If you can't name the requirement a pattern serves, don't add it. **DRY is about
 - **Name MouseTune, bundle ID `com.johnpaulalabe.mousetune`, macOS 12–27.**
 - **Tray toggles moved to Phase 3**: they need the config store.
 - **Config v1 holds the kill switches and button remaps**, and grows a section per phase; the loader deep-merges the file over the defaults so it grows additively, and IPC types stay strict.
-- **Phase 4 is split into 4a (button engine) and 4b (capture mode, editor); 4c holds mouse-click remaps, media keys, `nav_overrides` and timing.** **B3 click default = Mission Control.**
+- **Phase 4 is split into 4a (button engine) and 4b (capture mode, editor); 4c holds mouse-click remaps, media keys, `nav_overrides` and timing.** **B3 defaults: double click = Launchpad, drag = Spaces & Mission Control; a single B3 click stays a plain middle click.**
 - **Phase 4c: a MouseClick remap is a full click, not hold-through (that's Phase 6). nav_overrides is file-only and merges over the Apple defaults; mt-exec reads it through an ArcSwap, never the job queue. Timing is 150–600 ms, clamped on compile.**
 - **Phase 5 is split into 5a (engine, tray toggles) and 5b (modifiers, Scroll screen); Cmd + scroll = zoom moves to Phase 6.** **Frames come from CVDisplayLink on every macOS version**, with a 120 Hz timer fallback, because NSScreen.displayLink is main-thread AppKit. **In 5a a tick with a modifier key held isn't smoothed.** Inversion is relative to the delivered deltas (Phase 5a design).
 - **Scroll modifiers (Phase 5b): one key per effect, each key at most once; defaults Shift = horizontal, Option = precise, swift unbound, so ⌃ + scroll stays with Accessibility Zoom. Unbound keys pass through. Screen-size scaling was dropped.**

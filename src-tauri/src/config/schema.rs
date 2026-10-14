@@ -75,29 +75,34 @@ impl Default for Buttons {
     /// B3 hold is not a default: with B3 drag bound, a slow-starting drag would fire it (Phase 6 design, Decisions).
     fn default() -> Self {
         use NavDirection::{Back, Forward};
-        use SymbolicHotkeyId::MissionControl;
-        let remap = |button, duration, action| Remap {
+        use SymbolicHotkeyId::Launchpad;
+        let remap = |button, level, duration, action| Remap {
             trigger: ClickTrigger {
                 button,
-                level: 1,
+                level,
                 duration,
             },
             effect: Effect { action },
         };
         Self {
             remaps: vec![
+                // Double click, not click: a plain middle click still opens links
+                // in new tabs, after waiting out the double-click window.
                 remap(
                     3,
+                    2,
                     TriggerDuration::Click,
-                    Action::SymbolicHotkey { id: MissionControl },
+                    Action::SymbolicHotkey { id: Launchpad },
                 ),
                 remap(
                     4,
+                    1,
                     TriggerDuration::Click,
                     Action::Navigate { direction: Back },
                 ),
                 remap(
                     5,
+                    1,
                     TriggerDuration::Click,
                     Action::Navigate { direction: Forward },
                 ),
@@ -571,8 +576,8 @@ mod tests {
         assert_eq!(
             serde_json::to_value(Buttons::default()).unwrap(),
             serde_json::json!({ "remaps": [
-                { "trigger": { "button": 3, "level": 1, "duration": "click" },
-                  "effect": { "action": { "type": "SymbolicHotkey", "id": "MissionControl" } } },
+                { "trigger": { "button": 3, "level": 2, "duration": "click" },
+                  "effect": { "action": { "type": "SymbolicHotkey", "id": "Launchpad" } } },
                 { "trigger": { "button": 4, "level": 1, "duration": "click" },
                   "effect": { "action": { "type": "Navigate", "direction": "Back" } } },
                 { "trigger": { "button": 5, "level": 1, "duration": "click" },
