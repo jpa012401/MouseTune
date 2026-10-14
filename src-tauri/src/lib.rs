@@ -166,6 +166,7 @@ pub fn run() {
                     Box::new(tray::TrayPermissionStatus(app.handle().clone())),
                     Box::new(events::EmitPermissionChanged(app.handle().clone())),
                     Box::new(input::thread::PermissionBridge(Arc::clone(&input))),
+                    Box::new(window::SurfaceLostPermission(app.handle().clone())),
                 ],
             )
             .spawn();
@@ -180,7 +181,9 @@ pub fn run() {
                 "MouseTune started"
             );
 
-            window::open_settings(app.handle());
+            if window::opens_at_launch(trusted) {
+                window::open_settings(app.handle());
+            }
             Ok(())
         })
         .build(tauri::generate_context!())
