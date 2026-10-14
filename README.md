@@ -6,7 +6,7 @@ Built with [Tauri v2](https://v2.tauri.app) (Rust) and React. Runs as a menu bar
 
 > Inspired by [Mac Mouse Fix](https://github.com/noah-nuebling/mac-mouse-fix) by Noah Nuebling. MouseTune is an independent, clean-room implementation and contains no Mac Mouse Fix source code.
 
-**Status:** Phase 0 (scaffold). See the [technical specification](macos_mouse_utility_technical_specification.md) for the design and roadmap.
+**Status:** Phases 0–7a are merged; Phase 7b (release build) is on its branch. Phases 2–7 await manual hardware acceptance (see AGENTS.md "Current state"). See the [technical specification](macos_mouse_utility_technical_specification.md) for the design and roadmap.
 
 ## Requirements
 
@@ -81,26 +81,26 @@ Open the DMG, drag MouseTune to Applications, launch it, and grant Accessibility
 
 **On another of your Macs**
 
-A personal build isn't notarized, so the first launch needs right-click → Open.
+A personal build isn't notarized, so the first launch needs a Gatekeeper bypass. On macOS 12–14: right-click the app → Open. On macOS 15 and later: open it once, then go to System Settings → Privacy & Security → Open Anyway.
 
 ## Release checklist
 
-Fill in ✓ or ✗ and the date as each machine becomes available. The columns are the acceptance sections below.
+Fill in ✓ or ✗ and the date as each machine becomes available. Each column is a phase's acceptance section below (column 5 covers 5a and 5b).
 
-| macOS | Chip | Phase 2 | 4a | 4c | 5 | 6 | 7a | Date |
-|---|---|---|---|---|---|---|---|---|
-| 12 | Apple Silicon |  |  |  |  |  |  |  |
-| 12 | Intel |  |  |  |  |  |  |  |
-| 13 | Apple Silicon |  |  |  |  |  |  |  |
-| 13 | Intel |  |  |  |  |  |  |  |
-| 14 | Apple Silicon |  |  |  |  |  |  |  |
-| 14 | Intel |  |  |  |  |  |  |  |
-| 15 | Apple Silicon |  |  |  |  |  |  |  |
-| 15 | Intel |  |  |  |  |  |  |  |
-| 26 | Apple Silicon |  |  |  |  |  |  |  |
-| 26 | Intel |  |  |  |  |  |  |  |
-| 27 | Apple Silicon |  |  |  |  |  |  |  |
-| 27 | Intel |  |  |  |  |  |  |  |
+| macOS | Chip | Phase 2 | 4a | 4c | 5 | 6 | 7a | 7b | Date |
+|---|---|---|---|---|---|---|---|---|---|
+| 12 | Apple Silicon |  |  |  |  |  |  |  |  |
+| 12 | Intel |  |  |  |  |  |  |  |  |
+| 13 | Apple Silicon |  |  |  |  |  |  |  |  |
+| 13 | Intel |  |  |  |  |  |  |  |  |
+| 14 | Apple Silicon |  |  |  |  |  |  |  |  |
+| 14 | Intel |  |  |  |  |  |  |  |  |
+| 15 | Apple Silicon |  |  |  |  |  |  |  |  |
+| 15 | Intel |  |  |  |  |  |  |  |  |
+| 26 | Apple Silicon |  |  |  |  |  |  |  |  |
+| 26 | Intel |  |  |  |  |  |  |  |  |
+| 27 | Apple Silicon |  |  |  |  |  |  |  |  |
+| 27 | Intel |  |  |  |  |  |  |  |  |
 
 ## Going public later
 
@@ -109,6 +109,10 @@ Fill in ✓ or ✗ and the date as each machine becomes available. The columns a
 3. Set `APPLE_SIGNING_IDENTITY="Developer ID Application: …"`, `APPLE_API_KEY`, `APPLE_API_ISSUER` and `APPLE_API_KEY_PATH`.
 4. `pnpm release` then notarizes, staples, and checks Gatekeeper.
 5. Before publishing, settle the licence and trademark questions in AGENTS.md "Open, for the maintainer".
+
+## Acceptance
+
+Manual checks on real hardware, one per phase; record results in the Release checklist.
 
 ### Verifying the input engine (Phase 2)
 
