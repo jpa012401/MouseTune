@@ -77,9 +77,11 @@ pub enum CompiledDrag {
 }
 
 /// What `SpacesAndMissionControl` becomes when dock swipes aren't verified.
+/// The Space follows the hand like a three-finger swipe: dragging left pulls
+/// the current Space away to the left and brings in the one on the right.
 const SPACES_FALLBACK: DiscreteActions = DiscreteActions {
-    left: Some(CompiledAction::SymbolicHotkey(SymbolicHotkeyId::SpaceLeft)),
-    right: Some(CompiledAction::SymbolicHotkey(SymbolicHotkeyId::SpaceRight)),
+    left: Some(CompiledAction::SymbolicHotkey(SymbolicHotkeyId::SpaceRight)),
+    right: Some(CompiledAction::SymbolicHotkey(SymbolicHotkeyId::SpaceLeft)),
     up: Some(CompiledAction::SymbolicHotkey(
         SymbolicHotkeyId::MissionControl,
     )),
@@ -550,8 +552,8 @@ mod tests {
         assert_eq!(
             c.button(2).drag,
             Some(CompiledDrag::Discrete(DiscreteActions {
-                left: Some(CompiledAction::SymbolicHotkey(SymbolicHotkeyId::SpaceLeft)),
-                right: Some(CompiledAction::SymbolicHotkey(SymbolicHotkeyId::SpaceRight)),
+                left: Some(CompiledAction::SymbolicHotkey(SymbolicHotkeyId::SpaceRight)),
+                right: Some(CompiledAction::SymbolicHotkey(SymbolicHotkeyId::SpaceLeft)),
                 up: Some(MC),
                 down: Some(CompiledAction::SymbolicHotkey(SymbolicHotkeyId::AppExpose)),
             }))

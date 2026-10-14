@@ -188,7 +188,7 @@ Report how the scroll feels (too short a coast, too fast, too slow). The curve's
 
 Dock swipe and magnify are built but switched off until you verify them (see the next section). So today Spaces and Mission Control step, and zoom uses the keyboard shortcut.
 
-1. Hold B3 and drag left or right: you move one Space to that side per drag. Drag up: Mission Control opens. Drag down: App Exposé.
+1. Hold B3 and drag left or right: the Space follows your hand, one Space per drag, like a three-finger swipe. Drag left to bring in the Space on the right; drag right for the one on the left. Drag up: Mission Control opens. Drag down: App Exposé.
 2. Releasing a drag never leaves Mission Control half open.
 3. During a B3 drag the pointer stays still, and it moves again on release. Turn MouseTune off from the tray mid-drag, or unplug the mouse mid-drag: the pointer is free.
 4. A B3 click still opens Mission Control. A slow start with no movement does nothing until you release.

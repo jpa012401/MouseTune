@@ -1136,7 +1136,9 @@ mod tests {
 
     #[test]
     fn separate_actions_fire_once_per_direction_past_40_px() {
-        // Unverified dock swipe → SpaceLeft/SpaceRight/MissionControl/AppExpose.
+        // Unverified dock swipe → Discrete Spaces/Mission Control. The Space
+        // follows the hand like a three-finger swipe: dragging right pulls in
+        // the Space on the left.
         let mut r = router_with(
             |b| {
                 b.drags = vec![DragBinding {
@@ -1147,26 +1149,26 @@ mod tests {
             OutputSupport::NONE,
         );
         down(&mut r, MIDDLE);
-        let right = CompiledAction::SymbolicHotkey(SymbolicHotkeyId::SpaceRight);
+        let space_left = CompiledAction::SymbolicHotkey(SymbolicHotkeyId::SpaceLeft);
         let begin = outcomes(r.on_motion(10, 0));
         assert!(begin.contains(&Outcome::DragBegin {
             axis: DragAxis::Horizontal,
             swipe: None
         }));
-        assert!(!begin.contains(&Outcome::Fire(right)));
+        assert!(!begin.contains(&Outcome::Fire(space_left)));
         assert_eq!(outcomes(r.on_motion(29, 0)), vec![], "39 px");
         assert_eq!(
             outcomes(r.on_motion(1, 0)),
-            vec![Outcome::Fire(right)],
-            "40 px"
+            vec![Outcome::Fire(space_left)],
+            "40 px right: the Space on the left comes in"
         );
         assert_eq!(outcomes(r.on_motion(50, 0)), vec![], "once per drag");
         assert_eq!(
             outcomes(r.on_motion(-130, 0)),
             vec![Outcome::Fire(CompiledAction::SymbolicHotkey(
-                SymbolicHotkeyId::SpaceLeft
+                SymbolicHotkeyId::SpaceRight
             ))],
-            "back past −40 px: left fires once too"
+            "back past −40 px: dragging left pulls in the Space on the right, once"
         );
     }
 
