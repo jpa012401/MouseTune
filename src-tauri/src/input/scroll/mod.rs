@@ -1,4 +1,4 @@
-//! Smooth scrolling (Phase 5a design §2–§5). Decides each mouse-wheel tick
+//! Smooth scrolling (spec §8). Decides each mouse-wheel tick
 //! in the scroll tap callback, then animates swallowed ticks on
 //! display-link frames. Pure core: frames and posting are ports, with
 //! adapters in `platform::macos::{display_link, scroll_poster}`.
@@ -17,7 +17,7 @@ use modifiers::ModifierKeys;
 
 use crate::{config::schema::Scroll, input::filter::ScrollFields};
 
-/// Shift, Control, Option and Command in `CGEventFlags`. A held key that isn't bound to a scroll effect passes the tick through (Phase 5b design §2).
+/// Shift, Control, Option and Command in `CGEventFlags`. A held key that isn't bound to a scroll effect passes the tick through (spec §8.5).
 pub const MODIFIER_FLAGS: u64 = 0x0002_0000 | 0x0004_0000 | 0x0008_0000 | 0x0010_0000;
 
 /// What the scroll tap does with a wheel event.
@@ -68,7 +68,7 @@ impl ScrollEngine {
     }
 
     /// A tick `classify_scroll` called a mouse wheel. Hot path: O(1), no
-    /// allocation, nothing posted (Phase 5b design §2).
+    /// allocation, nothing posted (spec §8.5).
     pub fn on_wheel(&mut self, fields: &ScrollFields, now: Instant) -> ScrollVerdict {
         self.wheel(fields, now, false)
     }

@@ -78,7 +78,7 @@ export type ButtonCaptured = {
 };
 
 /**
- *  Button remaps (design §1). Button numbers are 1-based as users count
+ *  Button remaps (spec §9.2). Button numbers are 1-based as users count
  *  them: 3 is the middle button. `input::remaps::compile` turns this into
  *  the engine's lookup tables.
  */
@@ -136,7 +136,7 @@ export type Device = {
 	has_wheel: boolean,
 };
 
-/**  A drag of a held button (Phase 6 design §1). */
+/**  A drag of a held button (spec §9.2). */
 export type DragBinding = {
 	/**  1-based, 3 = middle. */
 	button: number,
@@ -209,7 +209,7 @@ export type LoginItemStatus = "Off" | "On" |
 "Unavailable";
 
 /**
- *  Clicks a remap can post (Phase 4c design §1). Named, not numbered, so the
+ *  Clicks a remap can post (spec §9.2). Named, not numbered, so the
  *  file reads clearly.
  */
 export type MouseButton = "Left" | "Right" | "Middle" | 
@@ -253,7 +253,7 @@ export type Remap = {
 export type RemapProblem = "DuplicateTrigger" | "ButtonNotRemappable" | "ButtonOutOfRange" | "LevelOutOfRange" | "EmptyKeyCombo" | "ClicksOutOfRange";
 
 /**
- *  Smooth scrolling (Phase 5a design §1). Every field is `Copy`, so the
+ *  Smooth scrolling (spec §8). Every field is `Copy`, so the
  *  input engine takes the whole section as its settings.
  */
 export type Scroll = {
@@ -269,7 +269,7 @@ export type Scroll = {
 	 */
 	invert_vertical: boolean,
 	invert_horizontal: boolean,
-	/**  A slow wheel scrolls in fine steps (Phase 5b design §3). */
+	/**  A slow wheel scrolls in fine steps (spec §8.2). */
 	precise: boolean,
 	keyboard_modifiers: ScrollModifiers,
 };
@@ -283,7 +283,7 @@ export type ScrollBinding = {
 export type ScrollEffect = "Zoom" | "Horizontal" | "AppSwitcher";
 
 /**
- *  Which held key applies each scroll effect (Phase 5b design §1): one key
+ *  Which held key applies each scroll effect (spec §8.5): one key
  *  per effect, each key at most once (`validate::duplicate_scroll_modifier`).
  *  A key that isn't bound passes the tick through.
  */

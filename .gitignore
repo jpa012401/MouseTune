@@ -25,3 +25,6 @@ pnpm-debug.log*
 .env
 .env.*
 !.env.example
+
+# Working notes: designs, plans, progress ledgers (never committed)
+notes/

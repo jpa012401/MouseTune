@@ -1,4 +1,4 @@
-//! Loading rules (design §1 table). Pure: the store does the I/O.
+//! Loading rules (spec §9). Pure: the store does the I/O.
 
 use serde_json::Value;
 

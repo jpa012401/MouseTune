@@ -1,4 +1,4 @@
-//! Wheel ticks and how far each one scrolls (Phase 5a design §3, spec §8.2):
+//! Wheel ticks and how far each one scrolls (spec §8.2):
 //! a faster-spinning wheel moves further per tick. Pure; runs in the scroll
 //! tap callback, so nothing here allocates or panics.
 
@@ -93,7 +93,7 @@ impl TickRate {
     }
 }
 
-/// Precise key: this range whatever the speed (Phase 5b design §3).
+/// Precise key: this range whatever the speed (spec §8.5).
 const PRECISE_PX: (f64, f64) = (1.0, 20.0);
 /// A run of this many ticks, each ≤ `MAX_GAP` apart, is a swipe.
 const SWIPE_TICKS: u32 = 3;
@@ -119,7 +119,7 @@ impl Tick {
 
 /// How far one tick scrolls, in pixels, at spin fraction `x`. The precise
 /// key wins over the speed; the precise setting lowers a curve's slow end
-/// to 1 px (design §3).
+/// to 1 px.
 pub fn tick_px(speed: ScrollSpeed, precise_setting: bool, x: f64, tick: &Tick) -> f64 {
     let (min, max) = if tick.precise {
         PRECISE_PX
@@ -133,11 +133,11 @@ pub fn tick_px(speed: ScrollSpeed, precise_setting: bool, x: f64, tick: &Tick) -
         };
         (if precise_setting { 1.0 } else { min }, max)
     };
-    // s(x) = x²: a monotone ease-in, the tuning knob (design §3).
+    // s(x) = x²: a monotone ease-in, the tuning knob.
     min + (max - min) * x * x
 }
 
-/// Counts swipes in a streak (design §3). A run of ticks ≤ `MAX_GAP` apart
+/// Counts swipes in a streak. A run of ticks ≤ `MAX_GAP` apart
 /// is a swipe once it has `SWIPE_TICKS`. A new run starting ≤ `STREAK_GAP`
 /// after the last tick continues the streak (a run too short to be a swipe
 /// keeps the streak but doesn't add to it). A reversal, an axis change or a

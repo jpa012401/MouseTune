@@ -1,5 +1,5 @@
 //! Which held keys apply each scroll effect, as `CGEventFlags` bitmasks the
-//! tap callback can test (Phase 5b design §1–§2). Compiled whenever the
+//! tap callback can test (spec §8.5). Compiled whenever the
 //! settings change, never inside a callout.
 
 use crate::{

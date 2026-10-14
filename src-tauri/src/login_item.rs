@@ -1,6 +1,5 @@
-//! Launch at login: the port, and the use cases built on it (spec §3.4,
-//! Phase 7a design §2). macOS holds the on/off state; nothing is stored in
-//! the config, so a change made in System Settings can't go stale here.
+//! Launch at login: the port, and the use cases built on it (spec §3.4).
+//! macOS holds the on/off state; nothing is stored in the config, so a change made in System Settings can't go stale here.
 //! Adapters live in `platform::macos::login_item`.
 
 use std::{io, path::Path, sync::Arc};

@@ -1,4 +1,4 @@
-//! Breaking-change upgrades (design §1). Additive changes need no step.
+//! Breaking-change upgrades (spec §9). Additive changes need no step.
 
 use serde_json::Value;
 

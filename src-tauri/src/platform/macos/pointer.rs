@@ -1,4 +1,4 @@
-//! Pointer freeze during drags (Phase 6 design §2). Humble object.
+//! Pointer freeze during drags (spec §6). Humble object.
 
 use objc2_core_graphics::CGAssociateMouseAndMouseCursorPosition;
 

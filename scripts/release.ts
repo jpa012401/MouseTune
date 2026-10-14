@@ -1,4 +1,4 @@
-// `pnpm release`: plan → preflight → build → verify → report (Phase 7b design §1).
+// `pnpm release`: plan → preflight → build → verify → report (spec §3.3).
 // Glue only: every decision is in releasePlan.ts, which has the tests.
 
 import { spawnSync } from "node:child_process";

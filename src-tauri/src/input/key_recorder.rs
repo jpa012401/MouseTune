@@ -1,4 +1,4 @@
-//! Key recording (Phase 4b design): while recording, the first real
+//! Key recording (spec §10): while recording, the first real
 //! (non-modifier) key-down is reported with its modifiers and swallowed, so
 //! recording ⌘Q quits nothing. Esc alone cancels. A key-up is swallowed only
 //! if its down was. Pure and allocation-free: `on_key` runs in the keys tap

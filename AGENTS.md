@@ -4,11 +4,11 @@ MouseTune is a macOS menu bar app that makes ordinary mice feel like a trackpad:
 
 It is a clean-room reimplementation inspired by [Mac Mouse Fix](https://github.com/noah-nuebling/mac-mouse-fix). Any upstream checkout is **read-only reference: never copy code from it** (spec §13).
 
-It ships as a Tauri v2 app (Rust core, React settings window) for **macOS 12 Monterey through macOS 27**, on Apple Silicon and Intel. What it does and why is in [the spec](macos_mouse_utility_technical_specification.md), §1.
+It ships as a Tauri v2 app (Rust core, React settings window) for **macOS 12 Monterey through macOS 27**, on Apple Silicon and Intel. What it does and why is in [the spec](docs/macos_mouse_utility_technical_specification.md), §1.
 
 ## How to use this file
 
-- This file holds **standards and pointers**, not history. History lives in `git log`. The active plan is the newest file in `docs/superpowers/plans/`. Session progress is that plan's ledger at `.superpowers/sdd/<plan>/progress.md` (gitignored).
+- This file holds **standards and pointers**, not history. History lives in `git log`. Design notes and plans are working documents in `notes/` (gitignored, never committed): the active plan is the newest file in `notes/plans/`, and its progress ledger sits beside it.
 - **Read only what your change touches.** See "Before you change an area, read".
 - **Run only the checks your change needs.** See "Verifying".
 - An explicit instruction from the maintainer overrides anything here except the **Non-negotiables**. If a rule conflicts with the task, say so and ask; don't quietly work around it.
@@ -68,17 +68,17 @@ This is a mouse utility for my own Macs, not a platform. No accounts, no telemet
 
 ## Workflow
 
-Order: **brainstorm → spec change → plan → subagent execution → review → finish branch**. The maintainer approves the spec change and the plan before any code is written.
+Order: **brainstorm → design → plan → execution in small reviewed steps → final review → finish branch**. The maintainer approves the design and the plan before any code is written. Designs go in `notes/designs/` and plans in `notes/plans/`; both are gitignored. Anything that must outlive the work goes into the technical spec (`docs/`), this file, or a code comment.
 
 | Change | Gates |
 |---|---|
-| **Feature-sized**: a new module under `input/` or `platform/`, a new IPC command or event, a new user-facing screen or string set, a new private API, a dependency change, or anything touching more than one of {Rust core, adapters, IPC, UI} | All. No code before an approved plan in `docs/superpowers/plans/`. Execute with `superpowers:subagent-driven-development`. |
+| **Feature-sized**: a new module under `input/` or `platform/`, a new IPC command or event, a new user-facing screen or string set, a new private API, a dependency change, or anything touching more than one of {Rust core, adapters, IPC, UI} | All. No code before an approved plan in `notes/plans/`. Execute it task by task, each task tested first and reviewed before the next. |
 | **Small**: a fix or tweak inside one module with no new public API | Plan in the conversation; can be done inline. **Still test first.** |
 | **Docs or config only** | Review the diff; run the matching verification row. |
 
 When unsure which row applies, ask.
 
-**Skills:** `superpowers:brainstorming`, `writing-plans`, `subagent-driven-development`, `test-driven-development`, `requesting-code-review`, `finishing-a-development-branch`. If a skill conflicts with this file, this file wins. Implementer subagents never dispatch their own reviewers.
+When the work is split across agents, implementers never dispatch their own reviewers.
 
 ### Hit every surface (feature-sized changes)
 
@@ -205,7 +205,7 @@ If you can't name the requirement a pattern serves, don't add it. **DRY is about
 - **Config v1 holds the kill switches and button remaps**, and grows a section per phase; the loader deep-merges the file over the defaults so it grows additively, and IPC types stay strict.
 - **Phase 4 is split into 4a (button engine) and 4b (capture mode, editor); 4c holds mouse-click remaps, media keys, `nav_overrides` and timing.** **B3 defaults: double click = Launchpad, drag = Spaces & Mission Control; a single B3 click stays a plain middle click.**
 - **Phase 4c: a MouseClick remap is a full click, not hold-through (that's Phase 6). nav_overrides is file-only and merges over the Apple defaults; mt-exec reads it through an ArcSwap, never the job queue. Timing is 150–600 ms, clamped on compile.**
-- **Phase 5 is split into 5a (engine, tray toggles) and 5b (modifiers, Scroll screen); Cmd + scroll = zoom moves to Phase 6.** **Frames come from CVDisplayLink on every macOS version**, with a 120 Hz timer fallback, because NSScreen.displayLink is main-thread AppKit. **In 5a a tick with a modifier key held isn't smoothed.** Inversion is relative to the delivered deltas (Phase 5a design).
+- **Phase 5 is split into 5a (engine, tray toggles) and 5b (modifiers, Scroll screen); Cmd + scroll = zoom moves to Phase 6.** **Frames come from CVDisplayLink on every macOS version**, with a 120 Hz timer fallback, because NSScreen.displayLink is main-thread AppKit. **In 5a a tick with a modifier key held isn't smoothed.** Inversion is relative to the delivered deltas (spec §8).
 - **Scroll modifiers (Phase 5b): one key per effect, each key at most once; defaults Shift = horizontal, Option = precise, swift unbound, so ⌃ + scroll stays with Accessibility Zoom. Unbound keys pass through. Screen-size scaling was dropped.**
 - **The engine owns `CompiledRemaps`**, delivered by `Control::SetRemaps`; no `ArcSwap`.
 - **Edits save immediately through `set_config`**; Rust validates remaps (`config/validate.rs`). No draft state.
@@ -215,7 +215,7 @@ If you can't name the requirement a pattern serves, don't add it. **DRY is about
 - **Phase 6:** tap callouts queue Copy intents (`input::intents`) and never post; the pointer is unfrozen and held buttons/keys are released on every refresh, tap disable, shutdown and caught panic; private outputs (dock swipe, magnify) are used only on macOS versions their spike verified, otherwise their fallbacks (Discrete; ⌘= / ⌘-). B3 hold is no longer a default.
 - Click-cycle, suppression and hotkey-fallback details: `input/{click_cycle,router}.rs` and `actions/` docs and tests.
 - **Phase 7 is split into 7a (in-app polish) and 7b (release).** Launch-at-login state lives in macOS, not config (`login_item.rs` reads it back every time). Settings opens at launch when Accessibility is untrusted or the menu bar item is hidden (`window::opens_at_launch`); Settings has a Quit button (`quit_app`) for when the tray's Quit is hidden. Default remaps by button count were dropped: one set fits every mouse. Migration retires the legacy plist once `SMAppService` registers, even if it lands in `RequiresApproval`, so the app can't launch twice.
-- **Phase 2 passed every event through**; since Phase 3 the tap demand follows the config. **The watchdog runs on `mt-input`**, not the main thread. **One `input-status-changed` event** replaces `devices-changed`/`status-changed` (Phase 2 plan).
+- **Phase 2 passed every event through**; since Phase 3 the tap demand follows the config. **The watchdog runs on `mt-input`**, not the main thread. **One `input-status-changed` event** replaces `devices-changed`/`status-changed` (spec §4).
 
 **Open, for the maintainer. Do not decide these in code:**
 - Personal use or public distribution. This decides notarization and the licence review.
@@ -231,26 +231,27 @@ Spec amendments go in the commit that proves the spec wrong.
 | Permissions, onboarding | §3.1 | `accessibility.rs`, `permission_monitor.rs`, `src/routes/Onboarding.tsx` |
 | Tray, window, agent behaviour, launch at login | §2.1, §3.2 | `tray.rs`, `window.rs`, `login_item.rs`, `platform/macos/login_item.rs` |
 | macOS version differences | §3.4 | `platform/macos/os_version.rs` |
-| Event taps, filtering, devices, threading | §4 | `input/`, Phase 2 plan |
+| Event taps, filtering, devices, threading | §4 | `input/` |
 | Buttons and gestures | §5 | `input/{remaps,click_cycle,router,capture,key_recorder}.rs`, `config/validate.rs`, `actions/`, `actions/nav.rs` |
-| Drag, dock swipe | §6 | `input/{router,intents,drag}.rs`, `platform/macos/{pointer,dock_swipe,magnify}.rs`, Phase 6 design |
+| Drag, dock swipe | §6 | `input/{router,intents,drag}.rs`, `platform/macos/{pointer,dock_swipe,magnify}.rs` |
 | Actions, symbolic hotkeys | §7 | `actions/`, `platform/macos/{symbolic_hotkeys,frontmost_app}.rs`, `platform/macos/event_poster.rs` (clicks, system keys) |
-| Smooth scrolling | §8 | `input/scroll/` (incl. `modifiers.rs`, `preview.rs`), `platform/macos/{display_link,scroll_poster}.rs`, `src/routes/Scroll.tsx`, Phase 5a and 5b designs |
+| Smooth scrolling | §8 | `input/scroll/` (incl. `modifiers.rs`, `preview.rs`), `platform/macos/{display_link,scroll_poster}.rs`, `src/routes/Scroll.tsx` |
 | Config schema | §9 | `config/` |
 | IPC contract | §10 | `ipc.rs`, `events.rs`, `src/bindings.ts` |
 | Settings UI | §11 | `src/` (incl. `src/routes/Scroll.tsx`) |
 | Licensing, upstream | §13 | — |
 
-**Sources of truth, in rank order:** code and tests → spec → active plan → this file. Where code and a document disagree, the code wins and the document is wrong: fix the document.
+**Sources of truth, in rank order:** code and tests → spec → this file → the active plan in `notes/`. Where code and a document disagree, the code wins and the document is wrong: fix the document.
 
 ## Where code lives
 
 ```
 .
 ├─ AGENTS.md, CLAUDE.md            # this file; CLAUDE.md just imports it
-├─ macos_mouse_utility_technical_specification.md
-├─ docs/superpowers/plans/         # approved implementation plans
-├─ .superpowers/                   # SDD ledgers and briefs (gitignored, scratch)
+├─ CREDITS.md                      # credits to Mac Mouse Fix
+├─ docs/
+│  └─ macos_mouse_utility_technical_specification.md   # the technical spec
+├─ notes/                          # designs, plans, progress ledgers (gitignored, never committed)
 ├─ assets/                         # icon sources (SVG)
 ├─ src/                            # React settings UI
 │  ├─ bindings.ts                  # GENERATED by `cargo test`; never edit
@@ -313,7 +314,7 @@ git diff --exit-code -- src/bindings.ts        # MUST be clean after `cargo test
 - End with the `Co-Authored-By:` trailer the session supplies.
 - One concern per commit. If the message says "also", split it.
 - One branch per phase or feature (`phase-2-input-engine`). Merge to `main` only with the maintainer's approval.
-- **Never commit:** `dist/`, `src-tauri/target/`, `src-tauri/gen/`, `.superpowers/`, `.env*`, signing identities, certificates, or upstream source.
+- **Never commit:** `dist/`, `src-tauri/target/`, `src-tauri/gen/`, `notes/`, `.env*`, signing identities, certificates, or upstream source.
 - UI changes: describe the before and after in the body. Attach screenshots when you can capture them.
 
 ## Taste

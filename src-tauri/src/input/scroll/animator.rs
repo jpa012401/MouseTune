@@ -1,5 +1,5 @@
 //! Turns wheel ticks into per-frame scroll events with the trackpad phase
-//! lifecycle (Phase 5a design §3). Pure: time comes in as `Instant`.
+//! lifecycle (spec §8.1). Pure: time comes in as `Instant`.
 //! `tick` and `end` run in the scroll tap callback, so nothing here
 //! allocates; `frame` runs on display-link frames.
 
@@ -127,7 +127,7 @@ impl Animator {
 
     /// A swallowed wheel tick. Same axis and direction during the base (or
     /// a tail sent as `Changed`) extends the gesture; anything else closes
-    /// it and begins a new one (design §3).
+    /// it and begins a new one.
     pub fn tick(&mut self, tick: Tick, now: Instant) {
         let x = self.rate.observe(&tick, now);
         // A precise tick ends any streak and starts none, so letting go of

@@ -1,4 +1,4 @@
-//! Port to the settings file (design §2).
+//! Port to the settings file (spec §9.1).
 
 use std::io;
 

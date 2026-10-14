@@ -1,5 +1,5 @@
-//! Display-paced frames for the scroll animator on `mt-input` (Phase 5a
-//! design §4, spec §8.1). CVDisplayLink calls back on CoreVideo's thread,
+//! Display-paced frames for the scroll animator on `mt-input` (spec §8.1).
+//! CVDisplayLink calls back on CoreVideo's thread,
 //! which only signals a run-loop source; the frame itself runs on
 //! `mt-input`. A 120 Hz run-loop timer stands in when CVDisplayLink can't
 //! be created or started. Humble object: starts, stops and forwards.

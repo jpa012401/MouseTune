@@ -1,5 +1,5 @@
 //! Compiles the remap list into fixed-size lookup tables the hot path can
-//! index without allocating (spec §5.2, design §1). Converts 1-based config
+//! index without allocating (spec §5.2). Converts 1-based config
 //! button numbers to CG button numbers (middle = 2).
 
 use std::time::Duration;
@@ -25,8 +25,7 @@ pub struct Timing {
 }
 
 impl From<&TimingConfig> for Timing {
-    /// Clamped, so a hand-edited value outside the range still works
-    /// (Phase 4c design §1).
+    /// Clamped, so a hand-edited value outside the range still works.
     fn from(t: &TimingConfig) -> Self {
         let ms = |v: u32| {
             Duration::from_millis(u64::from(v.clamp(*TIMING_MS.start(), *TIMING_MS.end())))
@@ -38,7 +37,7 @@ impl From<&TimingConfig> for Timing {
     }
 }
 
-/// Which private outputs are verified on this macOS (Phase 6 design §3).
+/// Which private outputs are verified on this macOS (spec §6.1).
 /// Unverified ones compile to their documented fallbacks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OutputSupport {
@@ -172,7 +171,7 @@ impl CompiledRemaps {
 }
 
 /// Bad hand-edited entries are skipped with a warning; one bad remap never
-/// resets the user's settings (design §1).
+/// resets the user's settings.
 #[cfg(test)]
 pub fn compile(config: &Config) -> CompiledRemaps {
     compile_with(config, OutputSupport::NONE)

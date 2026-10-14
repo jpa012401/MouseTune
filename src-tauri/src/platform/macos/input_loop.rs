@@ -327,7 +327,7 @@ fn run_input_thread(
 }
 
 /// The dock-swipe adapter where `output_support` turned dock swipes on,
-/// else `NoSwipe` (Phase 6 design §3). Both read the one cached load
+/// else `NoSwipe` (spec §6.1). Both read the one cached load
 /// (`dock_swipe::api`), so `remaps` compiled `SpacesAndMissionControl` to
 /// match what this returns.
 fn swipe_output(run_loop: &CFRunLoop, degraded: &Arc<AtomicBool>) -> Box<dyn SwipeOutput> {

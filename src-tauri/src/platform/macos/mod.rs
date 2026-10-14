@@ -17,7 +17,7 @@ pub mod symbolic_hotkeys;
 
 use crate::input::remaps::OutputSupport;
 
-/// Private outputs verified on this macOS (Phase 6 design §3). Each flips
+/// Private outputs verified on this macOS (spec §6.1). Each flips
 /// to `true` only for the versions its spike verified; see
 /// `dock_swipe::VERIFIED_ON` and `magnify::VERIFIED_ON`.
 /// A verified dock swipe whose private symbols don't resolve stays off, so

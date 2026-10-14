@@ -1,4 +1,4 @@
-//! Action execution (spec §7, design §3). The input engine submits `Job`s
+//! Action execution (spec §7). The input engine submits `Job`s
 //! through `ActionSink`; `mt-exec` performs them against OS ports.
 
 pub mod executor;

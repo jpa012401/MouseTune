@@ -1,4 +1,4 @@
-//! Persistent settings (spec §9; design doc docs/superpowers/specs/2026-10-11-phase-3-config-store-design.md).
+//! Persistent settings (spec §9).
 //! Pure core: no Tauri, no filesystem outside `SystemConfigFile`.
 
 pub mod file;
