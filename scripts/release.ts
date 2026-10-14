@@ -56,7 +56,9 @@ const conf = JSON.parse(readFileSync(join(TAURI, "tauri.conf.json"), "utf8")) as
   identifier: string;
 };
 
-if (capture("git", ["status", "--porcelain"]).output.trim() !== "") {
+const gitStatus = capture("git", ["status", "--porcelain"]);
+if (gitStatus.status !== 0) stop("Release stopped: couldn’t read the git status (is this the MouseTune repository?).");
+if (gitStatus.output.trim() !== "") {
   stop("Release stopped: the working tree has uncommitted changes. Commit or stash them so the build matches a commit.");
 }
 
@@ -73,11 +75,16 @@ const bundle = join(TAURI, "target", "universal-apple-darwin", "release", "bundl
 const app = join(bundle, "macos", `${conf.productName}.app`);
 const dmg = join(bundle, "dmg", `${conf.productName}_${conf.version}_universal.dmg`);
 for (const path of [app, dmg]) {
-  if (!existsSync(path)) stop(`The build finished but ${path} is missing.`);
+  if (!existsSync(path)) stop(`Release stopped: the build finished but ${path} is missing.`);
 }
-const executable = capture("/usr/libexec/PlistBuddy", ["-c", "Print :CFBundleExecutable", join(app, "Contents", "Info.plist")]).output.trim();
+const infoPlist = join(app, "Contents", "Info.plist");
+const plist = capture("/usr/libexec/PlistBuddy", ["-c", "Print :CFBundleExecutable", infoPlist]);
+const executable = plist.output.trim();
+if (plist.status !== 0 || executable === "") stop(`Release stopped: couldn’t read CFBundleExecutable from ${infoPlist}.`);
 const binary = join(app, "Contents", "MacOS", executable);
-const details = parseCodesignDetails(capture("codesign", ["-dv", "--verbose=4", app]).output);
+const signature = capture("codesign", ["-dv", "--verbose=4", app]);
+if (signature.status !== 0) stop(`Release stopped: \`codesign -dv\` couldn’t read the app’s signature.\n${signature.output}`);
+const details = parseCodesignDetails(signature.output);
 
 const exitOk = (status: number | null, what: string): Verdict =>
   status === 0 ? { ok: true } : { ok: false, reason: `${what} failed (exit ${status}).` };
@@ -96,11 +103,12 @@ const checks: Record<CheckName, () => Verdict> = {
 console.log("\nChecks:");
 for (const name of plan.checks) {
   const verdict = checks[name]();
-  if (!verdict.ok) stop(`${name}: ${verdict.reason}`);
+  if (!verdict.ok) stop(`Release stopped: ${name}: ${verdict.reason}`);
   console.log(`  ✓ ${name}`);
 }
 
-const commit = capture("git", ["rev-parse", "--short", "HEAD"]).output.trim();
+const revParse = capture("git", ["rev-parse", "--short", "HEAD"]);
+const commit = revParse.status === 0 && revParse.output.trim() !== "" ? revParse.output.trim() : "unknown commit";
 console.log(`
 Release ready (${plan.mode}, commit ${commit})
   signed by ${plan.identity}
