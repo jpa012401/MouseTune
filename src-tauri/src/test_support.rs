@@ -21,6 +21,7 @@ use crate::{
         capture::Clock,
         router::{ClickTimers, TimerKind},
     },
+    login_item::{LoginItem, LoginItemError, LoginItemStatus},
 };
 
 /// The Phase 4 default buttons: B3 click → Mission Control, B3 hold → Show
@@ -622,5 +623,71 @@ impl SwipeOutput for FakeSwipe {
     }
     fn cancel(&mut self) {
         self.0.lock().unwrap().push("cancel".into());
+    }
+}
+
+/// A login item whose state lives in memory. Clones share state.
+#[derive(Clone)]
+pub struct FakeLoginItem(Arc<Mutex<FakeLoginState>>);
+
+struct FakeLoginState {
+    status: LoginItemStatus,
+    /// What `enable` leaves behind: `On`, or `RequiresApproval` like macOS 13+ can.
+    status_after_enable: LoginItemStatus,
+    fails: bool,
+    calls: Vec<&'static str>,
+}
+
+impl FakeLoginItem {
+    pub fn with_status(status: LoginItemStatus) -> Self {
+        Self(Arc::new(Mutex::new(FakeLoginState {
+            status,
+            status_after_enable: LoginItemStatus::On,
+            fails: false,
+            calls: Vec::new(),
+        })))
+    }
+
+    pub fn needing_approval(self) -> Self {
+        self.0.lock().unwrap().status_after_enable = LoginItemStatus::RequiresApproval;
+        self
+    }
+
+    /// Every enable and disable is refused, and the status doesn't change.
+    pub fn failing(self) -> Self {
+        self.0.lock().unwrap().fails = true;
+        self
+    }
+
+    pub fn calls(&self) -> Vec<&'static str> {
+        self.0.lock().unwrap().calls.clone()
+    }
+}
+
+impl LoginItem for FakeLoginItem {
+    fn status(&self) -> LoginItemStatus {
+        self.0.lock().unwrap().status
+    }
+    fn enable(&self) -> Result<(), LoginItemError> {
+        let mut s = self.0.lock().unwrap();
+        s.calls.push("enable");
+        if s.fails {
+            return Err(LoginItemError::Register {
+                message: "denied".into(),
+            });
+        }
+        s.status = s.status_after_enable;
+        Ok(())
+    }
+    fn disable(&self) -> Result<(), LoginItemError> {
+        let mut s = self.0.lock().unwrap();
+        s.calls.push("disable");
+        if s.fails {
+            return Err(LoginItemError::Unregister {
+                message: "denied".into(),
+            });
+        }
+        s.status = LoginItemStatus::Off;
+        Ok(())
     }
 }

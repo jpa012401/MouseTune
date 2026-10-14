@@ -12,6 +12,7 @@ mod events;
 mod input;
 mod ipc;
 mod logging;
+mod login_item;
 mod permission_monitor;
 mod platform;
 #[cfg(test)]
