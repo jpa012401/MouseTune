@@ -180,7 +180,7 @@ If you can't name the requirement a pattern serves, don't add it. **DRY is about
 - **Phase 7a** (launch at login, quiet startup, show-menu-bar-item switch, Open logs folder, About link) is built on branch `phase-7a-polish`, not merged; it is pending the maintainer's approval and its README acceptance (needs a signed bundle).
 - **Next:** Phase 7b (release build, signing, notarization, DMG, universal build).
 - **Known gaps:**
-  - Config holds the two kill switches, `buttons.remaps` (editable in the UI since Phase 4b), timing (sliders since Phase 4c), nav_overrides (file-only), the scroll section (editable on the Scroll screen since Phase 5b) and `buttons.drags`, `buttons.scroll_bindings` and `buttons.hold_through` (editable on the Buttons screen since Phase 6); later phases add their sections.
+  - Config holds the two kill switches, `general.show_menu_bar_item` (the General page switch since Phase 7a), `buttons.remaps` (editable in the UI since Phase 4b), timing (sliders since Phase 4c), nav_overrides (file-only), the scroll section (editable on the Scroll screen since Phase 5b) and `buttons.drags`, `buttons.scroll_bindings` and `buttons.hold_through` (editable on the Buttons screen since Phase 6); later phases add their sections.
   - The Accessibility commands still return `Result<(), String>`; config commands use the typed `ConfigError`.
   - Parked UI edge cases (bridge-failure-only): a failed Dismiss or config load is only reported on the General page; brief stale switch if a tray change races the initial load.
   - Any config save (even a remap edit) closes a scroll gesture in flight (clean Ended).
