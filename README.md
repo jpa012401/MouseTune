@@ -4,7 +4,7 @@ Smooth scrolling, button remapping and trackpad-style gestures for regular mice 
 
 Built with [Tauri v2](https://v2.tauri.app) (Rust) and React. Runs as a menu bar app.
 
-> Inspired by [Mac Mouse Fix](https://github.com/noah-nuebling/mac-mouse-fix) by Noah Nuebling. MouseTune is an independent, clean-room implementation and contains no Mac Mouse Fix source code.
+> Inspired by [Mac Mouse Fix](https://github.com/noah-nuebling/mac-mouse-fix) by Noah Nuebling. MouseTune is an independent, clean-room implementation and contains no Mac Mouse Fix source code. See [CREDITS.md](CREDITS.md).
 
 **Status:** Phases 0–7b are merged; the first signed release build (`pnpm release`) is still to be run. Phases 2–7 await manual hardware acceptance (see AGENTS.md "Current state"). See the [technical specification](macos_mouse_utility_technical_specification.md) for the design and roadmap.
 
