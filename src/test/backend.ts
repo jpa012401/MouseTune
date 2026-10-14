@@ -35,7 +35,7 @@ export const defaultRemaps: Remap[] = [
 export function config(overrides: Partial<GeneralSettings> = {}): Config {
   return {
     version: 1,
-    general: { buttons_enabled: true, scroll_enabled: true, freeze_pointer_during_drag: true, ...overrides },
+    general: { buttons_enabled: true, scroll_enabled: true, freeze_pointer_during_drag: true, show_menu_bar_item: true, ...overrides },
     buttons: {
       remaps: defaultRemaps,
       drags: [{ button: 3, effect: { type: "SpacesAndMissionControl" } }],

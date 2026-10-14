@@ -45,6 +45,8 @@ pub struct General {
     pub scroll_enabled: bool,
     /// Keep the pointer still during drag gestures.
     pub freeze_pointer_during_drag: bool,
+    /// Show the menu bar icon. When hidden, opening the app again shows Settings (spec §3.2).
+    pub show_menu_bar_item: bool,
 }
 
 impl Default for General {
@@ -53,6 +55,7 @@ impl Default for General {
             buttons_enabled: true,
             scroll_enabled: true,
             freeze_pointer_during_drag: true,
+            show_menu_bar_item: true,
         }
     }
 }
@@ -477,6 +480,7 @@ mod tests {
                 buttons_enabled: buttons,
                 scroll_enabled: scroll,
                 freeze_pointer_during_drag: true,
+                show_menu_bar_item: true,
             },
             buttons: Buttons::default(),
             scroll: Scroll::default(),
@@ -553,7 +557,7 @@ mod tests {
             json,
             serde_json::json!({
                 "version": 1,
-                "general": { "buttons_enabled": true, "scroll_enabled": false, "freeze_pointer_during_drag": true },
+                "general": { "buttons_enabled": true, "scroll_enabled": false, "freeze_pointer_during_drag": true, "show_menu_bar_item": true },
                 "buttons": serde_json::to_value(Buttons::default()).unwrap(),
                 "scroll": serde_json::to_value(Scroll::default()).unwrap(),
                 "timing": { "hold_ms": 250, "double_click_ms": 260 },

@@ -117,6 +117,24 @@ mod tests {
     }
 
     #[test]
+    fn a_phase_6_file_shows_the_menu_bar_item() {
+        let outcome = parse_config(Some(
+            r#"{ "version": 1, "general": { "buttons_enabled": true, "scroll_enabled": false, "freeze_pointer_during_drag": true } }"#,
+        ));
+        assert!(!outcome.recover);
+        assert!(outcome.config.general.show_menu_bar_item);
+        assert!(!outcome.config.general.scroll_enabled);
+    }
+
+    #[test]
+    fn a_hidden_menu_bar_item_stays_hidden() {
+        let outcome = parse_config(Some(
+            r#"{ "version": 1, "general": { "show_menu_bar_item": false } }"#,
+        ));
+        assert!(!outcome.config.general.show_menu_bar_item);
+    }
+
+    #[test]
     fn a_file_nav_entry_adds_an_app_or_overrides_a_default() {
         use crate::config::schema::NavStrategy::{CmdBracket, MouseButtons};
         let outcome = parse_config(Some(
@@ -197,6 +215,7 @@ mod tests {
                 buttons_enabled: false,
                 scroll_enabled: true,
                 freeze_pointer_during_drag: true,
+                show_menu_bar_item: true,
             },
             ..Config::default()
         };
@@ -212,6 +231,7 @@ mod tests {
                 buttons_enabled: true,
                 scroll_enabled: false,
                 freeze_pointer_during_drag: true,
+                show_menu_bar_item: true,
             },
             ..Config::default()
         };
@@ -235,6 +255,7 @@ mod tests {
                 buttons_enabled: true,
                 scroll_enabled: false,
                 freeze_pointer_during_drag: true,
+                show_menu_bar_item: true,
             },
             ..Config::default()
         };

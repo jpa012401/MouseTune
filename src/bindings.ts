@@ -151,6 +151,8 @@ export type General = {
 	scroll_enabled: boolean,
 	/**  Keep the pointer still during drag gestures. */
 	freeze_pointer_during_drag: boolean,
+	/**  Show the menu bar icon. When hidden, opening the app again shows Settings (spec §3.2). */
+	show_menu_bar_item: boolean,
 };
 
 /**  A button that behaves exactly like another while held. */

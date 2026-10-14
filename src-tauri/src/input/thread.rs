@@ -333,6 +333,7 @@ mod tests {
                 buttons_enabled: true,
                 scroll_enabled: false,
                 freeze_pointer_during_drag: true,
+                show_menu_bar_item: true,
             },
             ..Config::default()
         };
