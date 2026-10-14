@@ -31,7 +31,7 @@ describe("App", () => {
     mockBackend({ get_status: () => status() });
     render(<App />);
     fireEvent.click(await screen.findByRole("link", { name: "About" }));
-    expect(await screen.findByText(/Inspired by Mac Mouse Fix/)).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Mac Mouse Fix" })).toBeTruthy();
     expect(screen.getByText(/macOS 27\.0\.1/)).toBeTruthy();
   });
 

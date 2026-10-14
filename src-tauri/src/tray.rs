@@ -86,7 +86,7 @@ pub fn build(app: &AppHandle, accessibility_trusted: bool, config: &Config) -> t
         ],
     )?;
 
-    TrayIconBuilder::with_id("main")
+    let tray = TrayIconBuilder::with_id("main")
         .icon(Image::from_bytes(TRAY_ICON)?)
         .icon_as_template(true)
         .tooltip("MouseTune")
@@ -103,6 +103,7 @@ pub fn build(app: &AppHandle, accessibility_trusted: bool, config: &Config) -> t
             _ => {}
         })
         .build(app)?;
+    tray.set_visible(config.general.show_menu_bar_item)?;
 
     app.manage(TrayItems {
         status,
@@ -158,6 +159,11 @@ pub struct TrayConfigStatus(pub AppHandle);
 impl ConfigObserver for TrayConfigStatus {
     fn config_changed(&self, config: &Config) {
         set_switches(&self.0, config);
+        if let Some(tray) = self.0.tray_by_id("main")
+            && let Err(err) = tray.set_visible(config.general.show_menu_bar_item)
+        {
+            tracing::warn!(%err, "failed to show or hide the menu bar item");
+        }
     }
 }
 

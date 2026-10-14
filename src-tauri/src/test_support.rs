@@ -21,6 +21,8 @@ use crate::{
         capture::Clock,
         router::{ClickTimers, TimerKind},
     },
+    login_item::{AgentFile, LoginItem, LoginItemError, LoginItemStatus},
+    opener::Opener,
 };
 
 /// The Phase 4 default buttons: B3 click → Mission Control, B3 hold → Show
@@ -622,5 +624,145 @@ impl SwipeOutput for FakeSwipe {
     }
     fn cancel(&mut self) {
         self.0.lock().unwrap().push("cancel".into());
+    }
+}
+
+/// A login item whose state lives in memory. Clones share state.
+#[derive(Clone)]
+pub struct FakeLoginItem(Arc<Mutex<FakeLoginState>>);
+
+struct FakeLoginState {
+    status: LoginItemStatus,
+    /// What `enable` leaves behind: `On`, or `RequiresApproval` like macOS 13+ can.
+    status_after_enable: LoginItemStatus,
+    fails: bool,
+    calls: Vec<&'static str>,
+}
+
+impl FakeLoginItem {
+    pub fn with_status(status: LoginItemStatus) -> Self {
+        Self(Arc::new(Mutex::new(FakeLoginState {
+            status,
+            status_after_enable: LoginItemStatus::On,
+            fails: false,
+            calls: Vec::new(),
+        })))
+    }
+
+    pub fn needing_approval(self) -> Self {
+        self.0.lock().unwrap().status_after_enable = LoginItemStatus::RequiresApproval;
+        self
+    }
+
+    /// Every enable and disable is refused, and the status doesn't change.
+    pub fn failing(self) -> Self {
+        self.0.lock().unwrap().fails = true;
+        self
+    }
+
+    pub fn calls(&self) -> Vec<&'static str> {
+        self.0.lock().unwrap().calls.clone()
+    }
+}
+
+impl LoginItem for FakeLoginItem {
+    fn status(&self) -> LoginItemStatus {
+        self.0.lock().unwrap().status
+    }
+    fn enable(&self) -> Result<(), LoginItemError> {
+        let mut s = self.0.lock().unwrap();
+        s.calls.push("enable");
+        if s.fails {
+            return Err(LoginItemError::Register {
+                message: "denied".into(),
+            });
+        }
+        s.status = s.status_after_enable;
+        Ok(())
+    }
+    fn disable(&self) -> Result<(), LoginItemError> {
+        let mut s = self.0.lock().unwrap();
+        s.calls.push("disable");
+        if s.fails {
+            return Err(LoginItemError::Unregister {
+                message: "denied".into(),
+            });
+        }
+        s.status = LoginItemStatus::Off;
+        Ok(())
+    }
+}
+
+/// A LaunchAgent plist on an in-memory disk. Clones share the file.
+#[derive(Clone, Default)]
+pub struct FakeAgentFile {
+    contents: Arc<Mutex<Option<String>>>,
+    write_fails: bool,
+}
+
+impl FakeAgentFile {
+    pub fn holding(text: &str) -> Self {
+        let file = Self::default();
+        *file.contents.lock().unwrap() = Some(text.to_owned());
+        file
+    }
+
+    pub fn write_fails(mut self) -> Self {
+        self.write_fails = true;
+        self
+    }
+
+    pub fn contents(&self) -> Option<String> {
+        self.contents.lock().unwrap().clone()
+    }
+}
+
+impl AgentFile for FakeAgentFile {
+    fn read(&self) -> Option<String> {
+        self.contents()
+    }
+    fn write(&self, contents: &str) -> io::Result<()> {
+        if self.write_fails {
+            return Err(io::Error::other("disk full"));
+        }
+        *self.contents.lock().unwrap() = Some(contents.to_owned());
+        Ok(())
+    }
+    fn remove(&self) -> io::Result<()> {
+        match self.contents.lock().unwrap().take() {
+            Some(_) => Ok(()),
+            None => Err(io::Error::from(io::ErrorKind::NotFound)),
+        }
+    }
+}
+
+/// Records what it was asked to open. Clones share the record.
+#[derive(Clone, Default)]
+pub struct FakeOpener {
+    opened: Arc<Mutex<Vec<String>>>,
+    refuses: bool,
+}
+
+impl FakeOpener {
+    pub fn refusing() -> Self {
+        Self {
+            refuses: true,
+            ..Self::default()
+        }
+    }
+
+    pub fn opened(&self) -> Vec<String> {
+        self.opened.lock().unwrap().clone()
+    }
+}
+
+impl Opener for FakeOpener {
+    fn open_url(&self, url: &str) -> bool {
+        self.opened.lock().unwrap().push(url.to_owned());
+        !self.refuses
+    }
+    fn open_path(&self, path: &std::path::Path) -> bool {
+        self.opened.lock().unwrap().push(path.display().to_string());
+        !self.refuses
     }
 }

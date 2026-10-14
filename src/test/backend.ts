@@ -35,7 +35,7 @@ export const defaultRemaps: Remap[] = [
 export function config(overrides: Partial<GeneralSettings> = {}): Config {
   return {
     version: 1,
-    general: { buttons_enabled: true, scroll_enabled: true, freeze_pointer_during_drag: true, ...overrides },
+    general: { buttons_enabled: true, scroll_enabled: true, freeze_pointer_during_drag: true, show_menu_bar_item: true, ...overrides },
     buttons: {
       remaps: defaultRemaps,
       drags: [{ button: 3, effect: { type: "SpacesAndMissionControl" } }],
@@ -92,7 +92,7 @@ export function curvePreview(): CurvePreview {
 /** Mocks the Rust backend. Every command must be handled; calls are recorded. */
 export function mockBackend(handlers: Record<string, Handler>) {
   const calls: string[] = [];
-  const all: Record<string, Handler> = { get_config: () => configView(), scroll_curve_preview: () => curvePreview(), ...handlers };
+  const all: Record<string, Handler> = { get_config: () => configView(), get_launch_at_login: () => "Off", scroll_curve_preview: () => curvePreview(), ...handlers };
   mockIPC(
     (cmd, args) => {
       calls.push(cmd);

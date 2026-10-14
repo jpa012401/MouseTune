@@ -4,6 +4,6 @@ mod macos;
 
 pub use macos::{
     click_timers, display_link, dock_swipe, event_poster, event_tap, frontmost_app, hid,
-    input_loop, magnify, os_version, output_support, permissions, pointer, scroll_poster,
-    symbolic_hotkeys,
+    input_loop, login_item, magnify, opener, os_version, output_support, permissions, pointer,
+    scroll_poster, symbolic_hotkeys,
 };
