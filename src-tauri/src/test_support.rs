@@ -22,6 +22,7 @@ use crate::{
         router::{ClickTimers, TimerKind},
     },
     login_item::{AgentFile, LoginItem, LoginItemError, LoginItemStatus},
+    opener::Opener,
 };
 
 /// The Phase 4 default buttons: B3 click → Mission Control, B3 hold → Show
@@ -732,5 +733,36 @@ impl AgentFile for FakeAgentFile {
             Some(_) => Ok(()),
             None => Err(io::Error::from(io::ErrorKind::NotFound)),
         }
+    }
+}
+
+/// Records what it was asked to open. Clones share the record.
+#[derive(Clone, Default)]
+pub struct FakeOpener {
+    opened: Arc<Mutex<Vec<String>>>,
+    refuses: bool,
+}
+
+impl FakeOpener {
+    pub fn refusing() -> Self {
+        Self {
+            refuses: true,
+            ..Self::default()
+        }
+    }
+
+    pub fn opened(&self) -> Vec<String> {
+        self.opened.lock().unwrap().clone()
+    }
+}
+
+impl Opener for FakeOpener {
+    fn open_url(&self, url: &str) -> bool {
+        self.opened.lock().unwrap().push(url.to_owned());
+        !self.refuses
+    }
+    fn open_path(&self, path: &std::path::Path) -> bool {
+        self.opened.lock().unwrap().push(path.display().to_string());
+        !self.refuses
     }
 }

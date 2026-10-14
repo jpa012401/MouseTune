@@ -8,6 +8,7 @@ pub mod hid;
 pub mod input_loop;
 pub mod login_item;
 pub mod magnify;
+pub mod opener;
 pub mod os_version;
 pub mod permissions;
 pub mod pointer;

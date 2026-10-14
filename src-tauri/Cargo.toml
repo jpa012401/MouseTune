@@ -28,7 +28,7 @@ arc-swap = "1"
 crossbeam-channel = "0.5"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSDictionary", "NSError", "NSProcessInfo", "NSString", "NSValue"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSDictionary", "NSError", "NSProcessInfo", "NSString", "NSURL", "NSValue"] }
 objc2-core-graphics = { version = "0.3", default-features = false, features = ["std", "CGEvent", "CGEventTypes", "CGEventSource", "CGRemoteOperation", "CGDirectDisplay", "CGError", "libc"] }
 objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFArray", "CFDate", "CFDictionary", "CFMachPort", "CFNumber", "CFRunLoop", "CFString"] }
 objc2-core-video = { version = "0.3", default-features = false, features = ["std", "CVBase", "CVReturn", "CVDisplayLink", "objc2-core-graphics"] }

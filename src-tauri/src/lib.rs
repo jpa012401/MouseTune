@@ -13,6 +13,7 @@ mod input;
 mod ipc;
 mod logging;
 mod login_item;
+mod opener;
 mod permission_monitor;
 mod platform;
 #[cfg(test)]
