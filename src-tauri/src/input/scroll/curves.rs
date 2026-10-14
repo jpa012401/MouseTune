@@ -1,4 +1,4 @@
-//! The scroll animation curve (Phase 5a design §3, spec §8.3). It has an
+//! The scroll animation curve (spec §8.3). It has an
 //! ease-out "base" over a fixed duration. For regular and high smoothness,
 //! a drag-decay tail `v' = −c·vᵉ` follows and stops below `v_stop`.
 //! Pure. Times are in seconds, distances in pixels. `Curve::new` runs in
@@ -7,7 +7,7 @@
 use crate::config::schema::Smoothness;
 
 /// Slopes of the hybrid base's Hermite ease-out, in units of D_b / T.
-/// Tuning knobs (design §3). With these the base is monotone.
+/// Tuning knobs. With these the base is monotone.
 const BASE_START_SLOPE: f64 = 2.0;
 const BASE_END_SLOPE: f64 = 0.5;
 /// Fixed, so `Curve::new` is O(1).

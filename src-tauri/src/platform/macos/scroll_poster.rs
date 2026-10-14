@@ -1,4 +1,4 @@
-//! Posts the scroll animator's events (Phase 5a design §4, spec §8.4).
+//! Posts the scroll animator's events (spec §8.4).
 //! Every event is stamped with `MOUSETUNE_EVENT_TAG` and posted at the
 //! session tap, downstream of our HID taps (spec §4.1). Humble object: maps
 //! `ScrollOut` onto CGEvent fields, no decisions. Runs on display frames,
@@ -38,7 +38,7 @@ impl Default for MacScrollPoster {
 }
 
 impl ScrollPoster for MacScrollPoster {
-    /// A failed create skips the event: the frame path can't log (design §4).
+    /// A failed create skips the event: the frame path can't log.
     fn post(&mut self, event: &ScrollOut) {
         if let Some(e) = scroll_event(self.source.as_deref(), event) {
             CGEvent::post(CGEventTapLocation::SessionEventTap, Some(&e));

@@ -49,7 +49,7 @@ pub fn open_settings(app: &AppHandle) {
 
 /// Settings opens by itself when MouseTune needs the user or has no menu bar
 /// icon to be reached through; otherwise a login launch puts nothing on screen
-/// (spec §3.2, Phase 7a design §3).
+/// (spec §3.2).
 pub fn opens_at_launch(trusted: bool, show_menu_bar_item: bool) -> bool {
     !trusted || !show_menu_bar_item
 }

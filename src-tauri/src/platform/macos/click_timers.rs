@@ -1,4 +1,4 @@
-//! The two click-cycle timers on `mt-input` (design §2). Created once and
+//! The two click-cycle timers on `mt-input` (spec §5.1). Created once and
 //! re-armed by moving their next fire date, so the hot path never creates a
 //! timer. They repeat with an effectively infinite interval because a
 //! non-repeating CFRunLoopTimer is invalidated after it fires and can't be

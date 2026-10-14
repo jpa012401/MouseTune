@@ -1,4 +1,4 @@
-//! Zoom steps (Phase 6 design §3) through the
+//! Zoom steps (spec §6.1) through the
 //! `MagnifyOutput` port: +1 zooms in, −1 zooms out.
 //!
 //! # Switched off until verified

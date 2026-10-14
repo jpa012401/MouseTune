@@ -257,11 +257,11 @@ impl<C: TapController> InputEngine<C> {
     /// Every trust, demand or device change ends the click cycle. While the
     /// button tap stays on, the router keeps its swallowed bits, so a press
     /// in flight still has its up eaten. Once it is off, ups go to the OS
-    /// unseen, so the bits are dropped (design §2, the up/down invariant).
+    /// unseen, so the bits are dropped (the up/down invariant).
     fn refresh(&mut self) {
-        // No pointer may stay frozen and no button held (Phase 6 design §2).
+        // No pointer may stay frozen and no button held.
         self.release_everything();
-        // No app may be left mid-gesture once trust, demand or devices change (design §5).
+        // No app may be left mid-gesture once trust, demand or devices change.
         self.scroll.cancel();
         let reset = self.router.reset();
         self.apply(reset);

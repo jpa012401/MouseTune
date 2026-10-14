@@ -74,7 +74,7 @@ pub fn scroll_fields(event: &CGEvent) -> ScrollFields {
 }
 
 /// Negates the chosen axes' line, fixed-point and point deltas on the event
-/// itself (Phase 5a design §2). Allocation-free and panic-free: runs in the
+/// itself (spec §4.5). Allocation-free and panic-free: runs in the
 /// scroll tap callback.
 pub fn invert_scroll(event: &CGEvent, vertical: bool, horizontal: bool) {
     let axes = [

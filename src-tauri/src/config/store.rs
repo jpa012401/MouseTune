@@ -1,4 +1,4 @@
-//! Single owner of the current settings (design §2).
+//! Single owner of the current settings (spec §9.1).
 
 use serde::Serialize;
 use specta::Type;
@@ -92,7 +92,7 @@ impl ConfigStore {
             });
         }
         // Only a changed list is checked: a bad hand-edited remap still loads
-        // (design §1), and it must not stop the kill switches from saving.
+        // (spec §9), and it must not stop the kill switches from saving.
         if new.buttons.remaps != self.current.buttons.remaps {
             validate_remaps(&new.buttons.remaps).map_err(|(index, reason)| {
                 ConfigError::InvalidRemap {

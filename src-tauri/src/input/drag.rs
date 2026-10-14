@@ -1,4 +1,4 @@
-//! Continuous drag gestures (Phase 6 design §3): the interactive dock swipe
+//! Continuous drag gestures (spec §6): the interactive dock swipe
 //! through a `SwipeOutput` port, and the two-finger swipe as scroll events
 //! with gesture phases. Pure; runs from `run_intents`, never in a callout.
 

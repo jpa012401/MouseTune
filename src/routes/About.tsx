@@ -32,6 +32,24 @@ export function About() {
           {error}
         </p>
       )}
+
+      <section aria-labelledby="credits-heading" className="mt-8 max-w-prose text-sm">
+        <h2 id="credits-heading" className="mb-2 font-semibold">
+          Credits
+        </h2>
+        <p className="mb-2">
+          MouseTune exists because of Mac Mouse Fix by Noah Nuebling. Its smooth scrolling, button remapping and
+          click-and-drag gestures for Spaces and Mission Control showed what a mouse on a Mac can feel like, and
+          they were the reference for how MouseTune should behave.
+        </p>
+        <p className="mb-2 text-neutral-500">
+          MouseTune is an independent, clean-room implementation and contains no Mac Mouse Fix source code. Mac
+          Mouse Fix is © Noah Nuebling and has its own licence.
+        </p>
+        <button type="button" className="underline underline-offset-2" onClick={() => void openMacMouseFix()}>
+          Mac Mouse Fix on GitHub
+        </button>
+      </section>
     </>
   );
 }

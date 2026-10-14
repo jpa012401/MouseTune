@@ -1,6 +1,6 @@
 import { useConfigStore } from "../store/config";
 
-/** Says the settings file was replaced at startup, until the user dismisses it (design §3). */
+/** Says the settings file was replaced at startup, until the user dismisses it (spec §9.1). */
 export function RecoveryNotice() {
   const recovery = useConfigStore((s) => s.view?.recovery);
   if (!recovery) return null;

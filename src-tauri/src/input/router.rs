@@ -1,4 +1,4 @@
-//! Trigger resolution and suppression (spec §5.2, design §2). Pure and
+//! Trigger resolution and suppression (spec §5.2). Pure and
 //! allocation-free: called from the button tap callback and the click
 //! timers on `mt-input`.
 //!
@@ -93,7 +93,7 @@ pub enum DragAxis {
     Vertical,
 }
 
-/// The drag progress of the press currently down (Phase 6 design §2).
+/// The drag progress of the press currently down.
 #[derive(Debug, Clone, Copy, Default)]
 struct DragTrack {
     dx: i32,

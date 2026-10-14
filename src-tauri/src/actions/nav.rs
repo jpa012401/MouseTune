@@ -1,4 +1,4 @@
-//! Per-app Back/Forward strategy (spec §7.3, Phase 4c design §2). The table
+//! Per-app Back/Forward strategy (spec §7.3). The table
 //! comes from config; `mt-exec` reads it through an `ArcSwap` that a config
 //! observer refreshes, because the bounded job queue may drop jobs and a
 //! settings update must never be lost.

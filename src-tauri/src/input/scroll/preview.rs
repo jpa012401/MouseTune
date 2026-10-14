@@ -1,4 +1,4 @@
-//! The Scroll screen's curve plot (Phase 5b design §4): the engine's own
+//! The Scroll screen's curve plot (spec §11): the engine's own
 //! curve for one slow and one fast tick, sampled for drawing. Pure.
 
 use serde::Serialize;

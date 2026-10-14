@@ -1,6 +1,6 @@
 //! MouseTune — smooth scrolling and button remapping for mice on macOS.
 //!
-//! Architecture and roadmap: `macos_mouse_utility_technical_specification.md`.
+//! Architecture and roadmap: the technical spec, kept locally in `notes/` (gitignored).
 
 #[cfg(not(target_os = "macos"))]
 compile_error!("MouseTune only supports macOS.");

@@ -1,4 +1,4 @@
-// Release decisions for `pnpm release` (Phase 7b design §1). Pure: the
+// Release decisions for `pnpm release` (spec §3.3). Pure: the
 // runner (`release.ts`) does the I/O. Erasable TypeScript only — Node runs it
 // by stripping types.
 

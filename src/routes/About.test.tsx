@@ -23,6 +23,28 @@ describe("About page", () => {
     await waitFor(() => expect(sent).toEqual({ link: "MacMouseFix" }));
   });
 
+  it("credits Mac Mouse Fix and says no code was taken from it", async () => {
+    mockBackend({ get_status: () => status() });
+    renderAbout();
+    const credits = await screen.findByRole("region", { name: "Credits" });
+    expect(credits.textContent).toContain("Mac Mouse Fix by Noah Nuebling");
+    expect(credits.textContent).toContain("contains no Mac Mouse Fix source code");
+  });
+
+  it("opens the Mac Mouse Fix repository from the credits", async () => {
+    let sent: unknown;
+    mockBackend({
+      get_status: () => status(),
+      open_about_link: (args) => {
+        sent = args;
+        return null;
+      },
+    });
+    renderAbout();
+    fireEvent.click(await screen.findByRole("button", { name: "Mac Mouse Fix on GitHub" }));
+    await waitFor(() => expect(sent).toEqual({ link: "MacMouseFix" }));
+  });
+
   it("says when the link couldn't be opened", async () => {
     mockBackend({
       get_status: () => status(),

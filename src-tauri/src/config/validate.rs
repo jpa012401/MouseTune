@@ -14,7 +14,7 @@ use crate::{
     input::remaps::{MAX_BUTTONS, MAX_LEVEL},
 };
 
-/// The first key bound to two scroll effects, if any (Phase 5b design §1).
+/// The first key bound to two scroll effects, if any (spec §8.5).
 pub fn duplicate_scroll_modifier(m: &ScrollModifiers) -> Option<KeyModifier> {
     let keys = [m.horizontal, m.precise, m.swift, m.zoom];
     keys.iter()
@@ -115,8 +115,8 @@ fn check_drag(effect: &DragEffect) -> Result<(), BindingProblem> {
     Ok(())
 }
 
-/// The first problem in the drag, scroll and hold-through lists (Phase 6
-/// design §1). `compile` skips the same entries instead.
+/// The first problem in the drag, scroll and hold-through lists.
+/// `compile` skips the same entries instead.
 pub fn validate_bindings(b: &Buttons) -> Result<(), (BindingList, usize, BindingProblem)> {
     fn each<T>(
         list: BindingList,
@@ -172,7 +172,7 @@ pub enum TimingField {
 }
 
 /// The first value that differs from `old` and lies outside `TIMING_MS`, if
-/// any (Phase 4c design §1). An unchanged value isn't checked, so a
+/// any. An unchanged value isn't checked, so a
 /// hand-edited out-of-range one doesn't block saving the other.
 pub fn check_timing(new: &Timing, old: &Timing) -> Result<(), (TimingField, u32)> {
     for (field, ms, was) in [

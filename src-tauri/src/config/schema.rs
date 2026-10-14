@@ -1,7 +1,7 @@
 //! The settings file's shape. Every field is required so the UI can't send
 //! partial settings; the loader fills what a file leaves out from the
 //! defaults (`load::merge_defaults`), so later phases can add fields without
-//! a version bump (design §1).
+//! a version bump (spec §9).
 
 use std::collections::BTreeMap;
 
@@ -60,7 +60,7 @@ impl Default for General {
     }
 }
 
-/// Button remaps (design §1). Button numbers are 1-based as users count
+/// Button remaps (spec §9.2). Button numbers are 1-based as users count
 /// them: 3 is the middle button. `input::remaps::compile` turns this into
 /// the engine's lookup tables.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -72,7 +72,7 @@ pub struct Buttons {
 }
 
 impl Default for Buttons {
-    /// B3 hold is not a default: with B3 drag bound, a slow-starting drag would fire it (Phase 6 design, Decisions).
+    /// B3 hold is not a default: with B3 drag bound, a slow-starting drag would fire it.
     fn default() -> Self {
         use NavDirection::{Back, Forward};
         use SymbolicHotkeyId::Launchpad;
@@ -117,7 +117,7 @@ impl Default for Buttons {
     }
 }
 
-/// A drag of a held button (Phase 6 design §1).
+/// A drag of a held button (spec §9.2).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub struct DragBinding {
     /// 1-based, 3 = middle.
@@ -220,7 +220,7 @@ pub enum Action {
     },
 }
 
-/// Clicks a remap can post (Phase 4c design §1). Named, not numbered, so the
+/// Clicks a remap can post (spec §9.2). Named, not numbered, so the
 /// file reads clearly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub enum MouseButton {
@@ -348,7 +348,7 @@ pub enum NavDirection {
     Forward,
 }
 
-/// Smooth scrolling (Phase 5a design §1). Every field is `Copy`, so the
+/// Smooth scrolling (spec §8). Every field is `Copy`, so the
 /// input engine takes the whole section as its settings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub struct Scroll {
@@ -362,12 +362,12 @@ pub struct Scroll {
     /// includes the Natural Scrolling setting).
     pub invert_vertical: bool,
     pub invert_horizontal: bool,
-    /// A slow wheel scrolls in fine steps (Phase 5b design §3).
+    /// A slow wheel scrolls in fine steps (spec §8.2).
     pub precise: bool,
     pub keyboard_modifiers: ScrollModifiers,
 }
 
-/// Which held key applies each scroll effect (Phase 5b design §1): one key
+/// Which held key applies each scroll effect (spec §8.5): one key
 /// per effect, each key at most once (`validate::duplicate_scroll_modifier`).
 /// A key that isn't bound passes the tick through.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]

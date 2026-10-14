@@ -1,4 +1,4 @@
-//! What tap callouts ask for but must not do themselves (Phase 6 design §2):
+//! What tap callouts ask for but must not do themselves (spec §4.5):
 //! posting, pointer freeze, tap changes. Callouts push `Copy` intents into a
 //! fixed ring; `InputEngine::run_intents`, run from `TapHandler::on_intents`
 //! by a run-loop source outside any callout, carries them out.
@@ -77,7 +77,7 @@ const CAPACITY: usize = 64;
 /// Only the critical intents (`Intent::is_critical`: a drag end, a
 /// hold-through down or up, the app switcher's ⌘ up, the Drag tap off) may
 /// fill the ring past this point. Everything else is refused and counted
-/// once this many are queued, so the releases always fit (Phase 6 design §2).
+/// once this many are queued, so the releases always fit.
 const MOVE_LIMIT: usize = 48;
 
 #[derive(Debug)]

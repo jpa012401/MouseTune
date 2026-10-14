@@ -1,4 +1,4 @@
-//! The settings file on disk (design §2). The only config code that touches `std::fs`.
+//! The settings file on disk (spec §9.1). The only config code that touches `std::fs`.
 
 use std::{
     fs, io,

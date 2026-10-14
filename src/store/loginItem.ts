@@ -12,7 +12,7 @@ type LoginItemState = {
   set: (enabled: boolean) => Promise<void>;
 };
 
-/** Mirror of macOS's login item. Never stored in the config (Phase 7a design §2). */
+/** Mirror of macOS's login item. Never stored in the config (spec §3.4). */
 export const useLoginItemStore = create<LoginItemState>((set, get) => ({
   status: null,
   pending: false,

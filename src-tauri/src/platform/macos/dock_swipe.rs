@@ -1,4 +1,4 @@
-//! Interactive dock swipes (Phase 6 design §3): Spaces and
+//! Interactive dock swipes (spec §6.1): Spaces and
 //! Mission Control following the drag, through the `SwipeOutput` port.
 //!
 //! # Switched off until verified

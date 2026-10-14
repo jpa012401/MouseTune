@@ -1,4 +1,4 @@
-//! Capture mode (Phase 4b design): while armed, the next press of mouse
+//! Capture mode (spec §10): while armed, the next press of mouse
 //! button 3 or higher is reported instead of acting. Pure and
 //! allocation-free: `take` runs in the button tap callback.
 
