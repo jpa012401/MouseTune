@@ -5,7 +5,7 @@ description = "Smooth scrolling and button remapping for mice on macOS"
 authors = ["John Paul Alabe"]
 license = "MIT"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.95"
 
 [lib]
 name = "mousetune_lib"

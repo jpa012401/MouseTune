@@ -162,8 +162,8 @@ pub struct ActionCounters {
 }
 
 fn bump(counter: &AtomicU32) {
-    // fetch_update with saturating_add: never wraps to 0.
-    let _ = counter.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
+    // try_update with saturating_add: never wraps to 0.
+    let _ = counter.try_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
         Some(n.saturating_add(1))
     });
 }
