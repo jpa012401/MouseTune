@@ -6,7 +6,7 @@ Built with [Tauri v2](https://v2.tauri.app) (Rust) and React. Runs as a menu bar
 
 > Inspired by [Mac Mouse Fix](https://github.com/noah-nuebling/mac-mouse-fix) by Noah Nuebling. MouseTune is an independent, clean-room implementation and contains no Mac Mouse Fix source code. See [CREDITS.md](CREDITS.md).
 
-**Status:** Phases 0–7b are merged; the first signed release build (`pnpm release`) is still to be run. Phases 2–7 await manual hardware acceptance (see AGENTS.md "Current state"). See the [technical specification](docs/macos_mouse_utility_technical_specification.md) for the design and roadmap.
+**Status:** Phases 0–7b are merged; the first signed release build (`pnpm release`) is still to be run. Phases 2–7 await manual hardware acceptance (see AGENTS.md "Current state").
 
 ## Requirements
 
@@ -160,7 +160,7 @@ Taps pass every event through unchanged in this phase (since Phase 4a the button
 9. If a 60 Hz external display is connected, scroll on each screen: both are smooth.
 10. With the pointer on an external display, unplug it in the middle of a coast: scrolling ends cleanly, and the next scroll is smooth.
 
-Report how the scroll feels (too short a coast, too fast, too slow). The curve's constants are tuning knobs (spec §8.2, §8.3).
+Report how the scroll feels (too short a coast, too fast, too slow). The curve's constants are tuning knobs (`src-tauri/src/input/scroll/`).
 
 ### Verifying scroll modifiers and the Scroll screen (Phase 5b acceptance, any wheel mouse)
 
