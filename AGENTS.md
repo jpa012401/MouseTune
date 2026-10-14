@@ -269,7 +269,7 @@ Amend the spec (`notes/`) in the same change that proves it wrong; it isn't comm
 ## Platforms and toolchain
 
 - **Target:** macOS 12.0–27, universal (`aarch64-apple-darwin`, `x86_64-apple-darwin`). **Dev:** macOS 27 on Apple Silicon.
-- **Confirmed:** Rust stable (edition 2024), Node 22, pnpm 9.12 (`packageManager` field), Tauri 2.12, TypeScript 7, Vite 8, React 19, React Router 8, Vitest 5, Tailwind 3.4. Exact versions are in `Cargo.lock` and `pnpm-lock.yaml`.
+- **Confirmed:** Rust stable (edition 2024; minimum 1.95 via `rust-version` in `src-tauri/Cargo.toml`, raise it when code needs a newer std API), Node 22, pnpm 9.12 (`packageManager` field), Tauri 2.12, TypeScript 7, Vite 8, React 19, React Router 8, Vitest 5, Tailwind 3.4. Exact versions are in `Cargo.lock` and `pnpm-lock.yaml`.
 - **CI** (`.github/workflows/ci.yml`, `macos-latest`): typecheck, Vitest, Vite build, rustfmt, clippy, `cargo test`, bindings drift. It hasn't run yet because there's no remote.
 - **Traps:**
   - Rust won't compile without `dist/` (`generate_context!` checks `frontendDist`). On a fresh clone run `pnpm exec vite build` (or `mkdir dist`) before the first `cargo test`.

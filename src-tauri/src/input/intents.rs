@@ -117,14 +117,14 @@ impl Intent {
 impl IntentRing {
     /// False when the intent was dropped (counted in `dropped`).
     pub fn push(&mut self, intent: Intent) -> bool {
-        if let Intent::DragMove { dx, dy } = intent {
-            if self.len > 0 {
-                let back = (self.head + self.len - 1) % CAPACITY;
-                if let Some(Intent::DragMove { dx: bx, dy: by }) = &mut self.items[back] {
-                    *bx = bx.saturating_add(dx);
-                    *by = by.saturating_add(dy);
-                    return true;
-                }
+        if let Intent::DragMove { dx, dy } = intent
+            && self.len > 0
+        {
+            let back = (self.head + self.len - 1) % CAPACITY;
+            if let Some(Intent::DragMove { dx: bx, dy: by }) = &mut self.items[back] {
+                *bx = bx.saturating_add(dx);
+                *by = by.saturating_add(dy);
+                return true;
             }
         }
         if self.len >= MOVE_LIMIT && !intent.is_critical() {
