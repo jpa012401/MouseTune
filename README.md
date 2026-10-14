@@ -149,8 +149,9 @@ Steps 1–3 need an app bundle signed with a stable identity. In `pnpm tauri dev
 1. Turn on Launch at login. It appears in System Settings → General → Login Items.
 2. Log out and in. MouseTune is running, with no Settings window.
 3. Turn it off in System Settings. Reopen General, and the switch is off.
-4. Hide the menu bar item, quit, and relaunch from Applications. Settings opens. Turn the item back on, and the icon returns.
+4. Hide the menu bar item, then Quit from Settings. Launch MouseTune from Applications: Settings opens. Turn the item back on, and the icon returns.
 5. Open logs folder shows the folder in Finder. The About link opens the browser.
+6. Turn launch at login off in MouseTune, then on again; it still works (checks the `notFound` mapping).
 
 ## Building
 
