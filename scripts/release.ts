@@ -7,11 +7,14 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   type CheckName,
+  type Env,
   type Verdict,
+  buildEnv,
   judgeBundleId,
   judgeGatekeeper,
   judgeHardenedRuntime,
   judgeIdentity,
+  judgeIdentityAvailable,
   judgeMinOs,
   judgeUniversal,
   parseCodesignDetails,
@@ -23,7 +26,6 @@ import {
 
 const ROOT = join(import.meta.dirname, "..");
 const TAURI = join(ROOT, "src-tauri");
-const MIN_OS = "12.0"; // spec §3.4; matches bundle.macOS.minimumSystemVersion
 
 function stop(message: string): never {
   console.error(`\n✗ ${message}`);
@@ -31,9 +33,9 @@ function stop(message: string): never {
 }
 
 /** Runs a step with its output shown; stops the release if it fails. */
-function step(command: string, args: string[], cwd = ROOT): void {
+function step(command: string, args: string[], cwd = ROOT, env: Env = process.env): void {
   console.log(`\n→ ${command} ${args.join(" ")}`);
-  const result = spawnSync(command, args, { cwd, stdio: "inherit", env: process.env });
+  const result = spawnSync(command, args, { cwd, stdio: "inherit", env });
   if (result.status !== 0) stop(`Release stopped: \`${command} ${args.join(" ")}\` failed.`);
 }
 
@@ -54,7 +56,16 @@ const conf = JSON.parse(readFileSync(join(TAURI, "tauri.conf.json"), "utf8")) as
   productName: string;
   version: string;
   identifier: string;
+  bundle?: { macOS?: { minimumSystemVersion?: string } };
 };
+const minOs = conf.bundle?.macOS?.minimumSystemVersion;
+if (!minOs) stop("Release stopped: bundle.macOS.minimumSystemVersion is missing from src-tauri/tauri.conf.json.");
+
+// Before the git check and the long build: a missing identity fails in a second, not after the build.
+const identities = capture("security", ["find-identity", "-v", "-p", "codesigning"]);
+if (identities.status !== 0) stop("Release stopped: couldn’t list signing identities (`security find-identity` failed).");
+const available = judgeIdentityAvailable(identities.output, plan.identity);
+if (!available.ok) stop(available.reason);
 
 const gitStatus = capture("git", ["status", "--porcelain"]);
 if (gitStatus.status !== 0) stop("Release stopped: couldn’t read the git status (is this the MouseTune repository?).");
@@ -69,7 +80,7 @@ step("cargo", ["fmt", "--check"], TAURI);
 step("cargo", ["clippy", "--all-targets", "--", "-D", "warnings"], TAURI);
 step("cargo", ["test"], TAURI);
 step("git", ["diff", "--exit-code", "--", "src/bindings.ts"]);
-step("pnpm", ["tauri", "build", "--target", "universal-apple-darwin"]);
+step("pnpm", ["tauri", "build", "--target", "universal-apple-darwin"], ROOT, buildEnv(process.env, plan));
 
 const bundle = join(TAURI, "target", "universal-apple-darwin", "release", "bundle");
 const app = join(bundle, "macos", `${conf.productName}.app`);
@@ -95,7 +106,7 @@ const checks: Record<CheckName, () => Verdict> = {
   hardenedRuntime: () => judgeHardenedRuntime(details),
   bundleId: () => judgeBundleId(details, conf.identifier),
   universal: () => judgeUniversal(parseLipoArchs(capture("lipo", ["-archs", binary]).output)),
-  minOs: () => judgeMinOs(parseMinOs(capture("vtool", ["-show-build", binary]).output), MIN_OS),
+  minOs: () => judgeMinOs(parseMinOs(capture("vtool", ["-show-build", binary]).output), minOs),
   stapled: () => exitOk(capture("xcrun", ["stapler", "validate", app]).status, "xcrun stapler validate"),
   gatekeeper: () => judgeGatekeeper(parseSpctl(capture("spctl", ["-a", "-vv", "-t", "exec", app]).output)),
 };

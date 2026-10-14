@@ -71,6 +71,20 @@ export function planRelease(env: Env): Plan | Refusal {
     : { kind: "plan", mode: "public", identity, checks: [...PERSONAL_CHECKS, "stapled", "gatekeeper"] };
 }
 
+/**
+ * The environment for `tauri build`. Tauri checks the notarization variables
+ * by presence, so a blank `APPLE_ID=""` would still make it try to notarize
+ * (or fail late). Blank ones are removed; codesign gets the trimmed identity.
+ */
+export function buildEnv(env: Env, plan: Plan): Env {
+  const out: Env = { ...env };
+  for (const name of [...API_KEY_VARS, ...APPLE_ID_VARS]) {
+    if (!value(out, name)) delete out[name];
+  }
+  out.APPLE_SIGNING_IDENTITY = plan.identity;
+  return out;
+}
+
 export type Verdict = { ok: true } | { ok: false; reason: string };
 export type CodesignDetails = { identifier: string | null; authority: string | null; flags: string[]; adhoc: boolean };
 export type SpctlResult = { accepted: boolean; source: string | null };
@@ -157,4 +171,17 @@ export function judgeGatekeeper(r: SpctlResult): Verdict {
   return r.accepted && r.source === "Notarized Developer ID"
     ? PASS
     : fail(`Gatekeeper doesn’t accept the app as notarized (${r.accepted ? "accepted" : "rejected"}, source: ${r.source ?? "none"}).`);
+}
+
+/** `security find-identity -v -p codesigning` output: the identity must be listed exactly once. */
+export function judgeIdentityAvailable(findIdentityOutput: string, identity: string): Verdict {
+  const matches = findIdentityOutput.split("\n").filter((line) => line.includes(`"${identity}"`)).length;
+  if (matches === 0) {
+    return fail(
+      `No valid signing identity named "${identity}" in your keychain. Run \`security find-identity -v -p codesigning\` and copy the name exactly (an expired certificate or a missing Apple intermediate certificate also hides it).`,
+    );
+  }
+  return matches === 1
+    ? PASS
+    : fail(`"${identity}" matches ${matches} certificates in your keychain, so codesign can’t choose. Remove the expired or duplicate one in Keychain Access.`);
 }

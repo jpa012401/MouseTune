@@ -1,10 +1,13 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
 import {
+  type Plan,
+  buildEnv,
   judgeBundleId,
   judgeGatekeeper,
   judgeHardenedRuntime,
   judgeIdentity,
+  judgeIdentityAvailable,
   judgeMinOs,
   judgeUniversal,
   parseCodesignDetails,
@@ -125,6 +128,9 @@ Load command 10
  platform MACOS
     minos 12.0
       sdk 27.0
+   ntools 1
+     tool LD
+  version 711.0
 /A/MouseTune.app/Contents/MacOS/mousetune (architecture arm64):
 Load command 10
       cmd LC_BUILD_VERSION
@@ -241,11 +247,80 @@ describe("Gatekeeper", () => {
     expect(judgeGatekeeper(r)).toEqual({ ok: true });
   });
 
+  it("rejects an accepted app that is only Developer ID signed, not notarized", () => {
+    const r = parseSpctl("/A/MouseTune.app: accepted\nsource=Developer ID\n");
+    expect(judgeGatekeeper(r)).toEqual({
+      ok: false,
+      reason: "Gatekeeper doesn’t accept the app as notarized (accepted, source: Developer ID).",
+    });
+  });
+
   it("rejects anything else", () => {
     const r = parseSpctl("/A/MouseTune.app: rejected\nsource=Unnotarized Developer ID\n");
     expect(judgeGatekeeper(r)).toEqual({
       ok: false,
       reason: "Gatekeeper doesn’t accept the app as notarized (rejected, source: Unnotarized Developer ID).",
+    });
+  });
+});
+
+describe("buildEnv", () => {
+  const plan: Plan = { kind: "plan", mode: "personal", identity: DEV, checks: [] };
+
+  it("removes blank notarization variables so Tauri doesn’t see them", () => {
+    const env = buildEnv({ APPLE_SIGNING_IDENTITY: DEV, APPLE_ID: "", APPLE_PASSWORD: "  ", APPLE_TEAM_ID: "\t", APPLE_API_KEY: "", APPLE_API_ISSUER: " ", APPLE_API_KEY_PATH: "" }, plan);
+    expect(env).toEqual({ APPLE_SIGNING_IDENTITY: DEV });
+  });
+
+  it("keeps non-blank notarization variables for a public release", () => {
+    const publicPlan: Plan = { kind: "plan", mode: "public", identity: DEVID, checks: [] };
+    expect(buildEnv({ APPLE_SIGNING_IDENTITY: DEVID, ...API }, publicPlan)).toEqual({ APPLE_SIGNING_IDENTITY: DEVID, ...API });
+  });
+
+  it("passes codesign the trimmed identity", () => {
+    expect(buildEnv({ APPLE_SIGNING_IDENTITY: `  ${DEV} ` }, plan).APPLE_SIGNING_IDENTITY).toBe(DEV);
+  });
+
+  it("keeps unrelated variables and does not change its input", () => {
+    const input = { PATH: "/usr/bin", APPLE_SIGNING_IDENTITY: ` ${DEV}`, APPLE_ID: "" };
+    const out = buildEnv(input, plan);
+    expect(out.PATH).toBe("/usr/bin");
+    expect(input).toEqual({ PATH: "/usr/bin", APPLE_SIGNING_IDENTITY: ` ${DEV}`, APPLE_ID: "" });
+  });
+});
+
+describe("judgeIdentityAvailable", () => {
+  const LISTING = `  1) 1A2B3C4D5E6F708192A3B4C5D6E7F8091A2B3C4D "${DEV}"
+     1 valid identities found
+`;
+
+  it("passes when the identity appears once", () => {
+    expect(judgeIdentityAvailable(LISTING, DEV)).toEqual({ ok: true });
+  });
+
+  it("does not accept a partial name", () => {
+    expect(judgeIdentityAvailable(LISTING, "Apple Development: Jane")).toEqual({
+      ok: false,
+      reason:
+        'No valid signing identity named "Apple Development: Jane" in your keychain. Run `security find-identity -v -p codesigning` and copy the name exactly (an expired certificate or a missing Apple intermediate certificate also hides it).',
+    });
+  });
+
+  it("fails when two certificates share the name", () => {
+    const twice = `  1) 1A2B3C4D5E6F708192A3B4C5D6E7F8091A2B3C4D "${DEV}"
+  2) 9F8E7D6C5B4A39281706F5E4D3C2B1A099887766 "${DEV}"
+     2 valid identities found
+`;
+    expect(judgeIdentityAvailable(twice, DEV)).toEqual({
+      ok: false,
+      reason: `"${DEV}" matches 2 certificates in your keychain, so codesign can’t choose. Remove the expired or duplicate one in Keychain Access.`,
+    });
+  });
+
+  it("fails when the keychain has no valid identities", () => {
+    expect(judgeIdentityAvailable("     0 valid identities found\n", DEV)).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining(`No valid signing identity named "${DEV}"`),
     });
   });
 });
