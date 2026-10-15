@@ -52,6 +52,39 @@ pub fn set_launch_at_login(
     Ok(item.status())
 }
 
+/// What `SMAppService` reports for the app (macOS 13+), before it is read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ServiceStatus {
+    NotRegistered,
+    Enabled,
+    RequiresApproval,
+    NotFound,
+}
+
+/// Reads `SMAppService`'s answer. macOS reports a bundled app it has never
+/// registered as `NotFound`, so in a bundle that means off, or the switch
+/// could never turn it on. Outside a bundle (`pnpm tauri dev`) it can't work.
+pub fn modern_status(service: ServiceStatus, in_app_bundle: bool) -> LoginItemStatus {
+    match service {
+        ServiceStatus::NotRegistered => LoginItemStatus::Off,
+        ServiceStatus::Enabled => LoginItemStatus::On,
+        ServiceStatus::RequiresApproval => LoginItemStatus::RequiresApproval,
+        ServiceStatus::NotFound if in_app_bundle => LoginItemStatus::Off,
+        ServiceStatus::NotFound => LoginItemStatus::Unavailable,
+    }
+}
+
+/// Whether `program` is the executable inside a `.app` bundle
+/// (`<name>.app/Contents/MacOS/<exe>`).
+pub fn in_app_bundle(program: &Path) -> bool {
+    let macos = program.parent();
+    let contents = macos.and_then(Path::parent);
+    let app = contents.and_then(Path::parent);
+    macos.and_then(Path::file_name) == Some("MacOS".as_ref())
+        && contents.and_then(Path::file_name) == Some("Contents".as_ref())
+        && app.and_then(Path::extension) == Some("app".as_ref())
+}
+
 /// After an upgrade from macOS 12, moves a LaunchAgent login item to
 /// `SMAppService` so the app starts once per login (spec §3.4). The legacy
 /// item is removed only once the modern one is registered, so a failure
@@ -185,7 +218,47 @@ pub fn startup(
 mod tests {
     use super::*;
     use crate::test_support::{FakeAgentFile, FakeLoginItem};
-    use LoginItemStatus::{Off, On, RequiresApproval};
+    use LoginItemStatus::{Off, On, RequiresApproval, Unavailable};
+
+    #[test]
+    fn a_bundled_app_macos_has_never_registered_is_off() {
+        assert_eq!(modern_status(ServiceStatus::NotFound, true), Off);
+    }
+
+    #[test]
+    fn a_copy_outside_an_app_bundle_is_unavailable() {
+        assert_eq!(modern_status(ServiceStatus::NotFound, false), Unavailable);
+    }
+
+    #[test]
+    fn registered_states_read_the_same_in_or_out_of_a_bundle() {
+        for in_bundle in [true, false] {
+            assert_eq!(modern_status(ServiceStatus::NotRegistered, in_bundle), Off);
+            assert_eq!(modern_status(ServiceStatus::Enabled, in_bundle), On);
+            assert_eq!(
+                modern_status(ServiceStatus::RequiresApproval, in_bundle),
+                RequiresApproval
+            );
+        }
+    }
+
+    #[test]
+    fn the_executable_inside_an_app_is_in_a_bundle() {
+        let program = Path::new("/Applications/MouseTune.app/Contents/MacOS/mousetune");
+        assert!(in_app_bundle(program));
+    }
+
+    #[test]
+    fn a_dev_build_is_not_in_a_bundle() {
+        let program = Path::new("/Users/me/MouseTune/src-tauri/target/debug/mousetune");
+        assert!(!in_app_bundle(program));
+    }
+
+    #[test]
+    fn a_macos_folder_outside_an_app_is_not_a_bundle() {
+        assert!(!in_app_bundle(Path::new("/tmp/Contents/MacOS/mousetune")));
+        assert!(!in_app_bundle(Path::new("/tmp/Thing.app/MacOS/mousetune")));
+    }
 
     #[test]
     fn turning_on_reports_what_macos_has_afterwards() {
