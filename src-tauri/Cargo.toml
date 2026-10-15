@@ -1,6 +1,6 @@
 [package]
 name = "mousetune"
-version = "0.1.0"
+version = "0.1.1"
 description = "Smooth scrolling and button remapping for mice on macOS"
 authors = ["John Paul Alabe"]
 license = "MIT"
