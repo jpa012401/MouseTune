@@ -1,6 +1,6 @@
 # MouseTune
 
-[![CI](https://github.com/jpa012401/MouseFix/actions/workflows/ci.yml/badge.svg)](https://github.com/jpa012401/MouseFix/actions/workflows/ci.yml)
+[![CI](https://github.com/jpa012401/MouseTune/actions/workflows/ci.yml/badge.svg)](https://github.com/jpa012401/MouseTune/actions/workflows/ci.yml)
 ![macOS 12–27](https://img.shields.io/badge/macOS-12%E2%80%9327-blue)
 ![Apple Silicon and Intel](https://img.shields.io/badge/arch-Apple%20Silicon%20%7C%20Intel-lightgrey)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
@@ -80,8 +80,8 @@ Settings live in `~/Library/Application Support/com.johnpaulalabe.mousetune/conf
 ### Getting started
 
 ```sh
-git clone https://github.com/jpa012401/MouseFix.git mousetune
-cd mousetune
+git clone https://github.com/jpa012401/MouseTune.git
+cd MouseTune
 pnpm install
 pnpm exec vite build     # once, on a fresh clone: Rust won't compile without dist/
 pnpm tauri dev
