@@ -110,7 +110,8 @@ pub fn run() {
             ));
             // SMAppService exists from macOS 13 (spec §3.4).
             let modern = platform::os_version::current().at_least(13, 0).then(|| {
-                Arc::new(platform::login_item::MacAppService) as Arc<dyn login_item::LoginItem>
+                Arc::new(platform::login_item::MacAppService::new(&program))
+                    as Arc<dyn login_item::LoginItem>
             });
             app.manage(login_item::startup(modern, agent));
             app.manage(Arc::new(platform::opener::MacOpener) as Arc<dyn opener::Opener>);

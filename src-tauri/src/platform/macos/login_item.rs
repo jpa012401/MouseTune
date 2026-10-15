@@ -2,26 +2,44 @@
 //! (macOS 13+); `MacAgentFile` is the macOS 12 LaunchAgent plist on disk.
 //! Decisions (which to use, migration, refresh) are in `crate::login_item`.
 
-use std::{fs, io, path::PathBuf};
+use std::{
+    fs, io,
+    path::{Path, PathBuf},
+};
 
 use objc2_service_management::{SMAppService, SMAppServiceStatus};
 
-use crate::login_item::{AgentFile, LoginItem, LoginItemError, LoginItemStatus};
+use crate::login_item::{
+    AgentFile, LoginItem, LoginItemError, LoginItemStatus, ServiceStatus, in_app_bundle,
+    modern_status,
+};
 
 /// `SMAppService.mainApp`. Build this only on macOS 13+.
-pub struct MacAppService;
+pub struct MacAppService {
+    in_app_bundle: bool,
+}
+
+impl MacAppService {
+    /// `program` is the running executable.
+    pub fn new(program: &Path) -> Self {
+        Self {
+            in_app_bundle: in_app_bundle(program),
+        }
+    }
+}
 
 impl LoginItem for MacAppService {
     fn status(&self) -> LoginItemStatus {
         // SAFETY: class method and getter with no arguments; SMAppService is
         // thread-safe and exists on macOS 13+, the only versions that build this.
         let status = unsafe { SMAppService::mainAppService().status() };
-        match status {
-            SMAppServiceStatus::Enabled => LoginItemStatus::On,
-            SMAppServiceStatus::RequiresApproval => LoginItemStatus::RequiresApproval,
-            SMAppServiceStatus::NotRegistered => LoginItemStatus::Off,
-            _ => LoginItemStatus::Unavailable,
-        }
+        let service = match status {
+            SMAppServiceStatus::Enabled => ServiceStatus::Enabled,
+            SMAppServiceStatus::RequiresApproval => ServiceStatus::RequiresApproval,
+            SMAppServiceStatus::NotRegistered => ServiceStatus::NotRegistered,
+            _ => ServiceStatus::NotFound,
+        };
+        modern_status(service, self.in_app_bundle)
     }
 
     fn enable(&self) -> Result<(), LoginItemError> {
@@ -79,7 +97,8 @@ mod tests {
     #[ignore = "asks macOS about this binary's login item; run by hand"]
     fn sm_app_service_reports_a_status() {
         // Read-only: never registers, so the maintainer's Login Items stay as they are.
-        let status = MacAppService.status();
+        let program = std::env::current_exe().unwrap();
+        let status = MacAppService::new(&program).status();
         println!("SMAppService.mainApp status: {status:?}");
     }
 
